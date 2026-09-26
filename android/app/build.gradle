@@ -1,0 +1,89 @@
+apply plugin: 'com.android.application'
+
+// 버전의 단일 출처 = package.json "version" (X.Y.Z) → versionCode = X*10000 + Y*100 + Z
+def appVersion = new groovy.json.JsonSlurper().parse(rootProject.file('../package.json')).version
+def vm = appVersion =~ /^(\d+)\.(\d{1,2})\.(\d{1,2})$/
+if (!vm.matches()) throw new GradleException("package.json version must be X.Y.Z (Y, Z < 100): ${appVersion}")
+def appVersionCode = (vm.group(1) as int) * 10000 + (vm.group(2) as int) * 100 + (vm.group(3) as int)
+
+// 릴리스 서명: keystore.properties(기본 ~/.defense-game/keystore.properties, 경로는
+// env DEFENSE_KEYSTORE_PROPERTIES 또는 -PkeystoreProperties=... 로 변경) → 없으면 env 변수
+def ksPropsFile = file(System.getenv('DEFENSE_KEYSTORE_PROPERTIES') ?: project.findProperty('keystoreProperties') ?: "${System.getProperty('user.home')}/.defense-game/keystore.properties")
+def ks = new Properties()
+if (ksPropsFile.isFile()) {
+    ksPropsFile.withInputStream { ks.load(it) }
+} else {
+    ['storeFile': 'DEFENSE_STORE_FILE', 'storePassword': 'DEFENSE_STORE_PASSWORD',
+     'keyAlias': 'DEFENSE_KEY_ALIAS', 'keyPassword': 'DEFENSE_KEY_PASSWORD'].each { k, env ->
+        if (System.getenv(env)) ks[k] = System.getenv(env)
+    }
+}
+def hasReleaseKey = ['storeFile', 'storePassword', 'keyAlias', 'keyPassword'].every { ks[it] }
+
+android {
+    namespace "io.github.seobuk.defensegame"
+    compileSdk rootProject.ext.compileSdkVersion
+    buildFeatures {
+        buildConfig true
+    }
+    defaultConfig {
+        applicationId "io.github.seobuk.defensegame"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode appVersionCode
+        versionName appVersion
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    signingConfigs {
+        if (hasReleaseKey) {
+            release {
+                storeFile file(ks['storeFile'])
+                storePassword ks['storePassword']
+                keyAlias ks['keyAlias']
+                keyPassword ks['keyPassword']
+            }
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            // 키가 없으면 서명 안 된 APK (npm run release 는 이 경우 실패 처리)
+            if (hasReleaseKey) signingConfig signingConfigs.release
+        }
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation project(':capacitor-android')
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'
+
+try {
+    def servicesJSON = file('google-services.json')
+    if (servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+    }
+} catch(Exception e) {
+    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}

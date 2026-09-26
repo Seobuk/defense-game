@@ -45,3 +45,17 @@ DerivedDataCache/
 .godot/
 .import/
 export_presets.cfg
+
+# Android APK (Capacitor) — 서명 키/비밀은 절대 커밋 금지
+*.jks
+*.keystore
+keystore.properties
+local.properties
+android/.gradle/
+android/build/
+android/app/build/
+android/capacitor-cordova-android-plugins/
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/app/src/main/assets/capacitor.plugins.json
+android/app/src/main/res/xml/config.xml

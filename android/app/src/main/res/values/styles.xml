@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <style name="AppTheme" parent="Theme.AppCompat.NoActionBar">
+        <item name="colorPrimary">@color/colorPrimary</item>
+        <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
+        <item name="colorAccent">@color/colorAccent</item>
+        <item name="android:windowBackground">@color/splash_bg</item>
+    </style>
+
+    <!-- BridgeActivity가 실행 후 이 테마로 바꿈. 웹뷰 로딩 동안에도 어두운 배경 유지 -->
+    <style name="AppTheme.NoActionBar" parent="Theme.AppCompat.NoActionBar">
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
+        <item name="android:background">@null</item>
+        <item name="android:windowBackground">@color/splash_bg</item>
+        <item name="android:statusBarColor">@color/splash_bg</item>
+        <item name="android:navigationBarColor">@color/splash_bg</item>
+    </style>
+
+    <!-- 시작 스플래시: 단색 배경 + 아이콘 (Android 12+ 시스템 스플래시) -->
+    <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/splash_bg</item>
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item>
+        <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
+        <item name="android:windowBackground">@color/splash_bg</item>
+    </style>
+</resources>

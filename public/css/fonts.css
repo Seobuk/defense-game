@@ -1,0 +1,29 @@
+/* 번들 폰트 (오프라인 APK용, OFL 1.1 — assets/fonts/OFL-*.txt)
+   서브셋: ASCII + KS X 1001 완성형 2350자 + 소스에 쓰인 한글 + 호환 자모 + 기호 몇 개. 규칙은 docs/ART.md
+   --font-display : 주아 — 제목·버튼·라벨·HUD (둥글고 두툼)
+   --font-impact  : 검은고딕 — 큰 숫자·데미지·COMBO·STAGE CLEAR 같은 '쾅' 글자
+   --font-body    : 고운돋움 — 설명문·툴팁·긴 글 */
+@font-face {
+  font-family: "WD Display";
+  src: url("../assets/fonts/Jua.woff2") format("woff2");
+  font-weight: 400 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: "WD Impact";
+  src: url("../assets/fonts/BlackHanSans.woff2") format("woff2");
+  font-weight: 400 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: "WD Body";
+  src: url("../assets/fonts/GowunDodum.woff2") format("woff2");
+  font-weight: 400 900;
+  font-display: swap;
+}
+:root {
+  --font-fallback: "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --font-display: "WD Display", var(--font-fallback);
+  --font-impact: "WD Impact", "WD Display", var(--font-fallback);
+  --font-body: "WD Body", var(--font-fallback);
+}

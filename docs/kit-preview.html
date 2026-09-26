@@ -1,0 +1,67 @@
+<!doctype html>
+<!-- UI 키트 견본 (docs/ART.md §4). 브라우저 창에서 보려면 public/_kit.html 로 복사하고 "../public/" 을 지운 뒤 서버로 열기 — 확인 후 삭제 -->
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="../public/css/fonts.css">
+<link rel="stylesheet" href="../public/css/kit.css">
+<style>
+body { margin: 0; padding: 30px 16px; background: radial-gradient(ellipse at 50% 0, #2b2366, #140f2e 70%); color: #fff; font-family: var(--font-display); }
+.row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 14px 0 22px; }
+h3 { margin: 0; font-size: 14px; color: #bdb4ee; font-weight: 400; }
+.icons img { --ico: 40px; }
+.cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.slots { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+</style></head><body>
+<h3>아이콘</h3>
+<div class="row icons" id="icons"></div>
+<h3>버튼</h3>
+<div class="row">
+  <button class="k-btn l">시작하기<span class="k-sub">11층부터</span></button>
+  <button class="k-btn secondary">이전 스테이지</button>
+  <button class="k-btn success">장착</button>
+  <button class="k-btn danger s">판매</button>
+  <button class="k-btn neutral">설정</button>
+  <button class="k-btn" disabled>잠김</button>
+  <button class="k-btn is-ready">추천</button>
+  <button class="k-btn round neutral"><img class="k-ico" src="../public/assets/icons/menu.svg"></button>
+  <button class="k-btn is-poor"><img class="k-ico" src="../public/assets/icons/coin.svg"><b class="k-num k-cost">1.2K</b></button>
+</div>
+<h3>숫자</h3>
+<div class="row" style="font-size:34px">
+  <b class="k-num gold k-grad" data-text="72.4B">72.4B</b>
+  <b class="k-num gem k-grad" data-text="274">274</b>
+  <b class="k-num bad k-grad" data-text="15.5K!">15.5K!</b>
+  <span class="k-up" style="font-size:18px">+24</span><span class="k-down" style="font-size:18px">-8</span>
+</div>
+<h3>탭 · 토글 · 바 · 배지</h3>
+<div class="row" style="width:100%">
+  <div class="k-tabs" style="width:100%"><button class="k-tab" aria-selected="true">히든 조합</button><button class="k-tab">원소 융합</button></div>
+  <button class="k-toggle" aria-pressed="true"></button><button class="k-toggle" aria-pressed="false"></button>
+  <div class="k-bar" style="--p:.62;width:160px"><i></i></div>
+  <div class="k-bar mana" style="--p:.35;width:120px"><i></i></div>
+  <span class="k-badge new">NEW</span><span class="k-badge">3</span><span class="k-badge max">MAX</span>
+</div>
+<h3>희귀도 카드</h3>
+<div class="cards">
+  <div class="k-rcard" data-r="common" style="--el:var(--el-wind)"><div class="k-art"><img class="k-ico" src="../public/assets/icons/el-wind.svg"></div><div class="k-name">질풍</div><div class="k-pips"><i class="on"></i><i></i><i></i></div><div class="k-desc">공격속도 +15%</div></div>
+  <div class="k-rcard" data-r="rare" style="--el:var(--el-fire)"><div class="k-art"><img class="k-ico" src="../public/assets/icons/el-fire.svg"></div><div class="k-name">파이어볼</div><div class="k-pips"><i class="on"></i><i class="on"></i><i></i></div><div class="k-desc">가장 앞선 적 주변에 3.5초마다 폭발</div></div>
+  <div class="k-rcard" data-r="legend" style="--el:var(--el-summon)"><div class="k-art"><img class="k-ico" src="../public/assets/icons/el-summon.svg"></div><div class="k-name">새끼 드래곤</div><div class="k-pips"><i class="on"></i><i></i><i></i></div><div class="k-desc">따라다니며 브레스</div></div>
+</div>
+<h3 style="margin-top:20px">장비 칸</h3>
+<div class="slots" style="margin:10px 0 30px">
+  <div class="k-slot" data-r="common"><img class="k-ico" src="../public/assets/icons/hero.svg"><b class="k-lv">12</b></div>
+  <div class="k-slot" data-r="uncommon"><img class="k-ico" src="../public/assets/icons/bag.svg"><b class="k-lv">30</b></div>
+  <div class="k-slot" data-r="rare"><img class="k-ico" src="../public/assets/icons/wall.svg"></div>
+  <div class="k-slot" data-r="epic"><img class="k-ico" src="../public/assets/icons/crit.svg"></div>
+  <div class="k-slot" data-r="legend"><img class="k-ico" src="../public/assets/icons/chest.svg"></div>
+</div>
+<div class="k-modal" style="margin: 20px auto">
+  <div class="k-ribbon gold">스킬 선택</div>
+  <button class="k-close"><img class="k-ico" src="../public/assets/icons/close.svg"></button>
+  <div class="k-sheet"><div class="k-card">황금 곡괭이 Lv 3 — 오프라인 골드 증가</div><div class="k-card">치명타 폭발 Lv 0</div></div>
+</div>
+<div class="k-toast" style="width:max-content;margin:20px auto"><img class="k-ico" src="../public/assets/icons/new.svg">전설 아이템 획득!</div>
+<script>
+const names = 'coin,gem,atk,rate,crit,multi,wall,meteor,freeze,auto,speed,menu,close,check,settings,codex,shop,hero,bag,lock,partner,new,chest,reroll,el-fire,el-lightning,el-frost,el-wind,el-holy,el-dark,el-summon'.split(',');
+document.getElementById('icons').innerHTML = names.map(n => `<img class="k-ico" title="${n}" src="../public/assets/icons/${n}.svg">`).join('');
+</script>
+</body></html>

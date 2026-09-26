@@ -1,0 +1,291 @@
+/* ═══════════ UI 키트 — 《벽 지키기》 공용 부품 (docs/ART.md §2, §4, §5, §7) ═══════════
+   모든 화면(style.css · hero.css · ui.js · heroui.js)은 이 토큰과 .k-* 부품을 쓴다. 한 벌의 손으로 그린 것처럼.
+   - 토큰: 색(--ink, --night-*, --gold-*, …) · 모서리(--r-*) · 이징(--ease-*) · 글꼴(fonts.css 의 --font-*)
+   - 부품: k-btn(젤리 버튼) · k-panel(밤 유리) · k-modal/k-ribbon/k-close(로열 프레임) · k-card(속지 카드)
+           k-tabs · k-toggle · k-bar(진행 바) · k-badge · k-rcard/k-slot(희귀도 카드·장비 칸) · k-tip · k-toast · k-num · k-ico
+   - 상태는 클래스 또는 data 속성: .is-pressed(자동: :active) · [disabled] · .is-poor(골드 부족) · .is-ready(추천) · [data-r="rare"] 등
+   소유: UI 에이전트. 새 부품은 여기 추가하고 화면 CSS에선 배치만. */
+
+:root {
+  /* 전역 팔레트 (ART §2.1) */
+  --ink: #22163a; --ink-soft: #4a3a6b;
+  --night-900: #140f2e; --night-800: #1d1745; --night-700: #2b2366; --night-500: #4535a0; --night-300: #7b6cff;
+  --paper: #fff6e6; --paper-edge: #e8d3ad; --paper-shadow: #b8935e;
+  --gold-hi: #fff3a8; --gold: #ffc92e; --gold-lo: #e08a00; --gold-ink: #6b3300;
+  --gem-hi: #d8fbff; --gem: #4fd8ff; --gem-lo: #1a7ff0; --gem-ink: #0b3a8a;
+  --ok: #4fe06a; --ok-lo: #1e8a3a; --bad: #ff4d5e; --bad-lo: #a3132b; --info: #46b4ff; --info-lo: #1558c4;
+  --white-hi: rgba(255, 255, 255, .55);
+  /* 희귀도 (ART §2.3) [메인 / 밝음 / 어둠] */
+  --r-common: #b9c2d0; --r-common-hi: #eef2f7; --r-common-lo: #5a6478;
+  --r-uncommon: #5fe06e; --r-uncommon-hi: #d4ffd8; --r-uncommon-lo: #1d8a3a;
+  --r-rare: #3fa9ff; --r-rare-hi: #d2ecff; --r-rare-lo: #1450b8;
+  --r-epic: #b85cff; --r-epic-hi: #efd6ff; --r-epic-lo: #5a1fa8;
+  --r-legend: #ffb020; --r-legend-hi: #fff0b8; --r-legend-lo: #a65200;
+  /* 원소 (ART §2.4) 메인 */
+  --el-fire: #ff6a1f; --el-lightning: #ffe53a; --el-frost: #7fe3ff; --el-wind: #6ff0c0; --el-holy: #fff0a8; --el-dark: #9a3dff; --el-summon: #ff6fd2;
+  /* 모양 · 움직임 */
+  --r-s: 10px; --r-m: 16px; --r-l: 22px;
+  --ease-out: cubic-bezier(.22, 1, .36, 1);
+  --ease-in: cubic-bezier(.55, 0, 1, .45);
+  --ease-back: cubic-bezier(.34, 1.56, .64, 1);
+  --ease-back-strong: cubic-bezier(.3, 1.9, .5, 1);
+  --shadow-drop: 0 8px 14px rgba(20, 15, 46, .35);
+}
+
+/* ── 글자: 외곽선은 text-shadow 8방향(들쭉날쭉) 대신 stroke + paint-order (ART §5.3) ── */
+.k-ol { -webkit-text-stroke: .16em var(--ol-c, var(--ink)); paint-order: stroke fill; text-shadow: 0 .08em 0 var(--ol-c, var(--ink)); }
+.k-num {
+  font-family: var(--font-impact); font-variant-numeric: tabular-nums; letter-spacing: .01em; color: #fff;
+  -webkit-text-stroke: .16em var(--ol-c, var(--ink)); paint-order: stroke fill; text-shadow: 0 .08em 0 var(--ol-c, var(--ink));
+}
+.k-num.gold { color: var(--gold-hi); --ol-c: var(--gold-ink); }
+.k-num.gem, .k-num.gem-n { color: var(--gem-hi); --ol-c: var(--gem-ink); } /* .gem 은 style.css 의 보석 도형 클래스와 겹친다 → 숫자는 .gem-n 권장 */
+.k-num.bad { color: #ffd0d4; --ol-c: #4a0610; }
+.k-num.ok { color: #d8ffd8; --ol-c: #0e4a1e; }
+/* 딱 끊긴 2단 그라데이션 숫자: <b class="k-num k-grad gold" data-text="1.2K">1.2K</b> */
+.k-grad { position: relative; }
+.k-grad::after {
+  content: attr(data-text); position: absolute; inset: 0; -webkit-text-stroke: 0; text-shadow: none;
+  background: linear-gradient(180deg, var(--g-top, #fff) 0 50%, var(--g-bot, #ffd23a) 52% 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.k-grad.gold { --g-top: #fffbe0; --g-bot: #ffc92e; }
+.k-grad.gem { --g-top: #fff; --g-bot: #4fd8ff; }
+.k-grad.bad { --g-top: #ffe0e0; --g-bot: #ff3d4d; }
+
+/* ── 아이콘 (assets/icons/*.svg, js/icons.js) ── */
+.k-ico { display: inline-block; width: var(--ico, 24px); height: var(--ico, 24px); flex: none; vertical-align: middle; object-fit: contain; pointer-events: none; -webkit-user-drag: none; }
+.k-ico.tilt { transform: rotate(-8deg); }
+
+/* ── 젤리 버튼 (ART §4.1) ── */
+.k-btn {
+  --top: #ffe45a; --bot: #ffb21a; --lip: #c26a00; --txt-ol: #7a3a00;
+  position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-width: 44px; min-height: 44px; padding: 10px 18px; border: 2px solid var(--ink); border-radius: var(--r-m);
+  font-family: var(--font-display); font-size: 17px; line-height: 1.1; color: #fff; letter-spacing: -.01em;
+  -webkit-text-stroke: 3px var(--txt-ol); paint-order: stroke fill; text-shadow: 0 2px 0 var(--txt-ol);
+  background: linear-gradient(180deg, var(--top) 0 52%, var(--bot) 56% 100%);
+  box-shadow: inset 0 2px 0 var(--white-hi), inset 0 -3px 0 rgba(0, 0, 0, .12), 0 5px 0 var(--lip), var(--shadow-drop);
+  transform: translateY(0); transition: transform .18s var(--ease-back), box-shadow .18s var(--ease-back), filter .1s;
+  cursor: pointer; -webkit-tap-highlight-color: transparent; user-select: none;
+}
+.k-btn:active, .k-btn.is-pressed {
+  transform: translateY(4px); filter: brightness(.95);
+  box-shadow: inset 0 2px 0 var(--white-hi), inset 0 -2px 0 rgba(0, 0, 0, .12), 0 1px 0 var(--lip), 0 3px 6px rgba(20, 15, 46, .3);
+  transition-duration: .07s; transition-timing-function: var(--ease-out);
+}
+.k-btn.secondary { --top: #6fd0ff; --bot: #1f86f0; --lip: #0f4ea8; --txt-ol: #0b3070; }
+.k-btn.success { --top: #7cf08a; --bot: #27ae4a; --lip: #16652a; --txt-ol: #0e4a1e; }
+.k-btn.danger { --top: #ff7a7a; --bot: #e3263c; --lip: #8a0f20; --txt-ol: #5a0714; }
+.k-btn.neutral { --top: #8f7dff; --bot: #5a46d6; --lip: #33207e; --txt-ol: #1f124f; }
+.k-btn.gray { --top: #c7ccd8; --bot: #8890a0; --lip: #5a6478; --txt-ol: #384050; }
+.k-btn.wide { width: 100%; }
+.k-btn.l { min-height: 60px; padding: 12px 26px; font-size: 21px; border-radius: var(--r-l); }
+.k-btn.s { min-height: 36px; padding: 6px 12px; font-size: 14px; border-radius: var(--r-s); -webkit-text-stroke-width: 2.4px; }
+.k-btn.round { width: 56px; height: 56px; min-width: 0; padding: 0; border-radius: 50%; }
+.k-btn.round.s { width: 40px; height: 40px; }
+.k-btn:has(.k-sub) { flex-direction: column; gap: 2px; }
+.k-btn .k-sub { display: block; font-size: .64em; opacity: .92; -webkit-text-stroke-width: 2px; }
+.k-btn[disabled], .k-btn.is-disabled {
+  --top: #a7adbf; --bot: #80879c; --lip: #555c70; --txt-ol: #4a5063; color: #eef0f5; cursor: default; pointer-events: none;
+}
+/* 골드 부족: 모양은 그대로, 비용 숫자만 빨갛게 + 누르면 흔들림 (ui.js 가 .shake 를 잠깐 붙인다) */
+.k-btn.is-poor .k-cost { color: #ffd0d4; --ol-c: #6a0712; }
+.k-btn.shake { animation: kShake .24s linear; }
+/* 추천/준비됨: 광택 스윕 + 호흡 */
+.k-btn.is-ready { animation: kBreath 1.6s ease-in-out infinite; overflow: hidden; }
+.k-btn.is-ready::after {
+  content: ""; position: absolute; inset: -2px; border-radius: inherit; pointer-events: none;
+  background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, .55) 48%, transparent 60%) -150% 0 / 250% 100% no-repeat;
+  animation: kSweep 2.2s var(--ease-out) infinite;
+}
+
+/* ── 패널 · 모달 (ART §4.2) ── */
+.k-panel {
+  background: linear-gradient(180deg, var(--night-700), var(--night-800)); border: 2px solid var(--ink); border-radius: var(--r-m);
+  box-shadow: inset 0 1px 0 var(--night-300), inset 0 -3px 0 rgba(0, 0, 0, .25), 0 6px 14px rgba(0, 0, 0, .35);
+}
+.k-modal {
+  position: relative; width: min(92vw, 400px); max-height: 86dvh; display: flex; flex-direction: column;
+  border: 3px solid var(--ink); border-radius: var(--r-l); padding: 6px;
+  background: linear-gradient(180deg, var(--night-300) 0, var(--night-500) 12%, var(--night-700) 100%);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, .35), 0 16px 40px rgba(8, 4, 24, .6);
+  animation: kModalIn .3s var(--ease-back) both;
+}
+.k-modal.out { animation: kModalOut .16s var(--ease-in) both; }
+.k-modal > .k-sheet {
+  flex: 1 1 auto; min-height: 0; overflow: auto; border-radius: calc(var(--r-l) - 6px); padding: 30px 16px 16px;
+  background: var(--paper); color: var(--ink); box-shadow: inset 0 0 0 2px var(--paper-edge), inset 0 -4px 0 var(--paper-edge);
+  font-family: var(--font-body); font-size: 14px; line-height: 1.45;
+  display: flex; flex-direction: column; gap: 12px; /* 자식이 이미 자기 flex를 쓰면(예: .sh-body) 그대로 덮여 문제없다 */
+}
+.k-modal.dark > .k-sheet { background: linear-gradient(180deg, var(--night-700), var(--night-900)); color: #fff; box-shadow: inset 0 0 0 2px rgba(123, 108, 255, .35); }
+/* 리본 헤더: 프레임 밖으로 튀어나오고 양끝이 접힘 */
+.k-ribbon {
+  --rb: var(--night-500); --rb-hi: #8f7dff; --rb-lo: #2a1f78;
+  position: absolute; left: 50%; top: -18px; transform: translateX(-50%); z-index: 2;
+  min-width: 60%; max-width: calc(100% - 64px); padding: 8px 28px 10px; text-align: center; white-space: nowrap;
+  font-family: var(--font-display); font-size: 22px; color: #fff; -webkit-text-stroke: 4px var(--ink); paint-order: stroke fill; text-shadow: 0 2px 0 var(--ink);
+  background: linear-gradient(180deg, var(--rb-hi) 0 50%, var(--rb) 54% 100%);
+  border: 3px solid var(--ink); border-radius: 12px; box-shadow: 0 4px 0 var(--rb-lo), 0 8px 12px rgba(0, 0, 0, .3);
+}
+.k-ribbon h1, .k-ribbon h2, .k-ribbon h3 { margin: 0; font: inherit; color: inherit; }
+.k-ribbon::before, .k-ribbon::after {
+  content: ""; position: absolute; top: 10px; width: 20px; height: 100%; z-index: -1; background: var(--rb-lo); border: 3px solid var(--ink);
+}
+.k-ribbon::before { left: -14px; clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%, 35% 50%); border-radius: 4px 0 0 4px; }
+.k-ribbon::after { right: -14px; clip-path: polygon(0 0, 100% 0, 65% 50%, 100% 100%, 0 100%); border-radius: 0 4px 4px 0; }
+.k-ribbon.gold { --rb: #ffb21a; --rb-hi: #ffe45a; --rb-lo: #c26a00; }
+.k-ribbon.red { --rb: #e3263c; --rb-hi: #ff7a7a; --rb-lo: #8a0f20; }
+.k-ribbon.green { --rb: #27ae4a; --rb-hi: #7cf08a; --rb-lo: #16652a; }
+.k-ribbon.blue { --rb: #1f86f0; --rb-hi: #6fd0ff; --rb-lo: #0f4ea8; }
+.k-ribbon.gray { --rb: #6b6b85; --rb-hi: #9a9ab0; --rb-lo: #3a3a52; }
+.k-ribbon[data-r] { --rb: var(--rc); --rb-hi: var(--rc-hi); --rb-lo: var(--rc-lo); }
+/* 모달 변형: 좁은 폭(안내·보상류) · 가운데 정렬 속지 */
+.k-modal.narrow { width: min(92vw, 340px); }
+.k-sheet.center { text-align: center; }
+.k-close {
+  position: absolute; right: -10px; top: -10px; z-index: 3; width: 38px; height: 38px; padding: 0; border-radius: 50%;
+  border: 2.5px solid var(--ink); background: radial-gradient(circle at 35% 30%, #ff9a9a, #e3263c 60%, #a3132b);
+  box-shadow: 0 3px 0 #8a0f20, 0 5px 10px rgba(0, 0, 0, .35); display: grid; place-items: center; cursor: pointer;
+  transition: transform .18s var(--ease-back);
+}
+.k-close:active { transform: translateY(2px) scale(.94); }
+.k-close .k-ico { --ico: 20px; }
+
+/* 속지 위 리스트 카드 (구분선 대신 카드) */
+.k-card {
+  background: #fff; border-radius: var(--r-s); padding: 10px 12px; color: var(--ink);
+  box-shadow: inset 0 0 0 2px var(--paper-edge), 0 3px 0 var(--paper-edge);
+}
+.k-card + .k-card { margin-top: 8px; }
+
+/* ── 탭 (ART §4.3): 트랙 위에 선택 블록이 떠오름 ── */
+.k-tabs {
+  display: flex; gap: 4px; padding: 4px; border-radius: 999px; background: var(--night-800);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, .5), 0 0 0 2px var(--ink);
+}
+.k-tab {
+  flex: 1 1 0; min-height: 40px; border: 0; border-radius: 999px; background: none; color: #bdb4ee; cursor: pointer;
+  font-family: var(--font-display); font-size: 15px; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  transition: color .2s, transform .22s var(--ease-back);
+}
+.k-tab[aria-selected="true"], .k-tab.on {
+  color: #fff; -webkit-text-stroke: 2.5px #7a3a00; paint-order: stroke fill;
+  background: linear-gradient(180deg, #ffe45a 0 52%, #ffb21a 56%); box-shadow: 0 0 0 2px var(--ink), 0 3px 0 #c26a00, inset 0 2px 0 var(--white-hi);
+  animation: kTabPop .22s var(--ease-back);
+}
+.k-dot { position: absolute; right: 6px; top: 4px; width: 12px; height: 12px; border-radius: 50%; background: var(--bad); border: 2px solid #fff; animation: kBreath 1s ease-in-out infinite; }
+
+/* ── 토글 (ART §4.4) — <button class="k-toggle" aria-pressed="true"> ── */
+.k-toggle {
+  position: relative; width: 56px; height: 32px; flex: none; padding: 0; border: 2px solid var(--ink); border-radius: 999px; cursor: pointer;
+  background: #3a3470; box-shadow: inset 0 3px 5px rgba(0, 0, 0, .45); transition: background .24s;
+}
+.k-toggle::after {
+  content: ""; position: absolute; left: 2px; top: 2px; width: 24px; height: 24px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff, #e4e0f4); box-shadow: 0 2px 0 #9a94b8;
+  transition: transform .24s var(--ease-back);
+}
+.k-toggle[aria-pressed="true"] { background: linear-gradient(180deg, #7cf08a, #27ae4a); box-shadow: inset 0 2px 3px rgba(0, 0, 0, .25), 0 0 10px rgba(79, 224, 106, .55); }
+.k-toggle[aria-pressed="true"]::after { transform: translateX(24px); }
+
+/* ── 진행 바 (ART §4.5) — <div class="k-bar" style="--p:.6"><i></i></div> ── */
+.k-bar {
+  --fill-top: #9dffb0; --fill-bot: #27ae4a;
+  position: relative; height: 16px; border-radius: 999px; overflow: hidden; background: var(--night-900);
+  box-shadow: inset 0 2px 3px rgba(0, 0, 0, .6), 0 0 0 2px var(--ink);
+}
+.k-bar > i {
+  position: absolute; inset: 0; transform-origin: left; transform: scaleX(var(--p, 0)); transition: transform .25s var(--ease-out);
+  background: linear-gradient(180deg, var(--fill-top) 0 45%, var(--fill-bot) 50% 100%);
+}
+.k-bar > i::after { content: ""; position: absolute; right: 2px; top: 2px; width: 6px; height: 40%; border-radius: 3px; background: rgba(255, 255, 255, .8); }
+.k-bar.mana { --fill-top: #e0a0ff; --fill-bot: #a85bff; }
+.k-bar.bad { --fill-top: #ff9aa4; --fill-bot: #e3263c; }
+.k-bar.xp { --fill-top: #9fe8ff; --fill-bot: #2a8af0; }
+.k-bar.gold { --fill-top: #fff3a8; --fill-bot: #ffb21a; }
+
+/* ── 배지 (ART §4.6) ── */
+.k-badge {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px;
+  font-family: var(--font-impact); font-size: 12px; color: #fff; background: var(--ink); border: 2px solid #fff; line-height: 1;
+}
+.k-badge.new { background: var(--bad); transform: rotate(-8deg); animation: kBounce 1s var(--ease-out) infinite; }
+.k-badge.max { color: var(--gold-ink); background: linear-gradient(180deg, #fff3a8 0 50%, #ffc92e 54%); border-color: var(--ink); }
+.k-up { color: var(--ok); font-family: var(--font-impact); }
+.k-up::before { content: "▲ "; }
+.k-down { color: var(--bad); font-family: var(--font-impact); }
+.k-down::before { content: "▼ "; }
+
+/* ── 희귀도: [data-r] 가 --rc/--rc-hi/--rc-lo 를 정한다 → 카드·칸·리본·글자에서 공용 (기본값은 :where 로 0 명시도) ── */
+:where(.k-rcard, .k-slot) { --rc: var(--r-common); --rc-hi: var(--r-common-hi); --rc-lo: var(--r-common-lo); }
+[data-r="common"] { --rc: var(--r-common); --rc-hi: var(--r-common-hi); --rc-lo: var(--r-common-lo); }
+[data-r="uncommon"] { --rc: var(--r-uncommon); --rc-hi: var(--r-uncommon-hi); --rc-lo: var(--r-uncommon-lo); }
+[data-r="rare"] { --rc: var(--r-rare); --rc-hi: var(--r-rare-hi); --rc-lo: var(--r-rare-lo); }
+[data-r="epic"] { --rc: var(--r-epic); --rc-hi: var(--r-epic-hi); --rc-lo: var(--r-epic-lo); }
+[data-r="legend"] { --rc: var(--r-legend); --rc-hi: var(--r-legend-hi); --rc-lo: var(--r-legend-lo); }
+
+/* 희귀도 카드 (판타지 카드 5:7) (ART §4.7, §10.4) */
+.k-rcard {
+  position: relative; aspect-ratio: 5 / 7; border-radius: var(--r-m); padding: 5px; border: 3px solid var(--ink);
+  background: linear-gradient(160deg, var(--rc-hi) 0 30%, var(--rc) 34% 70%, var(--rc-lo) 74%);
+  box-shadow: 0 5px 0 var(--rc-lo), var(--shadow-drop); display: flex; flex-direction: column; overflow: hidden;
+}
+.k-rcard > .k-art {
+  flex: 0 0 48%; border-radius: 10px; display: grid; place-items: center; position: relative; overflow: hidden;
+  background: radial-gradient(circle at 50% 45%, #fff 0, var(--el, #7b6cff) 30%, var(--night-900) 100%);
+  box-shadow: inset 0 0 0 2px rgba(0, 0, 0, .35), inset 0 -8px 16px rgba(0, 0, 0, .35);
+}
+.k-rcard > .k-art .k-ico { --ico: 62%; width: 62%; height: auto; aspect-ratio: 1; filter: drop-shadow(0 3px 0 rgba(20, 10, 40, .5)); }
+.k-rcard > .k-name { margin-top: 6px; text-align: center; font-family: var(--font-display); font-size: 16px; color: #fff; -webkit-text-stroke: 3px var(--ink); paint-order: stroke fill; }
+.k-rcard > .k-desc { flex: 1 1 auto; margin-top: 4px; padding: 6px; border-radius: 8px; background: rgba(255, 250, 240, .92); color: var(--ink); font-family: var(--font-body); font-size: 11.5px; line-height: 1.3; text-align: center; overflow: hidden; }
+.k-pips { display: flex; gap: 4px; justify-content: center; margin-top: 4px; }
+.k-pips > i { width: 9px; height: 9px; border-radius: 50%; background: rgba(0, 0, 0, .35); box-shadow: 0 0 0 1.5px var(--ink); }
+.k-pips > i.on { background: radial-gradient(circle at 35% 30%, #fff, var(--gold) 60%); }
+.k-rcard[data-r="rare"], .k-rcard[data-r="epic"], .k-rcard[data-r="legend"] { box-shadow: 0 5px 0 var(--rc-lo), 0 0 14px var(--rc), var(--shadow-drop); }
+.k-rcard[data-r="legend"]::before {
+  content: ""; position: absolute; inset: -40%; z-index: 0; pointer-events: none; mix-blend-mode: screen;
+  background: conic-gradient(from 0deg, transparent 0 20deg, rgba(255, 230, 150, .5) 30deg, transparent 50deg 110deg, rgba(255, 230, 150, .45) 120deg, transparent 140deg 200deg, rgba(255, 230, 150, .5) 210deg, transparent 230deg 290deg, rgba(255, 230, 150, .45) 300deg, transparent 320deg);
+  animation: kSpin 6s linear infinite;
+}
+.k-rcard > * { position: relative; z-index: 1; }
+/* 장비 칸 1:1 */
+.k-slot {
+  position: relative; aspect-ratio: 1; border-radius: 12px; border: 2.5px solid var(--ink); display: grid; place-items: center;
+  background: linear-gradient(180deg, var(--rc-hi) 0 48%, var(--rc) 52%); box-shadow: inset 0 2px 0 rgba(255, 255, 255, .5), inset 0 -3px 0 var(--rc-lo), 0 3px 0 rgba(0, 0, 0, .35);
+}
+.k-slot .k-ico { --ico: 68%; width: 68%; height: 68%; }
+.k-slot.empty { background: rgba(255, 255, 255, .06); box-shadow: inset 0 0 0 2px rgba(255, 255, 255, .08); border-color: rgba(34, 22, 58, .8); }
+.k-slot > .k-lv { position: absolute; left: 3px; bottom: 2px; font-family: var(--font-impact); font-size: 11px; color: #fff; -webkit-text-stroke: 2.5px var(--ink); paint-order: stroke fill; }
+
+/* ── 툴팁 · 토스트 (ART §4.8, §4.9) ── */
+.k-tip {
+  position: absolute; z-index: 50; max-width: 240px; padding: 10px 12px; border-radius: 12px;
+  background: rgba(20, 15, 46, .95); border: 2px solid var(--night-300); color: #fff; font-family: var(--font-body); font-size: 13px; line-height: 1.45;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, .45); animation: kPop .16s var(--ease-back) both;
+}
+.k-tip b, .k-tip strong { font-family: var(--font-display); font-weight: 400; color: var(--gold); }
+.k-toast {
+  display: flex; align-items: center; gap: 8px; padding: 8px 16px 8px 8px; border-radius: 999px;
+  background: var(--night-700); border: 2px solid var(--ink); box-shadow: inset 0 1px 0 var(--night-300), 0 6px 14px rgba(0, 0, 0, .4);
+  font-family: var(--font-display); font-size: 14px; color: #fff; animation: kToastIn .26s var(--ease-back) both;
+}
+.k-toast .k-ico { --ico: 28px; }
+.k-toast.out { animation: kToastOut .18s var(--ease-in) forwards; }
+
+/* ── 움직임 ── */
+@keyframes kShake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-6px); } 40% { transform: translateX(5px); } 60% { transform: translateX(-3px); } 80% { transform: translateX(2px); } }
+@keyframes kBreath { 0%, 100% { scale: 1; } 50% { scale: 1.04; } }
+@keyframes kSweep { 0% { background-position: -150% 0; } 60%, 100% { background-position: 250% 0; } }
+@keyframes kModalIn { from { opacity: 0; transform: translateY(24px) scale(.8); } }
+@keyframes kModalOut { to { opacity: 0; transform: translateY(12px) scale(.92); } }
+@keyframes kTabPop { 0% { scale: .9; } 70% { scale: 1.06; } 100% { scale: 1; } }
+@keyframes kBounce { 0%, 100% { translate: 0 0; } 30% { translate: 0 -3px; } }
+@keyframes kSpin { to { rotate: 1turn; } }
+@keyframes kPop { from { opacity: 0; scale: .9; } }
+@keyframes kToastIn { from { opacity: 0; transform: translateY(-12px) scale(.9); } }
+@keyframes kToastOut { to { opacity: 0; transform: translateY(-8px) scale(.92); } }
+@media (prefers-reduced-motion: reduce) {
+  .k-btn.is-ready, .k-btn.is-ready::after, .k-badge.new, .k-dot, .k-rcard[data-r="legend"]::before { animation: none; }
+}

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 로딩 중 배경 (웹 게임 배경과 같은 어두운 색) -->
+    <color name="splash_bg">#10131C</color>
+    <color name="colorPrimary">#10131C</color>
+    <color name="colorPrimaryDark">#10131C</color>
+    <color name="colorAccent">#FFC83D</color>
+</resources>

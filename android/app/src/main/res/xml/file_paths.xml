@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 업데이트 APK 폴더만 공유 (AppUpdaterPlugin) -->
+<paths>
+    <files-path name="updates" path="updates/" />
+</paths>
