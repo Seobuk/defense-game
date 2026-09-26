@@ -1,0 +1,47 @@
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# Logs / env
+*.log
+.env
+.env.local
+.env.*.local
+
+# Node.js / web
+node_modules/
+dist/
+build/
+.cache/
+coverage/
+
+# Unity
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+*.csproj
+*.sln
+*.unityproj
+*.pidb
+*.userprefs
+
+# Unreal
+Saved/
+Intermediate/
+Binaries/
+DerivedDataCache/
+*.VC.db
+*.opensdf
+*.sdf
+
+# Godot
+.godot/
+.import/
+export_presets.cfg
