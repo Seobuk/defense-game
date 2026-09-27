@@ -2,19 +2,21 @@
 import {
   WORLD_W, WORLD_H, WALL_Y, CANNONS, BULLET_SPEED, BULLET_R, MAX_STAGE,
   UPGRADE_KEYS, upgradeCost, upgradeMax, cannonStats, wallMax,
-  PERK_KEYS, perkMax, startGoldAmount, goldPerKill, gemReward, starsFor, SKILLS,
+  goldPerKill, starsFor, RUN_GEMS, META_KEYS, metaMax, metaFx, SKILLS,
   COMBO_WINDOW, COMBO_TIERS, FRENZY, LEGEND_T, SYN_FX as FX, SYNERGIES, SYN_KEYS,
-  SPELL_KEYS, SPELL_BY_KEY, RARITY_WEIGHT, MANA_MAX, MANA_FRACS, PICK_AUTO_T,
+  SPELL_KEYS, SPELL_BY_KEY, RARITY_WEIGHT, MANA_MAX, MANA_FRAC, PICK_AUTO_T,
+  SPELL_SLOTS, SPELL_MAX_LV, AWAKEN_KEYS, AWAKEN_BY_KEY, BASIC_SPELLS, ALLY_SPELLS, allySpellLv,
 } from './config.js';
 import { themeOf, ENEMY_TYPES, BOSSES, ELITE, buildStage, enemyHp, enemyDmg, enemySpeedMul, bossHpMul } from './stages.js';
 import { mulberry32, clamp, toInt } from './util.js';
 import { autoUpgrade, autoSkill, autoHero, pickCard } from './bot.js';
-import { initSpells, updateSpells, onCannonHit, onKill as onSpellKill, frostSlowMul, spellRateMul, curseMul, golemAbsorb } from './spells.js';
+import { initSpells, updateSpells, onBasicHit, onKill as onSpellKill, frostSlowMul, spellRateMul, curseMul, golemAbsorb } from './spells.js';
 import {
-  HERO_CLASSES, HERO_MELEE_R, spawnHeroUnit, updateHeroUnit, heroTakeDamage, heroEngageRadius,
+  HERO_CLASSES, HERO_MELEE_R, spawnHeroUnit, updateHeroUnit, heroTakeDamage,
   heroOnKill, heroGainXp, heroClearXp, castHeroUlt, heroBonuses, lootDrop,
   equipItem, sellItem, sellItemsByRarity, autoEquipAll, hasMilestone,
 } from './hero.js';
+import { allocateTalent } from './talents.js';
 
 const KINDS = ['human', 'bot', 'remote'];
 const LV_CAP = 3000; // 무한 업그레이드의 안전 상한(수치 폭주 방지)
@@ -24,57 +26,155 @@ const CANNON_SYN = SYNERGIES.filter(s => s.kind === 'cannon');
 const DUO_SYN = SYNERGIES.filter(s => s.kind === 'duo' && s.test);
 const FUSION_SYN = SYNERGIES.filter(s => s.kind === 'fusion' && s.test);
 // spells.js 에 넘기는 콜백 묶음 (함수 선언은 호이스팅되어 이 시점에 미리 참조해도 안전)
-const SPELL_API = { damage, killEnemy, damageWall, emit, chainArc, frontMost };
+const SPELL_API = { damage, killEnemy, damageWall, emit, chainArc, frontMost, spellHit };
 const KB_K = 20, KB_MAX = 4;  // 넉백: 피해/최대체력 비례, 1타 최대 px
 const BOMB_LINK = 1.8;          // 자폭병끼리 유폭 반경 배율
 const FUSE_T = 1;               // 자폭병 성벽 도착 후 자폭까지(초)
-const BULLET_LIFE = 1.5;         // 탄 수명(초)
+const BULLET_LIFE = 1.5;         // 기본 주문 발사체 수명(초)
+const FROST_SLOW = BASIC_SPELLS[1].slow; // 서리 화살 둔화(이동속도 감소 비율)
 const COMBO_ZONE = WALL_Y - 750; // 이 선을 넘은 적이 있어야 콤보 시간이 줄어듦
 const HERO_MOVE_HOLD = 6;        // 탭 이동 후 자동 복귀까지(초)
+const ACCEL_LEAD = 1.2, RUSH = 2; // 학살 가속: 필드가 비면 다음 스폰 묶음을 1.2초 뒤로 당기고 그 묶음은 2배 빠르게(압도적이면 층당 15~25초)
+const ARCANE_AT = 0.85;         // 비전 충전 추가 카드가 뜨는 처치 진행률
+const HERO_REVIVE_HP = 0.4;      // 성직자 부활 결계 강화
+const REVIVE_HP = 0.5, REVIVE_FREEZE = 1.5; // 부활 결계: 성벽 50% 회복 + 잠깐 빙결
+// 광폭화: 층이 BERSERK_T초를 넘기면 적 피해가 BERSERK_STEP초마다 2배, 이동은 감속·밀쳐내기 무시 — 버티기만 하는 교착을 끝낸다
+const BERSERK_T = 80, BERSERK_STEP = 10;
 // hero.js 에 넘기는 콜백 묶음(spells.js와 동일한 모양)
 const HERO_API = SPELL_API;
 
-function makePlayer(init, i) {
+const lvOf = src => {
+  const lv = {};
+  for (const k of UPGRADE_KEYS) lv[k] = toInt(src?.[k], 0, Math.min(LV_CAP, upgradeMax(k)));
+  return lv;
+};
+const posNum = v => { v = Number(v); return Number.isFinite(v) && v > 0 ? v : 0; };
+
+function makePlayer(init, i, fx) {
   init = init && typeof init === 'object' ? init : {};
-  const lv = {}, perks = {};
-  for (const k of UPGRADE_KEYS) lv[k] = toInt(init.lv?.[k], 0, Math.min(LV_CAP, upgradeMax(k)));
-  for (const k of PERK_KEYS) perks[k] = toInt(init.perks?.[k], 0, perkMax(k));
+  const lv = lvOf(init.lv);
   const gold = Number(init.gold);
   return {
     name: String(init.name ?? `P${i + 1}`).slice(0, 16),
     kind: KINDS.includes(init.kind) ? init.kind : 'human',
     gold: Number.isFinite(gold) && gold > 0 ? gold : 0,
     auto: !!init.auto,
-    lv, perks,
+    lv,
     cd: { meteor: 0, freeze: 0 },
     angle: -Math.PI / 2,
-    stats: cannonStats(lv, perks),
-    syn: [],       // 활성 대포 조합 키 (refreshSyn 이 채움)
+    stats: cannonStats(lv, fx),
+    syn: [],       // 활성 마법사 조합 키 (refreshSyn 이 채움)
     fireT: 0,
   };
 }
 
+// 영웅 특성 합산(영웅이 없으면 null). heroUnit.tb는 updateHeroUnit이 0.5초마다(특성을 찍으면 즉시) 갱신
+const heroTb = g => (g.heroUnit ? g.heroUnit.tb : null);
 const lvSum = g => g.players[0].lv.wall + g.players[1].lv.wall;
+const wallCap = g => Math.floor(wallMax(lvSum(g)) * g.fx.wallMul);
+
+// ── 런(도전) 상태 ──
+// 런 필드(저장·이어하기 대상). spells/rerollLeft 는 game 최상위(g.spells, g.rerollLeft)에 둔다
+const GEM_KEYS = ['floor', 'first', 'boss', 'flawless'];
+
+// 신뢰할 수 없는 런 저장값 → 올바른 모양(절대 throw 없음). serializeRun()의 역
+export function normalizeRun(raw) {
+  const o = v => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
+  const r = o(raw);
+  const spells = {};
+  for (const k of SPELL_KEYS) {
+    const v = toInt(o(r.spells)[k], 0, SPELL_MAX_LV);
+    if (v > 0 && Object.keys(spells).length < SPELL_SLOTS) spells[k] = v;
+  }
+  const allySpells = {};
+  for (const k of ALLY_SPELLS) {
+    const v = toInt(o(r.allySpells)[k], 0, SPELL_MAX_LV);
+    if (v > 0) allySpells[k] = v;
+  }
+  const awaken = {}, gems = {};
+  for (const k of AWAKEN_KEYS) awaken[k] = toInt(o(r.awaken)[k], 0, 999);
+  for (const k of GEM_KEYS) gems[k] = toInt(o(r.gems)[k], 0, 1e7);
+  const pl = Array.isArray(r.players) ? r.players : [];
+  const lo = o(r.loadout);
+  return {
+    v: 1,
+    stage: toInt(r.stage, 1, MAX_STAGE),
+    players: [0, 1].map(i => ({ gold: posNum(o(pl[i]).gold), lv: lvOf(o(o(pl[i]).lv)) })),
+    auto: !!r.auto,
+    spells, allySpells,
+    rerollLeft: r.rerollLeft == null ? null : toInt(r.rerollLeft, 0, 99),
+    awaken, gems,
+    reviveUsed: !!r.reviveUsed,
+    heroRevive: !!r.heroRevive,
+    arcane: Math.min(2, posNum(r.arcane)),
+    floors: toInt(r.floors, 0, MAX_STAGE),
+    bosses: toInt(r.bosses, 0, MAX_STAGE),
+    firstClears: toInt(r.firstClears, 0, MAX_STAGE),
+    flawless: toInt(r.flawless, 0, MAX_STAGE),
+    time: posNum(r.time),
+    startBest: toInt(r.startBest, 0, MAX_STAGE),
+    loadout: {
+      cls: typeof lo.cls === 'string' && Object.hasOwn(HERO_CLASSES, lo.cls) ? lo.cls : null,
+      startSpells: [...new Set(Array.isArray(lo.startSpells) ? lo.startSpells : [])].filter(k => SPELL_KEYS.includes(k)).slice(0, SPELL_SLOTS),
+    },
+  };
+}
+
+// 스테이지 시작 시점의 런 상태(이어하기용 JSON). startStage가 g.run.checkpoint 에 자동으로 남긴다
+export function serializeRun(g) {
+  const r = g.run;
+  return {
+    v: 1, stage: g.stage,
+    players: g.players.map(p => ({ gold: p.gold, lv: { ...p.lv } })),
+    auto: g.players[0].auto,
+    spells: { ...g.spells }, allySpells: { ...g.allySpells }, rerollLeft: g.rerollLeft,
+    awaken: { ...r.awaken }, gems: { ...r.gems },
+    reviveUsed: r.reviveUsed, heroRevive: r.heroRevive, arcane: r.arcane, floors: r.floors, bosses: r.bosses, firstClears: r.firstClears, flawless: r.flawless,
+    time: r.time, startBest: r.startBest,
+    loadout: { cls: r.loadout.cls, startSpells: [...r.loadout.startSpells] },
+  };
+}
+
+// 영구 강화 × 각성 → 런 배율
+function computeFx(g) {
+  const f = metaFx(g.metaLv), a = g.run.awaken, A = AWAKEN_BY_KEY;
+  f.atkMul *= 1 + A.power.atk * a.power;
+  f.rateMul *= 1 + A.haste.rate * a.haste;
+  f.wallMul *= 1 + A.ward.wall * a.ward;
+  f.goldMul *= 1 + A.fortune.gold * a.fortune;
+  return f;
+}
+function refreshFx(g) {
+  g.fx = computeFx(g);
+  for (const p of g.players) p.stats = cannonStats(p.lv, g.fx);
+  const max = wallCap(g);
+  g.wall.hp = Math.min(max, g.wall.hp + Math.max(0, max - g.wall.max));
+  g.wall.max = max;
+}
 
 function emit(g, ev) {
   if (g.events.length < MAX_EVENTS) g.events.push(ev);
 }
 
+// opts: { stage, players, best, seed, discovered, hero, metaLv:{key:lv}, run:(serializeRun 모양, 없으면 새 런), seenSpells }
 export function createGame(opts = {}) {
   const pl = Array.isArray(opts.players) ? opts.players : [];
+  const run = normalizeRun(opts.run);
+  const metaLv = {};
+  for (const k of META_KEYS) metaLv[k] = toInt(opts.metaLv?.[k], 0, metaMax(k));
   const g = {
     stage: 1, theme: 0, phase: 'play', phaseT: 0, speed: 1,
     wall: { hp: 0, max: 0 },
     progress: { total: 0, killed: 0 },
-    boss: null, freezeT: 0,
+    boss: null, freezeT: 0, berserk: 1,
     enemies: [], bullets: [], eshots: [],
-    players: [makePlayer(pl[0], 0), makePlayer(pl[1], 1)],
+    players: [],
     result: null,
     events: [],
     // 내부 상태
     best: toInt(opts.best, 0, MAX_STAGE),
     rng: mulberry32(opts.seed ?? (Math.random() * 2 ** 32)),
-    // 영웅 전용 rng: 대포·스폰 rng 스트림과 분리해 영웅 드롭/치명타가 기존 밸런스 타이밍에 영향을 주지 않게 한다
+    // 영웅 전용 rng: 마법사·스폰 rng 스트림과 분리해 영웅 드롭/치명타가 기존 밸런스 타이밍에 영향을 주지 않게 한다
     heroRng: mulberry32(((opts.seed ?? (Math.random() * 2 ** 32)) >>> 0) + 0x9e3779b9),
     spawns: [], spawnIdx: 0, nextId: 1,
     wallLost: 0,   // 이번 스테이지 성벽 피해 누적
@@ -87,18 +187,41 @@ export function createGame(opts = {}) {
     duo: [],
     discovered: new Set(Array.isArray(opts.discovered) ? opts.discovered.filter(k => SYN_KEYS.includes(k)) : []),
     killTimes: [], lastSkill: { meteor: null, freeze: null }, chain: null, critStopT: 0,
-    // 판타지 스킬 선택 (스테이지 한정)
-    mana: { cur: 0, max: MANA_MAX }, spells: {}, fusions: [], pick: null,
+    // 판타지 스킬 (런 전체 누적 빌드)
+    mana: { cur: 0, max: MANA_MAX }, spells: { ...run.spells }, fusions: [], pick: null,
+    allySpells: { ...run.allySpells }, // AI 동료(P2) 주문서: 네임드 보스 처치마다 ALLY_SPELLS 순서로 1개(런당 최대 3)
+    seenSpells: new Set(Array.isArray(opts.seenSpells) ? opts.seenSpells.filter(k => SPELL_KEYS.includes(k)) : []),
+    // 런(도전): 영구 강화 레벨 · 런 기록. fx = 영구 강화 × 각성 배율
+    metaLv, fx: null,
+    run: {
+      awaken: run.awaken, gems: run.gems, reviveUsed: run.reviveUsed, heroRevive: run.heroRevive, arcane: run.arcane, floors: run.floors, bosses: run.bosses,
+      firstClears: run.firstClears, flawless: run.flawless, time: run.time,
+      startBest: opts.run ? run.startBest : toInt(opts.best, 0, MAX_STAGE), loadout: run.loadout,
+      over: false, victory: false, ended: false, checkpoint: null,
+    },
+    rerollLeft: 0,
+    spawnT: 0,
     // 영웅(클래스 필드 유닛) — opts.hero 없으면 완전히 비활성(기존 동작과 100% 동일)
     hero: opts.hero && typeof opts.hero === 'object' ? opts.hero : null,
     heroUnit: null,
+    summons: [],        // 영웅 소환물(늑대·그림자 분신·비전 분신) — hero.js가 관리, 렌더러가 그린다
+    heroBuff: null,     // 전군 강화 함성 { t, mul }: 두 마법사 + 영웅 피해 배율
+    dmgDone: [0, 0, 0], // 이번 도전 실제 피해 [P1, P2, 영웅(소환물 포함)] — 기여도 표시·밸런스 러너용
   };
-  startStage(g, opts.stage ?? 1);
+  for (const k of Object.keys(g.spells)) g.seenSpells.add(k);
+  g.fx = computeFx(g);
+  g.players = [makePlayer(pl[0], 0, g.fx), makePlayer(pl[1], 1, g.fx)];
+  // 새로고침: 영웅 Lv5(1회) + 영구 강화. 런 전체에서 쓰는 횟수(이어하기면 저장값)
+  g.rerollLeft = run.rerollLeft ?? (g.hero && hasMilestone(g.hero.level, 'reroll1') ? 1 : 0) + g.fx.rerolls;
+  initSpells(g);
+  refreshFusion(g);
+  startStage(g, opts.stage ?? (opts.run ? run.stage : 1));
   refreshSyn(g);
   return g;
 }
 
 export function startStage(g, stage) {
+  if (g.run.over) return; // 끝난 도전은 이어갈 수 없다(재도전·100층 뒤 자동 진행이 체크포인트를 덮어써 죽은 런이 이어하기로 살아나는 것 방지)
   stage = toInt(stage, 1, MAX_STAGE);
   const carry = g.phase === 'clear'; // 클리어 직후 다음 판이면 콤보·광란·전설 이어감
   g.stage = stage;
@@ -106,6 +229,7 @@ export function startStage(g, stage) {
   g.phase = 'play';
   g.phaseT = 0;
   g.freezeT = 0;
+  g.berserk = 1;
   g.result = null;
   g.boss = null;
   g.enemies.length = 0;
@@ -116,7 +240,8 @@ export function startStage(g, stage) {
   g.spawnIdx = 0;
   g.progress.total = plan.total;
   g.progress.killed = 0;
-  g.wall.max = wallMax(lvSum(g));
+  g.spawnT = g.rushT = 0;
+  g.wall.max = wallCap(g);
   g.wall.hp = g.wall.max;
   g.wallLost = 0;
   if (!carry) {
@@ -128,26 +253,29 @@ export function startStage(g, stage) {
   g.lastSkill.meteor = g.lastSkill.freeze = null;
   g.chain = null;
   g.pick = null;
-  g.rerollLeft = g.hero && hasMilestone(g.hero.level, 'reroll1') ? 1 : 0; // 영웅 Lv5: 스테이지당 카드 새로고침 1회
-  initSpells(g); // 판타지 스킬 빌드는 스테이지 한정: 매번 새로 시작
-  g._manaMarks = MANA_FRACS.map(f => Math.max(1, Math.ceil(plan.total * f)));
-  g._manaIdx = 0;
+  initSpells(g); // 스킬 빌드(g.spells)는 런 전체 유지, 전장 효과·쿨타임만 새로
+  g._manaMark = Math.max(1, Math.ceil(plan.total * MANA_FRAC));
+  g._manaDone = false;
+  g._manaN = 0;
   g.mana = { cur: 0, max: MANA_MAX };
   for (const p of g.players) {
-    p.stats = cannonStats(p.lv, p.perks); // 스테이지 사이 퍼크 구매 반영
-    p.gold += startGoldAmount(stage, p.perks.startGold);
+    p.stats = cannonStats(p.lv, g.fx);
     p.fireT = 0;
   }
   // 영웅: 스테이지마다 성문에서 다시 걸어 나간다(레벨·장비는 g.hero에 영구 보존)
   g.heroUnit = g.hero && g.hero.cls ? spawnHeroUnit(g.hero) : null;
-  if (g.hero && g.hero.cls && hasMilestone(g.hero.level, 'extraCard')) triggerPick(g); // Lv30: 시작 시 카드 1장 추가
+  g.summons.length = 0; // 소환물은 영웅을 따라 다시 나온다
+  g.heroBuff = null;
+  g.run.checkpoint = serializeRun(g); // 이어하기: 이 스테이지 시작부터
+  // 영웅 Lv30: 도전 시작(1층) 시 카드 1장 추가
+  if (stage === 1 && g.run.floors === 0 && g.hero && g.hero.cls && hasMilestone(g.hero.level, 'extraCard')) triggerPick(g);
 }
 
 export function setPlayer(g, i, init) {
   if (i !== 0 && i !== 1) return;
   const ratio = g.wall.max > 0 ? g.wall.hp / g.wall.max : 1;
-  g.players[i] = makePlayer(init, i);
-  g.wall.max = wallMax(lvSum(g));
+  g.players[i] = makePlayer(init, i, g.fx);
+  g.wall.max = wallCap(g);
   g.wall.hp = g.wall.max * ratio;
   refreshSyn(g);
 }
@@ -199,16 +327,25 @@ function weightedKey(g, keys) {
   return keys[keys.length - 1];
 }
 
-// 만렙 아닌 스킬 중 3장(영웅 Lv15면 4장), 희귀도 가중치 뽑기(중복 없음)
+// 선택지 수 = 3 + 영웅 Lv15(+1) + 영구 강화 '카드 선택지'(+1)
+export const cardCount = g => 3 + (g.hero && hasMilestone(g.hero.level, 'choose4') ? 1 : 0) + g.fx.choices;
+
+// 슬롯 6칸 · Lv1~5. 슬롯이 차면 보유 스킬 강화 카드만, 모자라는 자리는 각성 카드로 채운다(중복 없음)
 function genCards(g) {
-  const n = g.hero && hasMilestone(g.hero.level, 'choose4') ? 4 : 3;
-  let pool = SPELL_KEYS.filter(k => (g.spells[k] || 0) < 3);
+  const n = cardCount(g);
+  const full = Object.keys(g.spells).length >= SPELL_SLOTS;
+  let pool = SPELL_KEYS.filter(k => (g.spells[k] || 0) < SPELL_MAX_LV && (!full || g.spells[k] > 0));
   const cards = [];
   while (cards.length < n && pool.length) {
     const k = weightedKey(g, pool);
     pool = pool.filter(x => x !== k);
     const spell = SPELL_BY_KEY[k];
     cards.push({ spell: k, level: (g.spells[k] || 0) + 1, rarity: spell.rarity, fusionHint: wouldFuse(g, k) });
+  }
+  const aw = AWAKEN_KEYS.slice();
+  while (cards.length < n && aw.length) {
+    const k = aw.splice(Math.floor(g.rng() * aw.length), 1)[0];
+    cards.push({ spell: null, awaken: k, level: g.run.awaken[k] + 1, rarity: 'common', fusionHint: false });
   }
   return cards;
 }
@@ -221,19 +358,23 @@ function triggerPick(g) {
   emit(g, { type: 'pickOffer' });
 }
 
-// 처치 수 기준 25%·55%·85% 지점에서 마나가 가득 차 카드를 띄운다.
-// 영웅 장비의 마나 충전%만큼 구간이 짧아진다(manaMul=1이면 기존과 완전히 동일)
+// 층마다 처치 진행률 60%(MANA_FRAC) 지점에서 마나가 가득 차 카드 1장.
+// 영웅 장비의 마나 충전%만큼 그 지점이 앞당겨진다. 비전 충전이 1 이상이면 층 막바지에 1장 더
 function gainMana(g) {
-  if (g.pick || g._manaIdx >= g._manaMarks.length) return;
+  if (g.pick || g._manaDone) return;
   const manaMul = g.hero ? heroBonuses(g.hero).manaMul : 1;
-  const marks = g._manaMarks, idx = g._manaIdx, prev = idx > 0 ? marks[idx - 1] : 0;
-  const mark = prev + Math.max(1, (marks[idx] - prev) / manaMul);
-  g.mana.cur = clamp(MANA_MAX * (g.progress.killed - prev) / Math.max(1, mark - prev), 0, MANA_MAX);
-  if (g.progress.killed >= mark) {
-    g._manaIdx++;
-    g.mana.cur = MANA_MAX;
-    triggerPick(g);
-  }
+  const mark = Math.max(1, g._manaMark / manaMul), n = g._manaN | 0;
+  // 비전 충전(마법사 비전 특성): 층마다 tb.mana씩 쌓여 1이 되면 그 층 막바지(처치 85%)에 카드 1장 더
+  const at = n === 0 ? mark : Math.max(mark + 1, g.progress.total * ARCANE_AT);
+  const from = n === 0 ? 0 : mark;
+  g.mana.cur = clamp(MANA_MAX * (g.progress.killed - from) / (at - from), 0, MANA_MAX);
+  if (g.progress.killed < at) return;
+  g._manaN = n + 1;
+  if (n === 0) g.run.arcane = Math.min(2, g.run.arcane + (heroTb(g) ? heroTb(g).mana : 0));
+  else g.run.arcane -= 1;
+  g._manaDone = n > 0 || g.run.arcane < 1;
+  g.mana.cur = MANA_MAX;
+  triggerPick(g);
 }
 
 // 원소 융합 재계산 (스킬 레벨이 바뀔 때). 새로 켜진 것만 synergy 이벤트(기존 발견 목록 재사용)
@@ -250,14 +391,27 @@ function applyPick(g, i, index) {
   const cards = g.pick.cards;
   if (!Number.isInteger(index) || index < 0 || index >= cards.length) return false;
   const card = cards[index];
-  g.spells[card.spell] = card.level;
   g.pick = null;
-  emit(g, { type: 'spellPick', spell: card.spell, level: card.level, rarity: card.rarity });
+  if (card.awaken) { // 각성: 런 동안 소폭 스탯 누적
+    g.run.awaken[card.awaken]++;
+    refreshFx(g);
+    emit(g, { type: 'spellPick', spell: null, awaken: card.awaken, level: card.level, rarity: card.rarity });
+    return true;
+  }
+  let level = card.level;
+  const tb = heroTb(g);
+  if (tb && tb.cap.cardBless && level < SPELL_MAX_LV && g.heroRng() < 0.3) { // 카드 축복(성직자 궁극 특성): 레벨 +1
+    level++;
+    emit(g, { type: 'heroProc', kind: 'cardBless', spell: card.spell, level });
+  }
+  g.spells[card.spell] = level;
+  g.seenSpells.add(card.spell);
+  emit(g, { type: 'spellPick', spell: card.spell, level, rarity: card.rarity });
   refreshFusion(g);
   return true;
 }
 
-// 영웅 Lv5 마일스톤: 떠 있는 카드를 새로 뽑기(스테이지당 rerollLeft회). 자동 선택 카운트다운도 처음부터
+// 카드 새로고침(런 전체 rerollLeft회: 영웅 Lv5 + 영구 강화). 자동 선택 카운트다운도 처음부터
 function rerollPick(g, i) {
   if (i !== 0 || !g.pick || !(g.rerollLeft > 0)) return false;
   const cards = genCards(g);
@@ -292,9 +446,9 @@ export function act(g, i, action) {
     if (!(p.gold >= cost)) return false;
     p.gold -= cost;
     p.lv[stat] = lv + 1;
-    p.stats = cannonStats(p.lv, p.perks);
+    p.stats = cannonStats(p.lv, g.fx);
     if (stat === 'wall') {
-      const max = wallMax(lvSum(g));
+      const max = wallCap(g);
       g.wall.hp += max - g.wall.max;
       g.wall.max = max;
     }
@@ -323,10 +477,11 @@ export function act(g, i, action) {
   if (action.type === 'heroClass') {
     const hero = g.hero;
     if (!hero) return false;
-    if (hero.cls && g.phase === 'play' && g.phaseT > 0) return false; // 이미 고른 클래스는 전투 중 변경 불가(스테이지 사이만)
-    const cls = HERO_CLASSES[action.cls];
+    if (hero.cls && (g.phaseT > 0 || g.run.floors > 0)) return false; // 클래스는 도전 단위: 도전이 시작되면 고정
+    const cls = Object.hasOwn(HERO_CLASSES, action.cls) && HERO_CLASSES[action.cls];
     if (!cls || !cls.unlock(g.best)) return false;
     hero.cls = action.cls;
+    g.run.loadout.cls = action.cls;
     g.heroUnit = spawnHeroUnit(hero);
     return true;
   }
@@ -335,6 +490,15 @@ export function act(g, i, action) {
     const x = toInt(action.x, 0, WORLD_W), y = toInt(action.y, 0, WALL_Y);
     g.heroUnit.moveTo = { x, y, holdT: HERO_MOVE_HOLD };
     return true;
+  }
+  if (action.type === 'talent') { // 도전 중 특성 찍기(현재 클래스). 초기화는 정비 화면(run.js campAct)에서만
+    if (!g.hero || !g.hero.cls) return false;
+    const ok = allocateTalent(g.hero, g.hero.cls, action.key);
+    if (ok) {
+      if (g.heroUnit) g.heroUnit.tbT = 0; // 다음 프레임에 효과 반영
+      emit(g, { type: 'talent', cls: g.hero.cls, key: action.key });
+    }
+    return ok;
   }
   if (action.type === 'heroUlt') {
     return !!g.heroUnit && castHeroUlt(g, HERO_API);
@@ -366,7 +530,7 @@ export function act(g, i, action) {
 }
 
 function meteor(g, o, dbl) {
-  // 빙하 운석: 다른 대포의 빙결 후 3초 안 (빙결 5초 > 3초라 적은 아직 얼어 있음)
+  // 빙하 운석: 다른 마법사의 빙결 후 3초 안 (빙결 5초 > 3초라 적은 아직 얼어 있음)
   const fz = g.lastSkill.freeze;
   const glacier = !!fz && fz.o !== o && g.phaseT - fz.t <= FX.glacierWindow && g.freezeT > 0;
   if (glacier) synergy(g, 'glacier', -1, WORLD_W / 2, WALL_Y / 2);
@@ -416,8 +580,21 @@ export function step(g, dt) {
   if (g.frenzyT > 0) g.frenzyT = Math.max(0, g.frenzyT - dt);
   if (g.legendT > 0) g.legendT = Math.max(0, g.legendT - dt);
   if (g.critStopT > 0) g.critStopT -= dt;
+  if (g.phaseT > BERSERK_T) {
+    if (g.berserk === 1) emit(g, { type: 'berserk' });
+    g.berserk = 2 ** ((g.phaseT - BERSERK_T) / BERSERK_STEP);
+  }
 
-  while (g.spawnIdx < g.spawns.length && g.spawns[g.spawnIdx].t <= g.phaseT) {
+  // 학살 가속: 필드가 비면 다음 스폰 묶음(burst)을 바로 당긴다(압도적인 층은 빨리 지나간다)
+  g.spawnT += g.spawnT < g.rushT ? dt * RUSH : dt;
+  if (g.enemies.length === 0 && g.spawnIdx < g.spawns.length && g.spawns[g.spawnIdx].t - ACCEL_LEAD > g.spawnT) {
+    const sp = g.spawns, b = sp[g.spawnIdx].burst;
+    let j = g.spawnIdx;
+    while (j + 1 < sp.length && sp[j + 1].burst === b) j++;
+    g.spawnT = sp[g.spawnIdx].t - ACCEL_LEAD;
+    g.rushT = sp[j].t;
+  }
+  while (g.spawnIdx < g.spawns.length && g.spawns[g.spawnIdx].t <= g.spawnT) {
     const s = g.spawns[g.spawnIdx++];
     spawnEnemy(g, s.type, s.x, null, s.elite, s.boss);
   }
@@ -445,14 +622,20 @@ export function step(g, dt) {
     const stars = starsFor(ratio);
     const firstClear = g.stage > g.best;
     const flawless = g.wall.hp >= g.wall.max;
-    let gem = gemReward(g.stage, stars, firstClear);
-    if (flawless) gem = Math.ceil(gem * FX.flawlessGem);
+    // 런 보석 적립(도전 종료 때 지급): 층 + 무결점 50% + 첫 돌파
+    const run = g.run, base = RUN_GEMS.floor(g.stage), fl = flawless ? Math.ceil(base * FX.flawlessGem) - base : 0;
+    const first = firstClear ? RUN_GEMS.first(g.stage) : 0;
+    run.gems.floor += base; run.gems.flawless += fl; run.gems.first += first;
+    run.floors++; run.time += g.phaseT;
+    if (firstClear) run.firstClears++;
+    if (flawless) run.flawless++;
+    const gem = base + fl + first;
     g.result = { stars, gems: [gem, gem], firstClear, time: g.phaseT, flawless };
     g.best = Math.max(g.best, g.stage);
     g.lastLoss = 1 - ratio;
     g.phase = 'clear';
     g.phaseT = 0;
-    g.pick = null; // 마지막 처치와 같은 스텝에 뜬 카드는 버린다(빌드는 다음 스테이지에 리셋)
+    g.pick = null; // 마지막 처치와 같은 스텝에 뜬 카드는 버린다(드묾)
     g.bullets.length = 0;
     g.eshots.length = 0;
     emit(g, { type: 'clear', stage: g.stage, stars, gems: [gem, gem] });
@@ -461,6 +644,7 @@ export function step(g, dt) {
       heroGainXp(g, heroClearXp(g.stage, firstClear), HERO_API);
       lootDrop(g, 'chest', WORLD_W / 2, WALL_Y - 120, HERO_API); // 클리어 보물상자
     }
+    if (g.stage >= MAX_STAGE) endOfRun(g, true); // 100층 돌파 = 도전 완료
   }
 }
 
@@ -488,6 +672,7 @@ function spawnEnemy(g, type, x, y, elite, boss) {
     stopY: T.beh === 'thrower' ? 520 + g.rng() * 160 : 0,
     t: 0, t2: 0, t3: 0, atkT: 0, cycle: 0, enraged: false, dead: false,
     burn: 0, burnT: 0, burnO: 0, // 불꽃 산탄: 남은 화상 피해, 남은 시간, 가해자
+    slowT: 0,                    // 서리 화살 둔화 남은 시간
   };
   if (boss) {
     e.stopY = { lich: 260, golem: 520, demonLord: 300, dragon: 170 }[T.beh] ?? 0;
@@ -508,7 +693,7 @@ function summon(g, type, x, y) {
   return e;
 }
 
-// ── 대포 ──
+// ── 성벽 마법사: 기본 주문 시전 ──
 function frontMost(g) {
   let best = null;
   const es = g.enemies;
@@ -520,10 +705,11 @@ function frontMost(g) {
 }
 
 function updateCannons(g, dt) {
-  const tgt = frontMost(g);
+  const tgt = frontMost(g), tb = heroTb(g);
+  const aura = tb && g.heroUnit.state !== 'down' ? 1 + tb.aura : 1;
   for (let i = 0; i < 2; i++) {
     const p = g.players[i], c = CANNONS[i];
-    const rate = p.stats.rate * (i === 0 ? spellRateMul(g) : 1); // 질풍: 플레이어 공격속도만
+    const rate = p.stats.rate * (i === 0 ? spellRateMul(g) : 1) * aura; // 질풍: 플레이어 공격속도만 · 지휘관 오라: 두 마법사
     const iv = 1 / (g.frenzyT > 0 ? Math.min(FRENZY.rateCap, rate * FRENZY.rateMul) : rate);
     p.fireT += dt;
     if (!tgt) {
@@ -541,17 +727,18 @@ function updateCannons(g, dt) {
     if (p.fireT >= iv) {
       p.fireT -= iv;
       if (p.fireT > iv) p.fireT = iv;
-      fire(g, i, p, c);
+      fire(g, i, p, c, tx, ty);
     }
   }
 }
 
-function fire(g, i, p, c) {
-  const n = p.stats.shots, sp = p.stats.spread;
+// 기본 주문 1회 시전: 다중 시전 = 발사체 수(부채꼴). kind = 'fireball'(P1) | 'frostbolt'(P2)
+function fire(g, i, p, c, tx, ty) {
+  const n = p.stats.shots, sp = p.stats.spread, B = BASIC_SPELLS[i];
   const mx = c.x + Math.cos(p.angle) * 30, my = c.y + Math.sin(p.angle) * 30;
   const angles = new Array(n);
   const syn = p.syn, pierce = syn.includes('pierce'), homing = syn.includes('homing');
-  const kind = pierce ? 'pierce' : syn.includes('flame') ? 'flame' : homing ? 'homing' : 'normal';
+  const mod = pierce ? 'pierce' : syn.includes('flame') ? 'flame' : homing ? 'homing' : null; // 렌더용 히든 조합 표시
   // 조준선에 항상 탄이 가도록: 짝수 발이면 가운데 두 발을 조준선 양옆 0.02rad에 둔다
   const half = (n - 1) / 2, even = n % 2 === 0;
   const stepA = n > 1 ? sp / (2 * (even ? half - 0.5 : half)) : 0;
@@ -560,18 +747,28 @@ function fire(g, i, p, c) {
     const a = even ? p.angle + Math.sign(u) * ((Math.abs(u) - 0.5) * stepA + 0.02) : p.angle + u * stepA;
     angles[k] = a;
     g.bullets.push({
-      x: mx, y: my, vx: Math.cos(a) * BULLET_SPEED, vy: Math.sin(a) * BULLET_SPEED, owner: i, kind,
-      hit: pierce ? [] : null,       // 관통탄: 이미 맞은 적 id
+      x: mx, y: my, vx: Math.cos(a) * BULLET_SPEED, vy: Math.sin(a) * BULLET_SPEED, owner: i, caster: i, kind: B.key, syn: mod,
+      hit: [], pierce: B.pierce + (pierce ? FX.pierce : 0), // 이미 맞은 적 id · 최대 명중 수(서리 화살 2, 관통탄 +2)
       tgt: homing ? null : false,    // 유도: null=탐색 필요, false=안 함
       life: 0,
     });
   }
-  emit(g, { type: 'shoot', o: i, x: mx, y: my, angles });
+  emit(g, { type: 'cast', o: i, spell: B.key, basic: true, x: c.x, y: c.y, tx, ty, n });
+  emit(g, { type: 'shoot', o: i, x: mx, y: my, angles }); // 호환(발사 부채꼴 각도)
 }
 
 // ── 탄환 ──
 function updateBullets(g, dt) {
   const bs = g.bullets, es = g.enemies;
+  // 적이 있는 세로 구간 밖의 탄은 충돌 검사 생략(성능)
+  let y0 = Infinity, y1 = -Infinity;
+  for (let j = 0; j < es.length; j++) {
+    const e = es[j];
+    if (e.dead) continue;
+    if (e.y - e.r < y0) y0 = e.y - e.r;
+    if (e.y + e.r > y1) y1 = e.y + e.r;
+  }
+  y0 -= BULLET_R; y1 += BULLET_R;
   for (let bi = bs.length - 1; bi >= 0; bi--) {
     const b = bs[bi];
     if (b.tgt !== false) steer(g, b, dt);
@@ -579,7 +776,7 @@ function updateBullets(g, dt) {
     b.y += b.vy * dt;
     // 수명: 직진탄은 1초 안에 화면을 벗어남. 유도탄이 회전 반경 안의 표적 주위를 영원히 도는 것 방지
     let gone = (b.life += dt) > BULLET_LIFE || b.x < -20 || b.x > WORLD_W + 20 || b.y < -60 || b.y > WORLD_H;
-    if (!gone) {
+    if (!gone && b.y >= y0 && b.y <= y1) {
       for (let j = 0; j < es.length; j++) {
         const e = es[j];
         if (e.dead) continue;
@@ -587,12 +784,10 @@ function updateBullets(g, dt) {
         if (dy > rr || dy < -rr) continue;
         const dx = b.x - e.x;
         if (dx * dx + dy * dy > rr * rr) continue;
-        if (b.hit) {
-          if (b.hit.includes(e.id)) continue;
-          b.hit.push(e.id);
-          hitEnemy(g, e, b.owner, b.kind);
-          if (b.hit.length < FX.pierce) continue;
-        } else hitEnemy(g, e, b.owner, b.kind);
+        if (b.hit.includes(e.id)) continue;
+        b.hit.push(e.id);
+        basicHit(g, e, b);
+        if (b.hit.length < b.pierce) continue;
         gone = true;
         break;
       }
@@ -601,61 +796,93 @@ function updateBullets(g, dt) {
   }
 }
 
-const wrapA = a => Math.atan2(Math.sin(a), Math.cos(a));
+const HOMING_COS = Math.cos(0.7);
 
-// 유도 미사일: 진행 방향 ±0.7rad 안에서 각도가 가장 가까운 적을 쫓음 (표적이 죽으면 재탐색)
+// 유도 미사일: 진행 방향 ±0.7rad 안에서 각도가 가장 가까운 적을 쫓음 (표적이 죽으면 재탐색). 삼각함수 대신 내적/외적
 function steer(g, b, dt) {
   let t = b.tgt;
-  const h = Math.atan2(b.vy, b.vx);
   if (!t || t.dead) {
     t = null;
-    let best = 0.7;
-    const es = g.enemies;
+    let best = HOMING_COS;
+    const es = g.enemies, hx = b.vx / BULLET_SPEED, hy = b.vy / BULLET_SPEED;
     for (let j = 0; j < es.length; j++) {
       const e = es[j];
       if (e.dead || e.y + e.r < 0) continue;
-      const d = Math.abs(wrapA(Math.atan2(e.y - b.y, e.x - b.x) - h));
-      if (d < best) { best = d; t = e; }
+      const dx = e.x - b.x, dy = e.y - b.y, d = Math.sqrt(dx * dx + dy * dy) || 1;
+      const c = (dx * hx + dy * hy) / d;
+      if (c > best) { best = c; t = e; }
     }
     b.tgt = t || false; // 못 찾으면 직진
     if (!t) return;
   }
-  const mx = FX.homingTurn * dt;
-  const a = h + clamp(wrapA(Math.atan2(t.y - b.y, t.x - b.x) - h), -mx, mx);
-  b.vx = Math.cos(a) * BULLET_SPEED;
-  b.vy = Math.sin(a) * BULLET_SPEED;
+  const mx = FX.homingTurn * dt, dx = t.x - b.x, dy = t.y - b.y;
+  const da = clamp(Math.atan2(b.vx * dy - b.vy * dx, b.vx * dx + b.vy * dy), -mx, mx);
+  const c = Math.cos(da), s = Math.sin(da), vx = b.vx * c - b.vy * s;
+  b.vy = b.vx * s + b.vy * c;
+  b.vx = vx;
 }
 
-function hitEnemy(g, e, o, kind = 'normal') {
+// 주문 피해 공통(기본 주문·스킬): 시전자 o의 치명타 · 쌍둥이 포화 · 거인 사냥꾼(치명타 시 엘리트·보스 ×2) · 체인 라이트닝(치명타).
+// card = 쿨타임/카드 스킬(hit 이벤트 o:3, caster = 시전자), dot = 지속 피해(치명타는 기댓값만, 체인·히트스톱 없음). 치명타 등 적용 후 원피해 반환
+function spellHit(g, e, raw, o, kind, card = false, dot = false, crit = !dot && g.rng() < g.players[o].stats.crit) {
   const p = g.players[o], st = p.stats;
-  const crit = g.rng() < st.crit;
-  let raw = st.dmg * (crit ? st.critMult : 1);
+  raw *= dot ? 1 + st.crit * (st.critMult - 1) : crit ? st.critMult : 1;
   if (g.duo.includes('twin')) raw *= FX.twin;
-  if (e.isBoss && p.syn.includes('giant')) raw *= FX.giant;
-  const maxHp = e.maxHp;
-  const dealt = damage(g, e, raw, o);
-  const big = dealt >= maxHp * 0.05 || (e.isBoss && crit);
-  emit(g, { type: 'hit', x: e.x, y: e.y, dmg: dealt, crit, o, kind, big });
-  if (!e.dead) {
-    if (!e.isBoss) e.y -= Math.min(KB_MAX, KB_K * dealt / maxHp); // 넉백 (보스 면역)
-    if (p.syn.includes('flame')) { e.burn += raw * FX.burn; e.burnT = FX.burnT; e.burnO = o; }
-  }
+  if (g.heroBuff) raw *= g.heroBuff.mul; // 전군 강화 함성
+  if (crit && e.isBoss && p.syn.includes('giant')) raw *= FX.giant;
+  const maxHp = e.maxHp, dealt = damage(g, e, raw, o, !dot);
+  emit(g, { type: 'hit', x: e.x, y: e.y, dmg: dealt, crit, o: card ? 3 : o, caster: o, kind, big: dealt >= maxHp * 0.05 || (e.isBoss && crit) });
   if (crit && e.isBoss && g.critStopT <= 0) {
     g.critStopT = 0.3;
     emit(g, { type: 'hitstop', ms: 60 });
   }
   if (crit && p.syn.includes('chain')) chainArc(g, e, raw * FX.chainPct, o);
-  if (crit && st.boomR > 0) {
-    const splash = raw * st.boomRatio, es = g.enemies;
+  if (crit && !card) critBoom(g, e, st, raw, o);
+  return raw;
+}
+
+// 치명타 폭발(영구 강화 critBoom): 기본 주문 치명타일 때만
+function critBoom(g, e, st, raw, o) {
+  if (!(st.boomR > 0)) return;
+  const splash = raw * st.boomRatio, es = g.enemies;
+  for (let j = 0; j < es.length; j++) {
+    const q = es[j];
+    if (q === e || q.dead) continue;
+    const dx = q.x - e.x, dy = q.y - e.y, rr = st.boomR + q.r;
+    if (dx * dx + dy * dy <= rr * rr) damage(g, q, splash, o);
+  }
+  emit(g, { type: 'boom', x: e.x, y: e.y, r: st.boomR, kind: 'crit' });
+}
+
+// 기본 주문 명중: 화염구는 작은 폭발(주변 splashPct), 서리 화살은 둔화. 불꽃 산탄 = 화상 + 화염구 파편
+function basicHit(g, e, b) {
+  const o = b.owner, p = g.players[o], B = BASIC_SPELLS[o];
+  const x = e.x, y = e.y, raw = spellHit(g, e, p.stats.dmg * B.dmg, o, b.kind);
+  const flame = p.syn.includes('flame'), es = g.enemies;
+  const burn = q => { if (flame && !q.dead) { q.burn += raw * FX.burn; q.burnT = FX.burnT; q.burnO = o; } };
+  if (!e.dead) {
+    if (!e.isBoss) e.y -= Math.min(KB_MAX, KB_K * raw / e.maxHp); // 넉백 (보스 면역)
+    if (B.slow) e.slowT = B.slowT;
+    burn(e);
+  }
+  if (B.splashR) {
     for (let j = 0; j < es.length; j++) {
       const q = es[j];
       if (q === e || q.dead) continue;
-      const dx = q.x - e.x, dy = q.y - e.y, rr = st.boomR + q.r;
-      if (dx * dx + dy * dy <= rr * rr) damage(g, q, splash, o);
+      const rr = B.splashR + q.r;
+      if ((q.x - x) ** 2 + (q.y - y) ** 2 > rr * rr) continue;
+      damage(g, q, raw * B.splashPct, o, false);
+      burn(q);
     }
-    emit(g, { type: 'boom', x: e.x, y: e.y, r: st.boomR, kind: 'crit' });
+    emit(g, { type: 'boom', x, y, r: B.splashR, kind: 'fireball', o });
+    if (flame) { // 불꽃 산탄: 화염구가 가까운 적들에게 파편으로 흩어진다
+      const d2 = q => (q.x - x) ** 2 + (q.y - y) ** 2;
+      const near = es.filter(q => q !== e && !q.dead && d2(q) <= FX.shardR ** 2).sort((a, c) => d2(a) - d2(c)).slice(0, FX.shardN);
+      for (const q of near) { damage(g, q, raw * FX.shardPct, o); burn(q); }
+      if (near.length) emit(g, { type: 'shards', o, x, y, pts: near.map(q => [q.x, q.y]) });
+    }
   }
-  onCannonHit(g, e, raw, o, SPELL_API); // 불꽃 탄환·연쇄 번개(판타지 스킬)
+  onBasicHit(g, e, raw, o, SPELL_API); // 불꽃 마탄·연쇄 번개(판타지 스킬)
 }
 
 // 체인 라이트닝: 가장 가까운 적으로 차례차례 전이. n = 전이 최대 마리 수
@@ -689,6 +916,7 @@ function damage(g, e, dmg, o, flash = true) {
     e.shield -= a;
     d -= a;
   }
+  g.dmgDone[o === 2 ? 2 : o === 1 ? 1 : 0] += Math.min(dmg, dmg - d + Math.max(0, e.hp)); // 실제로 깎은 양(초과 피해 제외)
   e.hp -= d;
   if (flash) e.hitT = 0.12;
   if (e.hp <= 0) killEnemy(g, e, o, true);
@@ -704,15 +932,21 @@ function killEnemy(g, e, o, effects) {
   addCombo(g, e);
   countFrenzy(g, e);
   const tier = g.combo.tier;
-  const heroGoldMul = g.hero ? heroBonuses(g.hero).goldMul : 1;
-  const mult = (tier ? COMBO_TIERS[tier - 1].gold : 1) * (g.duo.includes('golden') ? FX.golden : 1) * (g.legendT > 0 ? 2 : 1) * heroGoldMul;
+  const tb = heroTb(g);
+  const heroGoldMul = (g.hero ? heroBonuses(g.hero).goldMul : 1) * (1 + (tb ? tb.gold : 0));
+  const mult = (tier ? COMBO_TIERS[tier - 1].gold : 1) * (g.duo.includes('golden') ? FX.golden : 1) * (g.legendT > 0 ? 2 : 1) * heroGoldMul * g.fx.goldMul;
   const gold = Math.ceil(e.gold * mult);
   for (const p of g.players) p.gold += gold; // 두 플레이어 모두 전액
   if (g.chain) { g.chain.kills++; g.chain.gold += gold; }
   emit(g, { type: 'kill', x: e.x, y: e.y, enemy: e.type, gold, isBoss: e.isBoss, o });
   onSpellKill(g, e, o, gold, SPELL_API); // 영혼 수확·황혼·증기 폭발·망령 군단
-  if (g.hero && g.hero.cls) heroOnKill(g, e, HERO_API); // 영웅 경험치 + 장비 드롭
-  if (e.named) emit(g, { type: 'hitstop', ms: 500 });
+  if (g.hero && g.hero.cls) heroOnKill(g, e, HERO_API, o); // 영웅 경험치 + 장비 드롭
+  if (e.named) {
+    learnAllySpell(g);
+    g.run.bosses++;
+    g.run.gems.boss += RUN_GEMS.boss(g.stage);
+    emit(g, { type: 'hitstop', ms: 500 });
+  }
   else if (e.elite) emit(g, { type: 'hitstop', ms: 120 });
   if (effects && e.beh === 'bomber') explode(g, e, o, gold);
   if (e.beh === 'kingSlime') {
@@ -726,6 +960,15 @@ function killEnemy(g, e, o, effects) {
       m.name = '중형 슬라임';
     }
   }
+}
+
+// AI 동료 마법사: 네임드 보스를 잡을 때마다 냉기·번개 주문을 하나씩 익힌다(런당 최대 3, 층이 높을수록 높은 레벨)
+function learnAllySpell(g) {
+  const key = ALLY_SPELLS.find(k => !g.allySpells[k]);
+  if (!key) return;
+  const level = allySpellLv(g.stage);
+  g.allySpells[key] = level;
+  emit(g, { type: 'allySpell', spell: key, level, x: CANNONS[1].x, y: CANNONS[1].y - 40 });
 }
 
 // ── 콤보 / 광란 ──
@@ -792,22 +1035,49 @@ function explode(g, e, o, gold) {
   }
 }
 
+// 도전 종료(성벽 붕괴 또는 100층 돌파). 보상 정산은 호출측이 endRun(game, meta)로
+function endOfRun(g, victory) {
+  g.run.over = true;
+  g.run.victory = victory;
+  emit(g, { type: 'runOver', stage: g.stage, victory, floors: g.run.floors });
+}
+
 // src: 성벽을 직접 때린 적 (요새화 반사 대상)
 function damageWall(g, dmg, src = null) {
   if (g.phase !== 'play') return;
-  dmg = golemAbsorb(g, dmg); // 돌 골렘(판타지 스킬)이 먼저 맞아준다
+  dmg = golemAbsorb(g, dmg * g.berserk); // 돌 골렘(판타지 스킬)이 먼저 맞아준다
   if (dmg <= 0) return;
   g.wall.hp -= dmg;
   g.wallLost += dmg;
   emit(g, { type: 'wall', dmg });
   if (g.wall.hp <= 0) {
+    const tb = heroTb(g);
+    if (tb && tb.cap.reviveWard && !g.run.heroRevive) { // 부활 결계 강화(성직자 궁극 특성): 도전마다 1회, 40%
+      g.run.heroRevive = true;
+      g.wall.hp = g.wall.max * HERO_REVIVE_HP;
+      g.freezeT = Math.max(g.freezeT, REVIVE_FREEZE);
+      emit(g, { type: 'revive', x: WORLD_W / 2, y: WALL_Y, hp: g.wall.hp, hero: true });
+      emit(g, { type: 'heroProc', kind: 'reviveWard', x: WORLD_W / 2, y: WALL_Y });
+      emit(g, { type: 'hitstop', ms: 400 });
+      return;
+    }
+    if (g.fx.revive && !g.run.reviveUsed) { // 부활 결계: 도전마다 1회
+      g.run.reviveUsed = true;
+      g.wall.hp = g.wall.max * REVIVE_HP;
+      g.freezeT = Math.max(g.freezeT, REVIVE_FREEZE);
+      emit(g, { type: 'revive', x: WORLD_W / 2, y: WALL_Y, hp: g.wall.hp });
+      emit(g, { type: 'hitstop', ms: 400 });
+      return;
+    }
     g.wall.hp = 0;
     g.phase = 'defeat';
-    g.phaseT = 0;
     g.pick = null;
     g.lastLoss = 1;
+    g.run.time += g.phaseT;
+    g.phaseT = 0;
     endCombo(g);
     emit(g, { type: 'defeat', stage: g.stage });
+    endOfRun(g, false);
     return;
   }
   if (!src) return;
@@ -825,6 +1095,7 @@ function updateEnemies(g, dt) {
   for (let j = 0; j < es.length; j++) {
     const e = es[j];
     if (e.hitT > 0) e.hitT -= dt;
+    if (e.slowT > 0) e.slowT -= dt;
     e.frozen = frozen;
     if (e.dead) continue;
     if (e.burnT > 0) { // 화상: 남은 피해를 남은 시간에 걸쳐
@@ -880,10 +1151,11 @@ function updateEnemies(g, dt) {
 
 // 아래로 이동. 성벽에 닿으면 공격하고 true. 영웅이 도발/근접 범위 안이면 성벽 대신 영웅을 노린다
 function walk(g, e, dt, spd) {
-  spd *= frostSlowMul(g, e); // 서리 결계(판타지 스킬): 성벽 근처 감속
+  // 서리 결계(판타지 스킬): 성벽 근처 감속. 광폭화 중엔 감속 무시 + 최대 3배속
+  spd *= g.berserk > 1 ? Math.min(3, g.berserk) : frostSlowMul(g, e) * (e.slowT > 0 ? 1 - FROST_SLOW : 1); // + 서리 화살 둔화
   const h = g.heroUnit;
-  if (h && h.state !== 'down') {
-    const r = heroEngageRadius(g.hero);
+  if (h && h.state !== 'down' && h.engageR > 0) {
+    const r = h.engageR;
     const dx = h.x - e.x, dy = h.y - e.y, d2 = dx * dx + dy * dy;
     if (d2 <= r * r) {
       const d = Math.sqrt(d2) || 1;
@@ -891,7 +1163,7 @@ function walk(g, e, dt, spd) {
         e.vx = e.vy = 0;
         e.state = 'attackHero';
         e.atkT += dt;
-        if (e.atkT >= 1) { e.atkT -= 1; heroTakeDamage(g, e.dmg, HERO_API); }
+        if (e.atkT >= 1) { e.atkT -= 1; heroTakeDamage(g, e.dmg * g.berserk, HERO_API, e); }
         return true;
       }
       e.x += dx / d * spd * dt;

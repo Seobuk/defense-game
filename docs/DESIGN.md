@@ -372,3 +372,258 @@ URL 파라미터 `?stage=N` (해당 스테이지로 시작), `?gold=N` (골드 �
 - 1~9스테이지 패배 0회. 첫 벽은 대략 10층 보스 전후.
 - 1~100 전체 시도 횟수 ≤ 약 140, 어떤 스테이지도 재도전 8회 이하.
 - 100층 클리어 가능. 100층 무렵 데미지 숫자는 수백만~수십억대(숫자 커지는 쾌감).
+
+### 로그라이트 도전 구조 — 최신 사용자 요청 (기존 '패배 시 재도전/이전 스테이지'·'스테이지 한정 빌드'를 대체)
+사용자: "한 번 하다 죽으면 스테이지 1부터 다시 시작, 정비하고 강화시켜서 다시 스테이지 도전하는 형식. 매번 도전할 때마다 어떤 영웅과 어떤 스킬을 조합할까."
+위 문서의 '패배 시 재도전 / 이전 스테이지로', '스테이지 한정 빌드(Lv3, 스테이지당 3장)', '퍼크 3종', '오프라인 골드', '골드·업그레이드 스테이지 간 유지', 옛 밸런스 목표는 아래로 대체된다.
+
+- **도전(런)**: 1층부터 성벽이 무너질 때까지. 성벽 붕괴 = 도전 종료(재도전·이전 층 없음) → 결과 화면 → 정비 화면. 100층 돌파도 도전 종료(승리).
+- **런마다 초기화**: 골드, 성벽 마법사 업그레이드(두 마법사), 스킬 빌드, AI 동료, 콤보. **영구(메타)**: 영웅 레벨·경험치·장비·가방, 보석·영구 강화, 도감, 뽑아 본 스킬, 최고 기록, 클래스 해금, 설정.
+- **스킬 빌드 = 런 전체 누적**: 층마다 처치 60%에서 카드 1장 + 네임드 보스 등장 시 1장 + 영웅 Lv30이면 도전 시작 시 1장. 슬롯 6칸 · Lv1~5. 슬롯이 차면 보유 스킬 강화만, 강화할 게 모자라면 각성 카드(소폭 스탯, 런 누적)로 채운다. 융합 8종은 런 안에서 두 원소를 모으면 발동.
+- **학살 가속**: 필드가 비면 다음 스폰 묶음을 1.2초 뒤로 당기고 그 묶음을 2배 빠르게 → 압도적인 층은 15~25초. **광폭화**: 층이 80초를 넘기면 적 피해가 10초마다 2배, 이동은 감속·밀쳐내기를 무시(서리 결계+회오리 같은 교착 방지).
+- **난이도**: 적 체력 = 기존 곡선 × 1.07^(층-1) × 구간 보정(`stages.js RUN_HP`). 런 안의 성장보다 적이 층당 약 5% 빨리 강해져 도전은 결국 끝나고, 영구 강화(복리)가 그 벽을 밀어 올린다. 기사 도발 반경 150 → 120(클래스 동등성).
+
+### 로그라이트 구현 계약
+sim.js(런 상태) + run.js(메타 ↔ 런, 신규) + save.js(v2) + config.js(수치). 모두 DOM 없음. UI 통합 패스는 아래 API만 부르면 된다.
+
+**메타 객체** = `save.js normalize()` 결과(저장 데이터 그 자체, run.js 함수가 제자리에서 바꾼다):
+```
+{ v:2, name, best, gems,
+  metaLv: { power, haste, ward, greed, startGold, wisdom, choice, reroll, startSlot, revive, critBoom, pickaxe },
+  auto, settings:{ dmgNumbers, sound, shake, speed, autoNext },
+  hero,                       // 기존 영웅 객체(영구)
+  discovered: string[],       // 도감
+  seenSpells: string[],       // 한 번이라도 뽑아 본 스킬 = 시작 스킬 후보
+  runs,                       // 끝낸 도전 수
+  lastLoadout: { cls, startSpells[] },   // '같은 조합으로 도전'
+  run: null | RunSave,        // 이어하기(스테이지 시작 시점). 도전 중이 아니면 null
+  lastSeen }
+```
+저장 키는 그대로 `wallDefense.save.v1`(안의 `v:2`). **v1 → v2 마이그레이션**: 영웅·보석·최고 기록·도감·설정·이름·auto 유지, 퍼크 `pickaxe/critBoom/startGold` → 같은 키의 `metaLv`, 골드·강화 레벨·동료·층은 버리고 대신 **최고 기록 × 3 보석**(`MIGRATE_GEMS_PER_BEST`), `run = null`, `seenSpells = []`. 어떤 입력에도 throw 없음.
+
+**run.js**
+```
+buyMeta(meta, key) → bool                 // 보석 차감 + metaLv[key]++ (최대·보석 부족이면 false)
+startSlots(meta) → 0..2                    // 시작 스킬 슬롯 수(영구 강화 startSlot)
+startSpellChoices(meta) → key[]            // seenSpells(SPELLS 순서)
+validLoadout(meta, {cls, startSpells}) → {cls, startSpells}   // 미해금 클래스·안 뽑아 본 스킬·슬롯 초과·중복 제거
+newRun(meta, loadout, seed?) → game        // 1층부터. meta.hero.cls = cls, meta.lastLoadout, meta.run = 첫 체크포인트
+restoreRun(meta, saved = meta.run, seed?) → game | null      // 이어하기: 저장된 스테이지 '시작'부터
+endRun(game, meta) → Summary | null        // 도전 종료 정산(성벽 붕괴·100층·포기 모두). 두 번째 호출은 null
+applyOffline(meta, computeOffline(meta)) → levelUps[]         // 보석 + 영웅 경험치
+campAct(meta, {type:'heroClass', cls} | {type:'equip', itemId} | {type:'autoEquip', on}) → bool
+                                           // 정비 화면 영웅 조작(게임 없이). 판매는 도전 중에만(act 'sell' → 런 골드)
+serializeRun(game) / normalizeRun(raw)     // (sim.js 재수출) 체크포인트 JSON ↔ 검증
+Summary = { stageReached, floorsCleared, victory, prevBest, best, newBest, bossesKilled, time,
+            rewards: { floor, first, boss, flawless, best, gems },   // gems = 합계(이미 meta.gems에 더함)
+            spells, loadout, newClasses: string[] }                   // newClasses = 이번에 해금된 클래스(성직자 20층·암살자 40층)
+```
+`endRun`은 meta에 보석·`best = max(best, floorsCleared)`·도감·뽑아 본 스킬을 합치고 `runs++`, `run = null`. 신기록 판정은 도전 시작 때의 최고 기록(`game.run.startBest`) 기준이라, main.js가 클리어마다 `data.best`를 올려도(3배속 해금용) 이중 계산이 없다.
+
+**game 필드(추가·변경)**
+```
+run: { awaken:{power,haste,ward,fortune}, gems:{floor,first,boss,flawless}, reviveUsed, floors, bosses,
+       firstClears, flawless, time, startBest, loadout:{cls,startSpells}, over, victory, ended,
+       checkpoint }          // checkpoint = startStage마다 자동 갱신되는 serializeRun() → 저장은 data.run = game.run.checkpoint
+spells: { [key]: 1..5 }      // 런 전체 누적(최대 6개). startStage에 리셋되지 않는다
+fusions: string[]            // 런 동안 유지
+rerollLeft                   // 런 전체 남은 새로고침(영웅 Lv5 1회 + 영구 강화 reroll, 도전 도중 Lv5 달성 시 +1)
+seenSpells: Set<string>      // 뽑아 본 스킬(저장 시 [...game.seenSpells], endRun도 합침)
+metaLv, fx                   // fx = 영구 강화 × 각성 배율 { atkMul, rateMul, wallMul, goldMul, xpMul, startGold, choices, rerolls, startSlots, revive, critBoom }
+berserk                      // 1 = 평소, >1 = 광폭화 배율(적 피해 ×, 붉은 연출용)
+result.gems = [g, g]         // 이번 층에서 '적립'된 런 보석(층 + 무결점 + 첫 돌파). 지급은 endRun
+pick.cards[i] = { spell, level, rarity, fusionHint } | { spell:null, awaken:'power'|'haste'|'ward'|'fortune', level, rarity:'common', fusionHint:false }
+```
+`players[i].perks`는 없어졌다(영구 강화는 `game.metaLv`/`game.fx`, 두 마법사 공통). `cannonStats(lv, fx)`의 두 번째 인자가 perks → fx.
+카드 선택지 수 = `cardCount(game)` = 3 + 영웅 Lv15(+1) + `metaLv.choice`(+1). 각성 카드 이름·설명은 `AWAKEN_BY_KEY[card.awaken]`(config.js `AWAKENINGS`). 스킬 설명은 `SPELLS[].desc[level-1]`(Lv1~5).
+
+**이벤트(추가)**
+```
+runOver{stage, victory, floors}   // 도전 종료 순간(성벽 붕괴 = defeat 직후, 100층 = clear 직후) → 결과 화면 → endRun
+revive{x, y, hp}                  // 부활 결계 발동(성벽 50%, 1.5초 빙결) + hitstop{400}. 도전마다 1회
+berserk{}                         // 층 80초 경과 → 광폭화 시작(한 번)
+spellPick{spell:null, awaken, level, rarity}   // 각성 카드 선택
+```
+`defeat{stage}`는 그대로 나오고 바로 뒤에 `runOver`가 붙는다. 패배 모달의 '재도전/이전 층' 버튼은 없앤다.
+
+**config.js**: `META_UPGRADES`(key·name·desc·max·c0·grow·per), `META_KEYS`, `META_BY_KEY`, `metaCost(key, lv)`, `metaMax(key)`, `metaMul`, `metaFx(metaLv)`, `metaDisplay(key, lv)`(상점 표시 문구: 배율형은 누적 '+N%'), `startGoldAmount(lv)`, `RUN_GEMS`, `SPELL_SLOTS=6`, `SPELL_MAX_LV=5`, `MANA_FRAC=0.6`, `AWAKENINGS`/`AWAKEN_KEYS`/`AWAKEN_BY_KEY`, `OFFLINE_CAP_HOURS`, `offlineGemsPerHour`, `offlineXpPerMin`. 삭제: `PERKS/PERK_KEYS/perkCost/perkMax/perkDisplay/gemReward/offlineGoldPerMin/MANA_FRACS`.
+
+| 영구 강화 | 효과(레벨당) | 최대 |
+|---|---|---|
+| power 기본 마력 | 모든 피해 ×1.10(복리 — 마법사·스킬·영웅 모두 공격력 기반) | 30 |
+| haste 기본 시전 속도 | 시전 속도 ×1.03(15회/초 상한 뒤에 곱함) | 20 |
+| ward 성벽 결계 | 성벽 최대 내구력 ×1.08 | 20 |
+| greed 골드 획득 | 처치 골드 ×1.06 | 25 |
+| startGold 시작 골드 | 도전 시작 골드(두 마법사 각각) 150 × 1.5^(lv-1) | 15 |
+| wisdom 영웅 경험치 | ×1.10 | 10 |
+| choice 카드 선택지 | +1장 | 1 |
+| reroll 카드 새로고침 | 도전마다 +1회 | 3 |
+| startSlot 시작 스킬 슬롯 | +1칸(뽑아 본 스킬 중 Lv1로 시작) | 2 |
+| revive 부활 결계 | 도전마다 1회 성벽 50% 회복 | 1 |
+| critBoom 치명타 폭발 | 기존 퍼크 | 10 |
+| pickaxe 황금 곡괭이 | 방치 보상 +15%/lv | 20 |
+
+**보석**: 층 클리어 `1 + ⌊층/15⌋`(무결점 +50%), 첫 돌파 `3 + ⌊층/8⌋`, 네임드 보스 `4 + ⌊층/8⌋`, 신기록 보너스 `8 + 3 × (새 최고 − 이전 최고)`. 결과 화면은 `Summary.rewards`로 항목별 표시, `newBest`면 크게 연출.
+**오프라인**: `computeOffline(meta, now) → { gems, xp, minutes }`(골드 없음, 최대 8시간). 지급은 `applyOffline`.
+
+**UI 통합 흐름 (main.js · ui.js · heroui.js — 이 브랜치에선 손대지 않음)**
+- 부팅: `data = store.load()`. `data.run`이 있으면 타이틀에 **이어하기**(`game = restoreRun(data)`), 없으면 정비 화면.
+- **정비 화면**: 영웅 화면 재사용(클래스 = `campAct(data, {type:'heroClass'})`, 장착 = `campAct(data, {type:'equip'|'autoEquip'})`), **시작 스킬 선택**(`startSlots(data)`칸, 후보 `startSpellChoices(data)`), **영구 강화 상점**(`META_UPGRADES` + `metaCost/metaMax/metaDisplay`, 구매 `buyMeta`), 도감, 최고 기록, **도전 시작**(`newRun(data, {cls, startSpells})`), **같은 조합으로 도전**(`newRun(data, data.lastLoadout)`).
+- 도전 중: 클리어 → (자동 진행이면) `startStage(game, game.stage + 1)`; 저장은 `data.run = game.run.checkpoint`, `data.discovered = [...game.discovered]`, `data.seenSpells = [...game.seenSpells]`, 영웅은 같은 객체. 클래스는 도전 동안 고정(`act heroClass`는 1층 시작 전만).
+- `runOver` 이벤트 → 자동 진행 멈춤 → **결과 화면**(`endRun(game, data)`의 Summary: 도달 층, 보스 처치, 보석 내역, 신기록, 새 클래스) → 정비 화면. 자동 재도전 없음.
+  `endRun`은 `runOver`를 받은 **즉시** 부르고 바로 `store.flush()` — 결과 화면을 보는 동안 앱을 끄면 `data.run`이 남아 죽은 층을 이어하기로 다시 하는 구멍이 생긴다. 끝난 도전(`game.run.over`)에서 `startStage`는 아무것도 안 한다(옛 재도전·이전 층·100층 뒤 자동 진행은 no-op).
+- 저장된 도전을 이어하지 않고 포기: `endRun(restoreRun(data), data)`(체크포인트까지 적립한 보석·기록 정산).
+- 오프라인: `const r = computeOffline(data)` → 팝업(보석·경험치) → `applyOffline(data, r)`.
+- 3배속 해금 `best ≥ 20` 유지. `?spells=` 디버그는 Lv1~5.
+
+### 로그라이트 밸런스 목표 (test/sim.test.js 캠페인 러너로 검증)
+새 저장 → 봇이 도전 → `endRun` → `botSpendGems`(가치/비용 탐욕) → `botLoadout`(클래스 순환, 선호 시작 스킬) → 다시 도전, 100층 돌파까지.
+- 첫 도전 8~15층 · 도전당 평균 +3~6층 · 20~35회 · 총 15~25시간(시뮬 1배속) · 최고 기록 절반 이하 층 평균 ≤30초 · 새 층 평균 60~120초.
+- 클래스 5종 동등성: 같은 메타 상태(최고 40층 시점, `--full`은 80층도)에서 클래스별 평균 도달 층이 전체 평균 ±15% 안.
+- `npm test` = 단위 테스트 + 캠페인 1회(시드 1) + 동등성(40층) ≈ 2분. `node test/sim.test.js --full` = 캠페인 3시드 + 동등성 40·80층.
+
+### 성벽 마법사 주문 시전 구현 계약
+> 최신 사용자 요청: "영웅 말고 마법사는 기본 공격 없애고 마법만 쏘는 걸로." — 이 절이 맨 위 결정 블록의 '기본 공격 = 마법 탄(매직 미사일)'을 대체한다. 영웅(필드 유닛)은 무관.
+
+성벽 위 마법사 2명에게 **기본 공격이 없다**. 각자 **고유 기본 주문**을 시전 속도대로 쏘고(스킬이 없을 때의 주력), 카드·학습으로 얻은 주문은 그 마법사의 **주문서**에서 각자 쿨타임대로 자동 시전된다. 시뮬 좌표·타이밍(`CANNONS` = 시전 위치, `players[i]`, `p.angle`, `p.fireT`)은 그대로.
+
+**기본 주문** (`config.js BASIC_SPELLS[i]`, i = 마법사 번호. name·desc는 UI 문구 그대로)
+| | 키(`kind`) | 이름 | 효과 |
+|---|---|---|---|
+| P1(나) | `fireball` | 화염구 | 마력 × `dmg`(0.75), 명중 지점 반경 `splashR`(44) 안 다른 적에게 `splashPct`(35%) 폭발 피해 |
+| P2(AI 동료) | `frostbolt` | 서리 화살 | 마력 × `dmg`(0.65), 적 `pierce`(2)마리 관통, 맞은 적 `slowT`(1.2)초 동안 이동속도 `slow`(25%) 감소 |
+카드 스킬 `fireball`(파이어볼, 쿨타임 주문)과 기본 주문 `fireball`(화염구)은 키가 같지만 다른 것 — `cast.basic`/`hit.o`로 구분한다.
+
+**업그레이드 의미** (키 `atk/rate/crit/multi/wall` 그대로, 문구는 `UPGRADES[].desc`)
+- 마력 `atk`: 모든 주문 피해(기본 주문·카드 스킬·동료 주문 모두 시전자 `stats.dmg` 배율).
+- 시전 속도 `rate`: 기본 주문 시전 간격(`stats.rate`, 최대 초당 15회, 질풍은 P1 기본 주문에만) + 쿨타임 주문 쿨타임 ÷ `stats.cdMul` (= `min(cdCap, (1 + cdPer × 레벨) × 영구 강화·각성 시전 속도)`, `SPELL_CAST.cdPer 0.03`, 상한 `cdCap = 1/0.6` = 쿨타임 -40%). 새끼 드래곤 브레스 주기도 같은 배율.
+- 치명타 `crit`: **모든 주문 치명타**(기본 주문·카드 스킬·동료 주문, 2.5배). 지속 피해(회오리·드래곤 브레스)는 굴리지 않고 기댓값(`1 + 확률 × 1.5`)만 곱한다.
+- 다중 시전 `multi`: 기본 주문 발사체 수 `stats.shots` 1 → 3 → 5 → 7 → 9 → 12(부채꼴). 쿨타임 주문은 `stats.echo = echoPer(0.08) × 레벨` 확률로 `echoDelay`(0.3)초 뒤 **연속 시전** 1회(연속 시전이 다시 이어지지는 않음).
+- 성벽 결계 `wall`: 성벽 최대 내구력(변경 없음).
+
+**주문서 · AI 동료 학습**
+- P1 주문서 = `game.spells`(카드 빌드, 기존 그대로). 쿨타임 주문 = 파이어볼·낙뢰·얼음 창·회오리·심판 광선. 오라·소환·지속형(질풍·서리 결계·수호의 빛·저주 낙인·영혼 수확·새끼 드래곤·돌 골렘·불꽃 마탄·연쇄 번개)은 지속 효과. 불꽃 마탄·연쇄 번개는 **기본 주문 명중 시** 발동.
+- P2 주문서 = `game.allySpells: { [key]: 1..5 }` — **네임드 보스를 처치할 때마다** `ALLY_SPELLS = ['iceLance', 'lightningStrike', 'chainLightning']` 순서로 하나씩, 레벨 `allySpellLv(층) = min(5, ceil(층/20))`, 런당 최대 3. 카드처럼 고르지 않는다. 피해는 P2의 `stats`(마력·치명타·시전 속도·다중 시전) 기준. 원소 융합(`game.fusions`)은 P1 빌드에만 적용.
+- 런 저장: `serializeRun/normalizeRun`에 `allySpells` 추가(없는 옛 저장은 `{}`, `ALLY_SPELLS` 밖 키는 버림, 레벨 1~5로 자름). 도전이 끝나면 사라진다(런 한정).
+
+**히든 조합 재해석** (조건은 그대로, 효과는 주문 기반 — 문구는 `SYNERGIES[].desc`)
+- 불꽃 산탄 `flame`: 기본 주문에 맞은(화염구 폭발 포함) 적 화상(피해 30%/2초) + 화염구가 반경 `shardR`(140) 안 가까운 적 `shardN`(4)마리에게 파편(`shardPct` 30%) — `shards` 이벤트.
+- 관통탄 `pierce`: 기본 주문 관통 +2마리(`FX.pierce`) — 화염구는 3마리, 서리 화살은 4마리, 맞을 때마다 폭발·둔화.
+- 유도 미사일 `homing`: 기본 주문이 휘어 쫓아간다(기존과 동일).
+- 체인 라이트닝 `chain`: **주문 치명타**(기본·카드 모두, 지속 피해 제외)가 주변 3마리에게 50%로 번진다.
+- 거인 사냥꾼 `giant`: 엘리트·보스에게 **주문 치명타**가 터지면 피해 ×2.
+- 쌍둥이 포화 `twin`: 두 마법사의 모든 주문 피해 +25%. 요새화 `thorns`: 반사 = 내 마력 × 20(그대로). 치명타 폭발(영구 강화 `critBoom`): 기본 주문 치명타에만.
+
+**렌더러용 데이터**
+```
+bullets[] = { x, y, vx, vy, owner, caster, kind:'fireball'|'frostbolt', syn:'pierce'|'flame'|'homing'|null,
+              hit:[id...], pierce, tgt, life }       // caster = owner = 시전 마법사(0/1). syn = 켜진 히든 조합(렌더 표시용, 우선순위 pierce > flame > homing)
+enemies[].slowT                                       // >0 이면 서리 화살 둔화 중(푸른 서리 틴트)
+allySpells                                            // AI 동료가 익힌 주문(P2 패널 아이콘)
+spellT / allySpellT                                   // P1 / P2 쿨타임 주문 남은 시간(키 = SPELLS 키, spellT.judgment는 기존 예고 연출)
+```
+**이벤트**
+```
+cast{o, spell, basic, x, y, tx, ty, n?}   // 시전 1회 = 마법진 + 지팡이 섬광 + 주문별 시전 동작 트리거. o = 마법사(0/1), (x,y) = 시전 위치(CANNONS[o]), (tx,ty) = 조준점
+                                          //   basic:true → spell = 'fireball'|'frostbolt'(기본 주문, n = 발사체 수), basic:false → spell = SPELLS 키(쿨타임 주문)
+shoot{o, x, y, angles}                    // 호환용(기본 주문 발사 부채꼴 각도). 새 연출은 cast를 쓴다
+hit{x, y, dmg, crit, o, caster, kind, big}   // 기본 주문: o = 마법사(0/1), kind = 'fireball'|'frostbolt'. 카드·동료 주문: o = 3, caster = 시전 마법사, kind = 원소('fire'|'lightning'|'frost'|'wind'|'holy'|'dark')
+boom{x, y, r, kind:'fireball', o}         // 화염구 폭발(명중마다)
+shards{o, x, y, pts:[[x,y]...]}           // 불꽃 산탄: 화염구 파편이 흩어진 적 위치
+allySpell{spell, level, x, y}             // AI 동료가 네임드 보스 처치로 새 주문을 익힘(토스트/연출)
+spell{key, o, x, y, ...}                  // 기존 스킬 발동 이벤트에 시전자 o 추가
+```
+
+**밸런스 조정** (주문 치명타·쿨타임 단축·연속 시전·광역 기본 주문이 더해진 만큼): 카드 피해 스킬 6종(파이어볼·낙뢰·얼음 창·회오리·심판 광선·새끼 드래곤)의 `mul`을 ×0.6(설명의 % 도 같이), 기본 주문 피해 계수 0.75/0.65, 둔화 25%. 로그라이트 목표(첫 도전 8~15층, 도전당 +3~6층, 20~35회, 15~25시간, 클래스 격차 ±15%)는 그대로이며 시드 1~20 캠페인 전부 통과(도전 21~26회, 15.7~20.7시간, 첫 도전 8~14층), 시드 1~10 동등성(40층대 메타) 최대 격차 -11%(암살자, 시드 3), `--full` 84층 메타 +8%/-5%.
+
+### 영웅 특성 트리 & 자율 전투 구현 계약
+> 최신 사용자 요청: "영웅들도 다양한 스킬 트리를 찍어서 그에 따라서 영웅들이 특성을 가지게 해줘. 그리고 영웅이 지금 가만히 서 있는데 맵에 나가서 자동으로 움직이면서 싸웠으면 좋겠어."
+> 이 절이 위 '영웅(클래스·필드 유닛) & 장비 구현 계약'의 **필드 AI**(성문 520px 목줄 `HERO_LEASH`, 영웅이 막은 피해를 `wallLost`에 더하기)와 **전투 스탯의 피해 공식**, '로그라이트 밸런스 목표'의 **동등성 시점(40층 → 50층)**을 대체한다. 나머지(클래스·장비·성장·궁극기·기존 이벤트)는 그대로.
+
+sim/메타 쪽만 바꿨다(DOM 없음). 새 파일 `public/js/talents.js`(테이블 + 순수 함수), 전투 효과 `hero.js`, 배선 `sim.js`, 정비 화면 조작 `run.js campAct`, 봇 정책 `bot.js`, 난이도 보정 `stages.js HERO_HP`. UI(정비 화면 특성 탭·HUD·렌더러)는 이후 통합 패스가 아래 API만 부르면 된다.
+
+**특성 트리** (`TALENTS[cls] = [{ key, name, desc, nodes:[6] }] × 3갈래`, 노드 `{ key, name, desc, max(1~3), fx:{효과키: 랭크당 수치}, cap }`)
+- 클래스마다 3갈래 × 6노드. 갈래 안에서 **앞 노드를 최대 랭크까지 찍어야** 다음 노드가 열린다(일직선 — 순환 없음). 6번째 노드 = **궁극 특성**(1랭크, 전투 방식이 바뀐다). 클래스 총 랭크 39~42.
+- **특성 포인트** `talentPoints(hero) = level + ⌊level/10⌋`(Lv1 = 1, Lv10 = 11, Lv99 = 108). 레벨은 공유, **배분은 클래스마다 따로**(`hero.talents[cls]`). 한 클래스를 다 찍는 시점은 약 Lv36~39.
+- 노드 `desc`는 **랭크당 효과**(UI는 `현재 랭크/max`와 함께 표시). 이름·설명 전부 한국어. 노드 키 = 갈래 키 + 번호(`crusade1`~`crusade6`).
+
+| 클래스 | 갈래(→ 궁극 특성) |
+|---|---|
+| 기사 | 수호 `guard`: 체력·도발 범위·피해 감소·가시 갑옷·처치 회복 → **튕기는 방패**(4초마다 5마리를 튕기며 150% + 0.6초 기절) · 성전사 `crusade`: 공격력·신성 피해(언데드 2배)·처치 시 성벽 회복·공속·치명 → **심판의 번개**(3타마다 반경 90, 200%) · 지휘관 `command`: 성벽 마법사 시전 속도 오라·이동·궁극기 쿨·공격력·궁극기 효과 → **전군 강화 함성**(궁극기 시 8초간 두 마법사 + 영웅 피해 +40%) |
+| 궁수 | 저격 `sniper`: 사거리·치명·보스·치명 피해·관통 → **관통 저격**(4발마다 화면 끝까지 직선 300%) · 속사 `rapid`: 공속·다중 화살·이동·공격력 → **화살 폭풍**(모든 공격이 3연사, 발당 45%) · 야수 `beast`: 늑대 1마리·늑대 피해·체력·공격력·늑대 +1 → **늑대 무리**(늑대 +2, 늑대 피해 +50%) |
+| 마법사 | 화염 `fire`: 공격력·점화(화상)·광역 반경·치명·치명 피해 → **작은 운석**(기본 공격이 반경 100 운석 140% + 화상) · 냉기 `frost`: 둔화·체력·빙결 확률·공속·사거리 → **절대영도**(궁극기가 반경 280 3초 빙결 + 500%) · 비전 `arcane`: 비전 충전·공격력·궁극기 쿨·공속 → **비전 분신**(영웅 공격을 60%로 따라 하는 분신) |
+| 성직자 | 치유 `heal`: 공격 회복량·체력·재생·성벽 재생·피해 감소 → **부활 결계 강화**(도전마다 1회, 성벽 붕괴 시 40%로 회복 — 영구 강화 부활 결계와 별개, 먼저 발동) · 징벌 `punish`: 공격력·신성 폭발(주변 광역)·언데드 특효·공속·치명 → **천벌 기둥**(5초마다 가장 밀집한 무리에 반경 110, 400%) · 축복 `bless`: 골드·경험치·치명·공격력·궁극기 쿨 → **카드 축복**(스킬 카드 선택 시 30% 확률로 레벨 +1) |
+| 암살자 | 그림자 `shadow`: 순간이동 쿨·이동·기습(순간이동 직후 첫 타)·공속·피해 감소 → **그림자 분신 2체**(각 영웅 기본 DPS의 30%) · 독 `poison`: 독(중첩 DoT)·공격력·독 확산·공속·부식(중독된 적 추가 피해) → **역병**(독 2배, 중독된 적이 죽으면 반경 150 전체로 번짐) · 처형 `execute`: 치명·보스·즉사(랭크당 체력 3% 이하 일반 적)·치명 피해·보스 마무리 → **처형자의 낫**(5타마다 반경 130, 250% + 체력 10% 이하 일반 적 처형) |
+
+**비전 충전**(마법사 비전 갈래 `mana`): 층마다 첫 카드가 뜰 때 `mana`만큼 `game.run.arcane`에 쌓여 1 이상이면 **그 층 처치 85% 지점에 카드 1장 추가**(한 층 최대 2장, 런 저장에 포함).
+
+**순수 함수** (`talents.js`)
+```
+talentPoints(hero) · talentSpent(hero, cls) · talentLeft(hero, cls) · talentRank(hero, cls, key) · talentMaxRanks(cls)
+canAllocate(hero, cls, key) → bool      // 노드 존재 · 최대 랭크 전 · 남은 포인트 · 앞 노드 최대 랭크
+allocateTalent(hero, cls, key) → bool   // 1랭크(제자리 변경)
+resetTalents(hero, cls) → bool          // 무료 초기화(비어 있으면 false)
+talentBonus(hero, cls) → { atk, aspd, hp, crit, move, range, dr, critDmg, boss, taunt, thorns, killHeal, wallKill, holy, undead,
+                           aura, ultCd, ultPow, pierce, multi, wolf, wolfPow, burn, splash, slow, freeze, mana, heal, regen,
+                           wallRegen, smite, gold, xp, blink, ambush, poison, spread, poisonAmp, execute, bossExec,
+                           cap: { [궁극 특성 키]: true } }
+normalizeTalents(raw, level)            // 저장 검증: 순서·최대 랭크·포인트를 어긴 클래스는 비운다(초기화가 무료라 손해 없음)
+talentNode(cls, key) → { branch, index, node } · TALENT_FX_KEYS · CAPSTONES(15)
+```
+**어디서 찍나**
+- 정비 화면(게임 없이, `run.js`): `campAct(meta, {type:'talent', cls, key})`(해금된 클래스만) · `{type:'talentReset', cls}`(**무료 초기화 — 정비 화면 전용**) · `{type:'autoTalent', on}`.
+- 도전 중(`sim.js`): `act(game, 0, {type:'talent', key})` — 현재 클래스에만, 레벨업으로 생긴 포인트를 바로 쓰는 용도(다음 프레임 반영, `talent{cls,key}` 이벤트). 도전 중 초기화는 없다.
+- 자동: `hero.autoTalent`가 켜져 있고 자동 강화가 on이면 `autoHero`가 남는 포인트를 추천 빌드로 배분.
+
+**저장**: `hero.talents = { [cls]: { [nodeKey]: rank } }`(빈 클래스는 키 없음), `hero.autoTalent: bool`. 특성 필드가 없던 저장 → `{}`(포인트는 레벨로 계산하므로 손실 없음). `save.js normalize → normalizeTalents`. 런 저장(`serializeRun/normalizeRun`)에 `heroRevive`(부활 결계 강화 사용 여부), `arcane`(비전 충전 0~2) 추가.
+
+**전투 스탯** (`heroCombatStats(g, hero, tb)`): 영웅 DPS = **P1 마법사 기본 주문 DPS 기준값** `mageRef(g)`(마력 × 시전 속도 × 다중 시전 × 치명타 기대값) × `HERO_K`(0.2) × 클래스 배율 `HERO_CLASSES[cls].dps`(기사 1.0 · 궁수 1.0 · 마법사 1.0 · 성직자 1.3 · 암살자 0.65) × 레벨 배율(0.7 + 0.008×Lv + 스킬 강화 마일스톤) × (1 + 장비 공격력/250 + 특성 atk) × 전군 강화 함성. 1타 피해 `dmg` = DPS ÷ 클래스 기본 공속, 실제 공속 = 기본 × (1 + 장비 + 특성 aspd). 마법사가 강해지는 만큼 같이 강해져 1~100층 내내 비중이 유지된다(옛 공식은 마력만 따라가 후반 비중이 1~7%). 사거리·이동·치명·보스·피해 감소·도발 반경(`engageR`: 기사 120 + 도발의 함성 랭크당 15, 다른 근접 50, 원거리 44)도 특성이 더한다. 특성 합산은 0.5초, 전투 스탯은 0.2초마다 다시 계산한다(`heroUnit.tb`, `heroUnit.st`).
+
+**성벽 손실 버그 수정**: 영웅이 대신 맞은 피해는 더 이상 `game.wallLost`에 더하지 않는다(자동 강화가 성벽 결계를 과하게 사던 문제).
+
+**필드 자율 전투 AI** (`updateHeroUnit`, 성문 목줄 없음)
+- 활동 범위 = 전장 전체(스폰 직후 구역 `y < ROAM_TOP(140)`의 적만 쫓지 않는다). 0.25초마다 **가장 위험한 적**을 고른다: 성벽에 가까울수록(3 × y/960) + 주변 100px 밀집도(최대 8마리 × 0.3) + 보스(+1.2) − 영웅과의 거리/350 (+현재 표적 0.5, 흔들림 방지).
+- **근접**(기사·성직자·암살자, `mode:'engage'`): 표적으로 달려가(이동 속도 100%) 붙어서 벤다. 암살자는 120px 넘게 떨어지면 그림자 순간이동(`heroBlink`).
+- **원거리**(궁수·마법사, `mode:'kite'`): 사거리 90%까지 다가가고, 사거리 50% 안이면 천천히 물러나며, 적이 `max(90, 사거리 × 30%)` 안으로 붙으면 **반대쪽(성벽 쪽으로 기울여)으로 물러나며 계속 쏜다**(이동 사격 — 공격 준비는 이동과 무관하게 진행, 바라보는 쪽은 표적).
+- **집결**(`mode:'rally'`): 적이 없으면 전장 중앙 `HERO_RALLY (360, 520)`로 걸어가(멀면 이동 속도 75%, 가까우면 45%) 주변을 배회하며 1.1~1.9초마다 좌우를 **두리번**(`facing` 반전). 성문에 서 있지 않는다.
+- **후퇴**(`mode:'retreat'`): 체력 30% 미만 → 성벽 쪽 `(x, 920)`으로 달려가 회복(후퇴 중 초당 4%, 성벽 곁 14%, 평소 비전투 3%) → 80% 회복하면 재진격. 후퇴 중엔 도발하지 않고(`engageR = 0`) 원거리는 물러나며 쏜다. 이벤트 `heroRetreat{x,y}` / `heroAdvance{x,y}`.
+- **탭 이동**(`mode:'move'`): `act heroMove` 그대로 — 6초 동안 그 자리로 가서 머물며 사거리 안의 적만 치고, 끝나면 자율 전투로 복귀.
+- 적은 `heroUnit.engageR` 안의 영웅을 성벽 대신 공격한다(도발). 가시 갑옷이면 때린 적에게 반사(`thorns{x,y,o:2}`).
+- 봇 궁극기: `ultWorth(g, h)` — 주변 180px에 적이 있거나(성직자는 성벽 70% 미만) 쓸 때만.
+
+**렌더러용 상태** (`game.heroUnit`, 기존 필드 유지)
+```
+state: 'walk'|'attack'|'idle'|'down'        // 기존 호환
+mode: 'engage'|'kite'|'rally'|'retreat'|'move'
+gait: 'idle'|'walk'|'run'                     // 실제 속도 기준(이동 속도 70% 초과 = 달리기)
+speed, dir(이동 방향 rad), vx, vy, facing(±1, 공격 중엔 표적 쪽 — 뒷걸음 카이팅)
+windup: 0..1                                 // 공격 준비 진행도(1이 되는 순간 타격) — 휘두르기·시위 당기기
+atkN                                          // 누적 공격 수(N타 궁극 특성 타이밍 표시용)
+tgt                                           // 현재 표적 적 id | null
+tb, st                                        // 특성 합산 · 전투 스탯(HUD 표시용)
+```
+**소환물** `game.summons[] = { id, kind:'wolf'|'shadow'|'arcane', x, y, facing, dir, speed, vx, vy, gait, state:'idle'|'walk'|'attack', windup, atkT, slot }` — 무적. 늑대·그림자 분신은 영웅 주변 260px 안의 적을 쫓아 물고(없으면 영웅 곁을 따라다님), 비전 분신은 영웅 곁에 떠서 영웅이 칠 때마다 같이 친다. 영웅이 쓰러지면 사라지고 부활하면 다시 나온다. 층이 바뀌면 영웅과 함께 다시 나온다. 피해는 영웅 몫(`hit.o = 2`, `hit.kind = 'wolf'|'shadow'|'arcane'`).
+
+**이벤트(추가)**
+```
+heroProc{kind, x, y, r?, pts?, tx?, ty?, t?, spell?, level?}
+   kind: 'shieldToss'(pts = 튕긴 경로) | 'judgeBolt'(r) | 'warcry'(t) | 'snipe'(x,y → tx,ty 직선) | 'arrowStorm'(tx,ty) | 'meteor'(r)
+       | 'pillar'(r) | 'scythe'(r) | 'plague'(r, pts) | 'execute' | 'reviveWard' | 'cardBless'(spell, level)
+heroUlt{..., variant:'absZero'|null}         // 절대영도면 variant
+summonSpawn{id, kind, x, y} · summonAttack{id, kind, x, y, tx, ty} · summonDespawn{id, kind, x, y}
+heroRetreat{x, y} · heroAdvance{x, y} · talent{cls, key}
+revive{x, y, hp, hero:true}                  // 부활 결계 강화(성직자)
+hit{..., o:2, kind}                           // 영웅 피해 kind: 'hero'|'holy'|'frost'|'snipe'|'shield'|'thorns'|'arcane'|'dark'|'wolf'|'shadow'
+```
+**기여도**: `game.dmgDone = [P1, P2, 영웅(소환물 포함)]` — 이번 도전 동안 실제로 깎은 체력(초과 피해 제외). 결과 화면 '영웅 기여도'에 그대로 쓸 수 있다.
+
+**봇** (`bot.js`): `TALENT_BUILDS`(추천 갈래 순서 — 기사 성전사→수호→지휘관, 궁수 속사→저격→야수, 마법사 화염→비전→냉기, 성직자 징벌→치유→축복, 암살자 처형→독→그림자), `botTalents(hero, cls, 'build'|'random', rng)`, `randomTalents(hero, cls, rng)`(초기화 후 무작위). 테스트 러너 `playRun(meta, loadout, seed, 'build'|'random'|'none')`.
+
+**난이도 보정**: 영웅이 화력의 25~40%를 맡게 된 만큼 `stages.js HERO_HP`(층별 적 체력 배율: 1층 0.92 → 20층 1.35 → 30층 1.8 → 50층 2.35 → 70층 2.75 → 85층 2.9 → 100층 2.8)를 곱했다. 1~10층은 조금 쉬워졌다(첫 도전의 영웅은 특성 1~3점이라 약하다).
+
+**밸런스 결과** (`npm test` ≈ 2.5~3분 = 단위 + 캠페인 1회 + 동등성(최고 50층 메타, 3회씩). `node test/sim.test.js --full` = 캠페인 3시드 + 동등성 50·80층(4회씩) + 무작위 특성 동등성(영웅 Lv24 = 26점, 빌드가 갈리는 구간))
+- 캠페인(로그라이트 목표 전부 유지): 시드 1 — 첫 도전 14층 · 도전당 +4.30층 · 21회 · 17.4시간 · 절반 이하 층 평균 26s · 새 층 평균 90s · 영웅 Lv76. 시드 1~11: 도전 21~28회, 15.9~24.0시간, 첫 도전 8~14층.
+- 특성을 다 찍은 도전의 영웅 기여도(실제 피해 비중) 평균 28~34%(시드 1~11). 도전 하나하나는 빌드(카드 스킬 비중)에 따라 20~55%로 흔들린다 — 테스트는 클래스 평균 20~45%, 전체 평균 25~40%를 본다.
+- 클래스 동등성(추천 특성): 최고 59층 메타(영웅 Lv40, 4회씩) 기사 +1% · 궁수 -2% · 마법사 +2% · 성직자 0% · 암살자 0%(영웅 기여도 34~42%), 최고 89층 메타(Lv65) 기사 +11% · 궁수 -7% · 마법사 -4% · 성직자 -1% · 암살자 +2%(23~41%). 무작위 특성(Lv24) 기사 +2% · 궁수 +2% · 마법사 -2% · 성직자 +2% · 암살자 -4%.
+- 특성의 효과(같은 최고 54층 메타, 클래스 5종 × 2회): 특성 없음 → 추천 특성이면 영웅 기여도 11% → 38%, 도달 층 45.6 → 51.9, 31~45층 클리어 86s → 73s.
+- 테스트: 특성 테이블(3갈래×6노드, 궁극 특성 15종, 모든 노드 도달, 한국어), 배분·초기화 규칙(정비 화면·도전 중·봇 추천/무작위), 궁극 특성 15종 각각 동작 변화(켜면 전용 이벤트/소환물/상태, 끄면 없음, 피해량 차이 — 부활 결계 강화·카드 축복·비전 충전은 따로), 소환물 생성·소멸·부활·층 전환, 자율 전투(적이 옛 목줄 밖에 나타나도 3초 안에 성문을 떠나 달려감, 궁수 이동 사격 카이팅, 30% 후퇴 → 회복 → 재진격, 집결 지점 두리번, 탭 이동 유지), 성벽 손실 버그, 저장 마이그레이션(`save.test.js`).
