@@ -204,6 +204,7 @@ export function createGame(opts = {}) {
 }
 
 export function startStage(g, stage) {
+  if (g.run.over) return; // 끝난 도전은 이어갈 수 없다(재도전·100층 뒤 자동 진행이 체크포인트를 덮어써 죽은 런이 이어하기로 살아나는 것 방지)
   stage = toInt(stage, 1, MAX_STAGE);
   const carry = g.phase === 'clear'; // 클리어 직후 다음 판이면 콤보·광란·전설 이어감
   g.stage = stage;

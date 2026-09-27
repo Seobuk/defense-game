@@ -709,6 +709,10 @@ function heroXpAndMilestones() {
   // Lv5 마일스톤: 도전마다 카드 새로고침 1회 (Lv4 이하는 불가) + 영구 강화 '카드 새로고침'
   assert.equal(g.rerollLeft, 0, 'Lv1 도전 → 새로고침 없음');
   assert.ok(!act(g, 0, { type: 'reroll' }));
+  g.hero.level = 4; g.hero.xp = 0;
+  heroGainXp(g, xpToNext(4), api);
+  assert.equal(g.rerollLeft, 1, '도전 도중 Lv5 달성 → 그 도전부터 새로고침 1회');
+  g.rerollLeft = 0;
   const rg = createGame({ stage: 1, players: [{ lv: { atk: 20 } }, {}], seed: 205, hero: { ...newHero(), cls: 'knight', level: 5 }, metaLv: { reroll: 2 } });
   assert.equal(rg.rerollLeft, 3, 'Lv5(1) + 영구 강화(2)');
   for (let n = 0; !rg.pick && n < 60 * 200; n++) { step(rg, DT); drainEvents(rg); }
@@ -875,6 +879,9 @@ function runLifecycle() {
   while (r.phase === 'clear') { startStage(r, r.stage + 1); playStage(r, 900); }
   assert.equal(r.phase, 'defeat');
   assert.ok(r.run.over && !r.run.victory);
+  const deadCp = r.run.checkpoint;
+  startStage(r, r.stage); // 옛 '재도전' 경로
+  assert.ok(r.phase === 'defeat' && r.run.checkpoint === deadCp, '끝난 도전은 다시 시작되지 않는다(체크포인트 유지)');
   const gems0 = m.gems, best0 = m.best;
   const sum = endRun(r, m);
   assert.equal(sum.floorsCleared, r.run.floors);
@@ -896,6 +903,7 @@ function runLifecycle() {
   u.best = 19;
   const ug = newRun(u, { cls: 'knight' }, 3);
   ug.run.floors = 20; // 20층까지 돌파한 것으로
+  u.best = 20; // UI가 클리어마다 data.best를 올려 둔 경우에도
   assert.deepEqual(endRun(ug, u).newClasses, ['cleric']);
 
   // 정비 화면 영웅 조작: 해금된 클래스만, 판매는 도전 중에만

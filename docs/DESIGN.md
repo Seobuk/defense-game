@@ -427,7 +427,7 @@ run: { awaken:{power,haste,ward,fortune}, gems:{floor,first,boss,flawless}, revi
        checkpoint }          // checkpoint = startStage마다 자동 갱신되는 serializeRun() → 저장은 data.run = game.run.checkpoint
 spells: { [key]: 1..5 }      // 런 전체 누적(최대 6개). startStage에 리셋되지 않는다
 fusions: string[]            // 런 동안 유지
-rerollLeft                   // 런 전체 남은 새로고침(영웅 Lv5 1회 + 영구 강화 reroll)
+rerollLeft                   // 런 전체 남은 새로고침(영웅 Lv5 1회 + 영구 강화 reroll, 도전 도중 Lv5 달성 시 +1)
 seenSpells: Set<string>      // 뽑아 본 스킬(저장 시 [...game.seenSpells], endRun도 합침)
 metaLv, fx                   // fx = 영구 강화 × 각성 배율 { atkMul, rateMul, wallMul, goldMul, xpMul, startGold, choices, rerolls, startSlots, revive, critBoom }
 berserk                      // 1 = 평소, >1 = 광폭화 배율(적 피해 ×, 붉은 연출용)
@@ -471,6 +471,8 @@ spellPick{spell:null, awaken, level, rarity}   // 각성 카드 선택
 - **정비 화면**: 영웅 화면 재사용(클래스 = `campAct(data, {type:'heroClass'})`, 장착 = `campAct(data, {type:'equip'|'autoEquip'})`), **시작 스킬 선택**(`startSlots(data)`칸, 후보 `startSpellChoices(data)`), **영구 강화 상점**(`META_UPGRADES` + `metaCost/metaMax/metaDisplay`, 구매 `buyMeta`), 도감, 최고 기록, **도전 시작**(`newRun(data, {cls, startSpells})`), **같은 조합으로 도전**(`newRun(data, data.lastLoadout)`).
 - 도전 중: 클리어 → (자동 진행이면) `startStage(game, game.stage + 1)`; 저장은 `data.run = game.run.checkpoint`, `data.discovered = [...game.discovered]`, `data.seenSpells = [...game.seenSpells]`, 영웅은 같은 객체. 클래스는 도전 동안 고정(`act heroClass`는 1층 시작 전만).
 - `runOver` 이벤트 → 자동 진행 멈춤 → **결과 화면**(`endRun(game, data)`의 Summary: 도달 층, 보스 처치, 보석 내역, 신기록, 새 클래스) → 정비 화면. 자동 재도전 없음.
+  `endRun`은 `runOver`를 받은 **즉시** 부르고 바로 `store.flush()` — 결과 화면을 보는 동안 앱을 끄면 `data.run`이 남아 죽은 층을 이어하기로 다시 하는 구멍이 생긴다. 끝난 도전(`game.run.over`)에서 `startStage`는 아무것도 안 한다(옛 재도전·이전 층·100층 뒤 자동 진행은 no-op).
+- 저장된 도전을 이어하지 않고 포기: `endRun(restoreRun(data), data)`(체크포인트까지 적립한 보석·기록 정산).
 - 오프라인: `const r = computeOffline(data)` → 팝업(보석·경험치) → `applyOffline(data, r)`.
 - 3배속 해금 `best ≥ 20` 유지. `?spells=` 디버그는 Lv1~5.
 

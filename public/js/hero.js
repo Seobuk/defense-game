@@ -522,7 +522,10 @@ export function addXp(hero, amt) {
 export function heroGainXp(g, amt, api) {
   const hero = g.hero;
   if (!hero || !hero.cls) return;
-  for (const u of addXp(hero, amt * (g.fx ? g.fx.xpMul : 1))) api.emit(g, { type: 'heroLevelUp', ...u });
+  for (const u of addXp(hero, amt * (g.fx ? g.fx.xpMul : 1))) {
+    if (u.milestone === 'reroll1') g.rerollLeft = (g.rerollLeft | 0) + 1; // 도전 도중 Lv5 달성: 이번 도전부터 바로 1회
+    api.emit(g, { type: 'heroLevelUp', ...u });
+  }
 }
 
 const DROP_CHANCE = { normal: 0.02, elite: 0.35, named: 1 };

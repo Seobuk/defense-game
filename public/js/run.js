@@ -75,7 +75,7 @@ export function endRun(game, meta) {
   const bestBonus = RUN_GEMS.best(prevBest, cleared);
   const rewards = { ...r.gems, best: bestBonus };
   rewards.gems = rewards.floor + rewards.first + rewards.boss + rewards.flawless + bestBonus;
-  const before = unlockedClasses(meta.best);
+  const before = unlockedClasses(prevBest); // 도전 중 UI가 meta.best를 올려도 이번 해금을 놓치지 않게
   meta.gems += rewards.gems;
   meta.best = Math.max(meta.best, cleared);
   meta.discovered = [...new Set([...meta.discovered, ...game.discovered])];
