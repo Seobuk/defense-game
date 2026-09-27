@@ -647,7 +647,7 @@ const FAR = [
   },
   (x, rnd, HH) => { // 묘지: 달 + 교회 첨탑 실루엣
     x.fillStyle = lin(x, 0, 0, 0, HH, [[0, '#182430'], [1, '#28403c']]); x.fillRect(-BLEED, 0, 720 + BLEED * 2, HH);
-    circ(x, 560, 60, 44); x.fillStyle = '#e8f4ee'; x.fill();
+    // 달은 여기 굽지 않는다 — 이 타일은 topExtra 높이로 늘어나 원이 찌그러진다(drawBackground의 graveMoon이 비율 그대로 그린다)
     x.fillStyle = 'rgba(20,32,30,0.9)';
     poly(x, [120, HH, 150, 40, 180, HH]); x.fill();
     x.fillRect(140, 30, 20, 14);
@@ -996,6 +996,7 @@ export function drawBackground(theme) {
     if (wide) { sides(far, -BLEED, -topExtra, topExtra); mid(far, -BLEED, -topExtra, topExtra); sides(sm, -BLEED, -sh, sh); mid(sm, -BLEED, -sh, sh); }
     else { ctx.drawImage(far, -BLEED, -topExtra, WORLD_W + BLEED * 2, topExtra); ctx.drawImage(sm, -BLEED, -sh, WORLD_W + BLEED * 2, sh); }
   }
+  if (theme === 2) graveMoon();
   // 어두운 테마(동굴·묘지·화산·마왕성): 적이 걷는 전장 가운데에 넓은 빛 웅덩이(가산 1장) → 중간 톤을 올려 적이 배경에서 떠 보이게 (§2.2)
   const LP = LIGHT_POOL[theme];
   if (LP) {
@@ -1007,6 +1008,23 @@ export function drawBackground(theme) {
   }
   edgeShade();
 }
+// 묘지 달: 위 여분 하늘에 비율 그대로(늘어난 원경 타일에 굽지 않음). 상단 HUD 띠(월드 y < 90 - topExtra) 아래 · 지평선(y 0) 위에
+// 둘 자리가 없으면(짧은 화면) 그리지 않는다 — HUD 알약 뒤로 납작한 원이 비치던 문제. 후광 + 음영 + 분화구
+const MOON_R = 26;
+function graveMoon() {
+  const y = 90 - topExtra + MOON_R * 1.6;
+  if (y > -MOON_R - 8) return;
+  const m = bake('graveMoon', MOON_R * 2.6, MOON_R * 2.6, x => {
+    const r = MOON_R;
+    circ(x, 0, 0, r * 2.6); x.fillStyle = rad(x, 0, 0, r * 0.8, r * 2.6, [[0, 'rgba(200,240,225,0.35)'], [1, 'rgba(200,240,225,0)']]); x.fill();
+    circ(x, 0, 0, r); x.fillStyle = rad(x, 0, 0, 0, r, [[0, '#fbfff6'], [0.7, '#e2f2e8'], [1, '#b9d6c8']], -r * 0.35, -r * 0.35); x.fill();
+    x.lineWidth = 2; x.strokeStyle = 'rgba(40,70,64,0.55)'; x.stroke();
+    x.fillStyle = 'rgba(120,160,148,0.35)';
+    for (const [cx, cy, cr] of [[-8, -6, 6], [9, 5, 4.5], [-2, 11, 3.5], [10, -10, 3]]) { circ(x, cx, cy, cr); x.fill(); }
+  });
+  ctx.drawImage(m, 560 - m.hw, y - m.hh, m.hw * 2, m.hh * 2);
+}
+
 // 넓은 화면(폴더블 펼침·가로·데스크톱): 월드 밖 양옆을 같은 테마 그림으로 잇는다.
 // 가장자리 띠(STRIP)를 거울처럼 번갈아 뒤집어 붙인다(핑퐁) → 이음매 없음, 가운데 길·강이 복제되지 않음, 늘린 그림 없음.
 // img 는 월드 x = left 부터 가로로 놓인 텍스처(hw = 반폭). ponytail: 핑퐁 타일 — 테마별 전용 옆 지형 그림은 필요해지면 추가

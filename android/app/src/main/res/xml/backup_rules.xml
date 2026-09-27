@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 자동 백업(Android 11 이하): 게임 저장은 백업하되, 받은 업데이트 APK(files/updates)는 빼기 -->
+<full-backup-content>
+    <exclude domain="file" path="updates/" />
+</full-backup-content>

@@ -55,6 +55,7 @@ export function createRenderer(canvas) {
     RT += dt;
     C.setClock(T, RT, dt, ++frameNo);
     const evs = Array.isArray(events) ? events : [];
+    hud.setStackLeft(opts.stackLeft); // 좁은 화면: 오른쪽 스킬 스택 왼쪽 끝(월드 x) — 콤보·상태 알약이 그 왼쪽에
     // 이벤트: 각 모듈이 자기 몫을 처리 (fx 가 먼저 — 피해 숫자 예산·운석/파이어볼 사전 처리)
     fx.events(view, evs, opts);
     units.events(view, evs, opts);

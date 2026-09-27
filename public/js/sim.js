@@ -362,7 +362,8 @@ const STARTER = ['fireball', 'lightningStrike', 'iceLance', 'tornado', 'judgment
 function genCards(g, starter = false) {
   const n = cardCount(g);
   const full = slotsUsed(g) >= SPELL_SLOTS;
-  let pool = SKILL_KEYS.filter(k => (g.spells[k] || 0) < SPELL_MAX_LV && (g.spells[k] > 0 || (!full && !FUSION_BY_KEY[k])));
+  const fused = new Set(Object.values(g.fusionParts).flat()); // 보유 융합이 품은 재료는 새 카드로 다시 나오지 않는다(이미 융합 안에서 발동)
+  let pool = SKILL_KEYS.filter(k => (g.spells[k] || 0) < SPELL_MAX_LV && (g.spells[k] > 0 || (!full && !FUSION_BY_KEY[k] && !fused.has(k))));
   if (starter && pool.some(k => STARTER.includes(k))) pool = pool.filter(k => STARTER.includes(k));
   const cards = [];
   while (cards.length < n && pool.length) {
@@ -426,11 +427,12 @@ export function refreshFusion(g) {
       if (g.spells[f.key] || !f.test(g.spells)) continue;
       const from = fusionParts(f, g.spells);
       const level = Math.max(1, Math.floor((g.spells[from[0]] + g.spells[from[1]]) / 2));
+      const full = slotsUsed(g) >= SPELL_SLOTS; // 꽉 찬 슬롯에서 합체했나(UI는 이때만 '슬롯 해제!'를 외친다)
       delete g.spells[from[0]];
       delete g.spells[from[1]];
       g.spells[f.key] = level;
       g.fusionParts[f.key] = from;
-      emit(g, { type: 'fusionMerge', fusion: f.key, from, level, slotFreed: true });
+      emit(g, { type: 'fusionMerge', fusion: f.key, from, level, slotFreed: true, full });
       synergy(g, f.key, -1, WORLD_W / 2, WALL_Y / 2 - 100);
       merged = true;
     }
@@ -468,6 +470,15 @@ function collabProc(g, key, x, y) {
   if (t != null && g.phaseT - t < COLLAB_FX.procGap) return;
   g.collabT[key] = g.phaseT;
   emit(g, { type: 'collabProc', key, x, y });
+}
+
+// 잠시 빼 둔 카드(main.js holdPicks)를 다시 띄울 때: 그사이 다른 카드를 골라 옛 카드가 낡았을 수 있어 지금 빌드로 새로 뽑는다
+// (낡은 카드는 이미 가진 레벨을 다시 주거나 · 레벨을 내리거나 · 7번째 슬롯 · 합체된 재료를 되살릴 수 있다)
+export function reofferPick(g, pick) {
+  const cards = pick && genCards(g, pick.starter);
+  if (!cards || !cards.length) return false;
+  g.pick = { ...pick, cards };
+  return true;
 }
 
 function applyPick(g, i, index) {
@@ -581,14 +592,14 @@ export function act(g, i, action) {
     if (!g.hero) return false;
     const v = sellItem(g.hero, action.itemId);
     if (v == null) return false;
-    g.players[0].gold += v;
+    saleGold(g, v);
     return true;
   }
   if (action.type === 'sellRarity') {
     if (!g.hero) return false;
     const v = sellItemsByRarity(g.hero, action.rarity);
     if (!v) return false;
-    g.players[0].gold += v;
+    saleGold(g, v);
     return true;
   }
   if (action.type === 'autoEquip') {
@@ -598,6 +609,12 @@ export function act(g, i, action) {
     return true;
   }
   return false;
+}
+
+// 도전 중 판매 골드: 아이템은 영웅(메타)에서 바로 빠지므로 이어하기 체크포인트에도 넣는다(층을 다시 해도 되찾을 수 없는 골드)
+function saleGold(g, v) {
+  g.players[0].gold += v;
+  if (g.run.checkpoint) g.run.checkpoint.players[0].gold += v;
 }
 
 function meteor(g, o, dbl) {
@@ -718,6 +735,8 @@ export function step(g, dt) {
       lootDrop(g, 'chest', WORLD_W / 2, WALL_Y - 120, HERO_API); // 클리어 보물상자
     }
     if (g.stage >= MAX_STAGE) endOfRun(g, true); // 100층 돌파 = 도전 완료
+    // 이어하기는 다음 층부터(클리어 화면에서 앱이 꺼져도 첫 돌파 보석·경험치를 다시 잃지 않게). startStage가 같은 모양으로 덮어쓴다
+    else g.run.checkpoint = { ...serializeRun(g), stage: g.stage + 1 };
   }
 }
 

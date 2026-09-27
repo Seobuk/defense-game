@@ -363,9 +363,13 @@ function drawBossBar(view) {
 // 콤보 카운터(오른쪽 중단, 전용 세로 칸 y 520~660): 킬마다 톡, 단계가 오르면 1→1.4→1 back 슬램 + 단계 색 링.
 // 그 위 칸(y 440~500)은 광란·전설 상태 알약(남은 시간 바) — 도장·조합 줄과 자리를 나눠 겹치지 않는다.
 let frMax = FRENZY.dur, lgMax = LEGEND_T;
+const mergeFull = {}; // 융합 키 → 꽉 찬 슬롯에서 합체했나(fusionMerge.full) — 컷인 리본 문구
 // 보스 체력 겹 색 [밝음, 메인, 어둠] — 마지막 겹(x1)은 붉은색
 const LAYER_COL = [['#ff9ab4', '#ff5a80', '#c0103a'], ['#ffd89a', '#ffa040', '#c05a00'], ['#fff3a0', '#ffd23a', '#c08a00'], ['#c8ff9a', '#6ad84a', '#2a8a1a'], ['#b8f4ff', '#4fc8ff', '#1a70c0'], ['#e0c8ff', '#b07aff', '#6a2ac0']];
-const CX = 662; // 콤보·상태 알약 오른쪽 끝(월드 폭 720 — 가장자리에서 58 안쪽, 테두리·기울임 포함 여백)
+// 콤보·상태 알약 오른쪽 끝(월드 폭 720 — 가장자리에서 58 안쪽, 테두리·기울임 포함 여백).
+// 좁은 화면은 오른쪽 스킬 스택(DOM #side-r)이 전장 위에 겹치므로 그 왼쪽 끝에 맞춘다(setStackLeft — main.js가 넘김)
+let CX = 662;
+export function setStackLeft(x) { CX = Number.isFinite(x) ? clamp(x - 14, 520, 662) : 662; }
 function drawCombo(view, vis) {
   if (combo.a > 0) {
     const x = CX, y = 580, tier = clamp(combo.tier, 0, 4);
@@ -418,10 +422,7 @@ function drawCombo(view, vis) {
   else frMax = FRENZY.dur;
   if (view.legendT > 0) { lgMax = Math.max(lgMax, view.legendT); statusPill(ly, '전설의 학살 골드 x2', 'coin', '#ffd23a', view.legendT / lgMax, vis, 8); ly -= 46; }
   else lgMax = LEGEND_T;
-  if (view.berserk > 1 && view.phase === 'play') { // 광폭화: 적 피해 배율 + 다음 2배까지 남은 시간
-    const m = view.berserk, lab = '광폭화 적 피해 x' + (m < 10 ? m.toFixed(1) : Math.round(m));
-    statusPill(ly, lab, 'el-fire', '#ff3a3a', 1 - (((view.phaseT || 0) - 80) % 10) / 10, vis, 6);
-  }
+  // 광폭화는 DOM 상태 칩(ui.js '광폭화! 적 피해 xN')이 보여 준다 — 캔버스 알약까지 두 번 그리지 않는다
   ctx.globalAlpha = 1;
 }
 function statusPill(y, label, ico, col, u, vis, hz) {
@@ -615,11 +616,11 @@ function drawCut(m) {
       ctx.lineWidth = 6; ctx.strokeStyle = '#140a24'; ctx.strokeText(ln, 360, cy + 140 + i * 28);
       ctx.fillStyle = '#ffffff'; ctx.fillText(ln, 360, cy + 140 + i * 28);
     });
-    if (s.kind === 'fusion') { // 두 스킬이 하나로 → 슬롯 1칸이 열린다
-      const sy = cy + 150 + lines.length * 28, sk = 1 + 0.08 * Math.sin(RT * 8);
+    if (s.kind === 'fusion') { // 두 스킬이 하나로 → 슬롯 1칸이 열린다(꽉 찬 슬롯에서 합체했을 때만 '슬롯 해제!')
+      const sy = cy + 150 + lines.length * 28, sk = 1 + 0.08 * Math.sin(RT * 8), freed = mergeFull[s.key] !== false;
       placeH(360, sy, sk);
-      ribbon(0, 0, 210, 40, '#7affc8', '#20c080', '#0a6a44');
-      txt('슬롯 해제!', 0, 1, 22, '#ffffff', '#064a2e', 6);
+      ribbon(0, 0, freed ? 210 : 250, 40, '#7affc8', '#20c080', '#0a6a44');
+      txt(freed ? '슬롯 해제!' : '두 스킬이 하나로!', 0, 1, 22, '#ffffff', '#064a2e', 6);
       ht();
     } else if (cond) txt('조건 · ' + wrap(cond, 580, 15)[0], 360, cy + 146 + lines.length * 28, 15, '#d8c8ff', '#140a24', 4);
   }
@@ -726,7 +727,8 @@ export function events(view, evs, opts) {
       case 'slowmo': slowUntil = RT + clamp(+ev.ms || 0, 0, 1500) / 1000; slowK = clamp(+ev.scale || 0.3, 0.1, 1); break;
       case 'linkFinish': stamp('합동 필살!', '#ffb8ec', 300, 84, 1.0); break;
       case 'fusionMerge': // 첫 발견이면 컷인이 '슬롯 해제!'를 말한다. 다시 합체하면 알림 알약만
-        if (!evs.some(e => e.type === 'synergy' && e.key === ev.fusion && e.first)) pop('슬롯 해제!', (SYN[ev.fusion] ? SYN[ev.fusion].name : '') + ' 합체', '#ffc8ff', 300, 846); // 내 마법사 머리 위(합체 줄기가 닿는 곳)
+        mergeFull[ev.fusion] = ev.full !== false;
+        if (!evs.some(e => e.type === 'synergy' && e.key === ev.fusion && e.first)) pop(ev.full !== false ? '슬롯 해제!' : '합체!', (SYN[ev.fusion] ? SYN[ev.fusion].name : '') + (ev.full !== false ? ' 합체' : ''), '#ffc8ff', 300, 846); // 내 마법사 머리 위(합체 줄기가 닿는 곳)
         break;
       case 'allySpell': { // AI 동료가 네임드 보스를 잡고 새 주문을 익혔다
         const sp = SPELL_BY_KEY[ev.spell];
@@ -786,6 +788,8 @@ export function update(view, da, dt) {
   quietA = quiet ? Math.min(1, quietA + dt * 8) : Math.max(0, quietA - dt * 4);
   if (moment && (moment.t += dt * (moment.kind === 'cut' && MQ.some(m => m.kind === 'cut') ? 1.4 : 1)) >= moment.life) { if (moment.kind === 'boss') bossEndRT = RT; moment = null; }
   if (moment && moment.kind !== 'boss' && quiet && moment.t < 0.2) { MQ.unshift(moment); moment = null; } // 막 시작한 컷인은 보류
+  // 보스 경고 띠: 경고한 보스가 이미 쓰러졌으면(빠른 빌드·3배속) 바로 걷는다 — 죽은 보스 이름이 화면에 남지 않게
+  if (moment && moment.kind === 'boss' && moment.t > 0.5 && moment.t < moment.life - 0.3 && !view.enemies.some(e => e.isBoss && !e.dead)) moment.t = moment.life - 0.3;
   if (moment && moment.kind === 'cut' && moment.s.kind === 'fusion' && !moment.merged && moment.t >= FUSE_PRE) { // 두 엠블럼이 합쳐지는 순간
     moment.merged = true;
     const col = (KIND_COL.fusion)[2], y = midY() - 70;

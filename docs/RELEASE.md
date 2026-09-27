@@ -94,7 +94,7 @@ window.Capacitor?.Plugins?.App?.addListener('backButton', () => { /* 모달 닫�
 ```
 
 ## 로컬 목으로 업데이트 테스트 (디버그 빌드 전용)
-- 플러그인은 https만 받지만 **디버그 빌드**는 `http://10.0.2.2:*`(에뮬레이터 → PC)도 허용
+- 플러그인은 https + GitHub 호스트(`github.com`, `*.githubusercontent.com` — 리다이렉트마다 다시 검사)만 받지만 **디버그 빌드**는 `http://10.0.2.2:*`(에뮬레이터 → PC)도 허용
   (`src/debug/AndroidManifest.xml`이 디버그에서만 cleartext 허용). 릴리스 빌드에는 없음.
 - 절차: 디버그 APK(현재 버전) 설치 → package.json 버전을 잠시 올려 두 번째 디버그 APK 빌드 → 버전 원복 →
   PC에서 두 번째 APK를 서빙 → WebView 콘솔(chrome://inspect)에서:

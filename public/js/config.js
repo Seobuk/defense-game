@@ -454,10 +454,10 @@ export const COLLABS = [
     desc: '성직자 + 화염 스킬: 성직자의 공격이 적을 불태우고(피해 70% 화상), 불타는 적에게 영웅 피해 +70%.' },
   { key: 'shadowExec', name: '그림자 처형', cls: 'assassin', spells: ['curseMark'],
     hint: '낙인찍힌 자의 그림자는 짧다.',
-    desc: '암살자 + 저주 낙인: 처형 기준이 체력 20%p 올라가고, 체력 30% 이하 보스에게 영웅 피해 +90%.' },
+    desc: '암살자 + 저주 낙인: 처형 기준이 체력 25%p 올라가고, 체력 30% 이하 보스에게 영웅 피해 +120%.' },
   { key: 'soulHunt', name: '영혼 사냥', cls: 'assassin', spells: ['soulHarvest'],
     hint: '거둔 영혼은 마법사의 손으로 간다.',
-    desc: '암살자 + 영혼 수확: 영웅이 적을 처치할 때마다 성벽 마법사의 쿨타임 스킬 대기 시간이 1.2초 줄어든다.' },
+    desc: '암살자 + 영혼 수확: 영웅이 적을 처치할 때마다 성벽 마법사의 쿨타임 스킬 대기 시간이 1.6초 줄어든다.' },
   { key: 'unison', name: '합동 필살', cls: null, spells: [],
     hint: '영웅의 외침에 마법사가 답한다.',
     desc: '영웅 궁극기를 쓰고 3초 안에 성벽 마법사의 쿨타임 스킬이 발동하면: 그 스킬이 2배 위력으로 터진다(짧은 슬로 모션).' },
@@ -467,7 +467,7 @@ export const COLLAB_BY_KEY = Object.fromEntries(COLLABS.map(c => [c.key, c]));
 export const COLLAB_FX = {
   anvil: 0.35, ironLine: 0.4, ironGolem: 0.6, frostBastion: 1.0, thunderArrow: 0.5, galeArrow: 0.25,
   twinFlame: 2.5, frostEcho: 1.8, holyHeal: 0.1, holyAmp: 1.2, sanctuary: 0.6, purgeBurn: 0.7, purgeAmp: 0.7,
-  shadowExec: 0.2, shadowBoss: 0.9, soulHunt: 1.2, procGap: 0.35,
+  shadowExec: 0.25, shadowBoss: 1.2, soulHunt: 1.6, procGap: 0.35,
   linkT: 3, linkMul: 2, // 합동 필살: 궁극기 뒤 창(초) · 위력
 };
 // 켜진 협공인가(g.collabOff = 테스트용 전체 끄기) · 협공 효과 배율(특성 collab)

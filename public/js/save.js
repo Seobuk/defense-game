@@ -106,12 +106,14 @@ function hero(h) {
   n.cls = HERO_CLASS_KEYS.includes(h.cls) ? h.cls : null;
   n.level = toInt(h.level, 1, MAX_HERO_LV);
   n.xp = num(h.xp);
-  n.autoEquip = bool(h.autoEquip, false);
+  n.autoEquip = bool(h.autoEquip, true);
   n.talents = normalizeTalents(h.talents, n.level); // 특성이 없던 저장 → 전 클래스 빈 배분(포인트는 레벨로 계산)
   n.autoTalent = bool(h.autoTalent, false);
   const eq = obj(h.equip);
   for (const slot of SLOTS) { const it = item(eq[slot]); n.equip[slot] = it && it.slot === slot ? it : null; }
   n.bag = (Array.isArray(h.bag) ? h.bag : []).map(item).filter(Boolean).slice(0, BAG_SIZE);
+  // v0.0.7까지는 기본이 꺼짐이라 토글을 몰라 알몸으로 싸우던 영웅이 많다: 아무것도 안 낀 영웅은 자동 장착을 켠다
+  if (!SLOTS.some(slot => n.equip[slot])) n.autoEquip = true;
   return n;
 }
 

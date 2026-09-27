@@ -63,7 +63,7 @@ const SLOT_SIL = {
   trinket: '<path d="M24 8l8 12 8-12" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><circle cx="32" cy="36" r="11"/>',
   cape: '<path d="M22 10h20q6 18 8 38-18-6-36 0 2-20 8-38z"/>',
 };
-const slotSil = slot => `<svg class="hu-sil" viewBox="0 0 64 64" aria-hidden="true" fill="currentColor">${SLOT_SIL[slot] || ''}</svg>`;
+export const slotSil = slot => `<svg class="hu-sil" viewBox="0 0 64 64" aria-hidden="true" fill="currentColor">${SLOT_SIL[slot] || ''}</svg>`;
 
 export const bestRarityIdx = hero => {
   let best = -1;

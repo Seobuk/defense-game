@@ -90,7 +90,7 @@ assert.equal(d.runs, 0);
 assert.deepEqual(d.lastLoadout, { cls: null, startSpells: ['tornado', 'gale'] });
 
 // 영웅: 이전 저장(필드 없음) → 새 영웅, 깨진 장비는 버림
-assert.deepEqual(defaults().hero, { cls: null, level: 1, xp: 0, autoEquip: false, talents: {}, autoTalent: false, equip: { weapon: null, helm: null, armor: null, trinket: null, cape: null }, bag: [] });
+assert.deepEqual(defaults().hero, { cls: null, level: 1, xp: 0, autoEquip: true, talents: {}, autoTalent: false, equip: { weapon: null, helm: null, armor: null, trinket: null, cape: null }, bag: [] });
 const sword = { id: 'x1', slot: 'weapon', rarity: 'epic', ilvl: 12, name: '검', main: { key: 'atkPct', value: 12.5 }, subs: [{ key: 'gold', value: 2 }, { key: 'bad', value: 1 }] };
 const h = normalize({ hero: { cls: 'ranger', level: 500, xp: 7, autoEquip: true, equip: { weapon: sword, helm: sword, cape: 'x' }, bag: [sword, null, { id: 3 }] } }).hero;
 assert.equal(h.cls, 'ranger');
@@ -99,6 +99,8 @@ assert.deepEqual(h.equip.weapon.subs, [{ key: 'gold', value: 2 }]);
 assert.equal(h.equip.helm, null, '다른 부위 장비는 거부');
 assert.equal(h.bag.length, 1);
 assert.deepEqual(h.talents, {}, '특성 필드가 없던 영웅 → 빈 배분');
+assert.equal(normalize({ hero: { autoEquip: false } }).hero.autoEquip, true, '아무것도 안 낀 옛 영웅 → 자동 장착 켬');
+assert.equal(normalize({ hero: { cls: 'knight', autoEquip: false, equip: { weapon: sword } } }).hero.autoEquip, false, '장비를 낀 영웅은 설정 유지');
 
 // 특성 배분 검증: 순서·최대 랭크·포인트를 지킨 클래스만 유지, 어긴 클래스는 비움(초기화는 무료)
 const th = normalize({ hero: { cls: 'knight', level: 10, autoTalent: true, talents: {

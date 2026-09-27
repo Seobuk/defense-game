@@ -6,7 +6,7 @@ import { META_UPGRADES, metaCost, metaMax, metaDisplay, SPELLS, SPELL_BY_KEY, SY
 import { startSlots, startSpellChoices } from './run.js';
 import { TALENTS, talentLeft, talentRank, talentPoints } from './talents.js';
 import { createTalentTree, BRANCH_COL } from './talentui.js';
-import { runeRingURL, CLS_INFO, UNLOCK_TEXT } from './heroui.js';
+import { runeRingURL, CLS_INFO, UNLOCK_TEXT, slotSil } from './heroui.js';
 import { heroPortraitURL, itemIconURL, magePortraitURL } from './art/units.js';
 import { emblemImg } from './art/emblems.js';
 import { icon } from './icons.js';
@@ -124,7 +124,7 @@ export function createCamp(root, H = {}) {
   const $ = s => el.querySelector(s), $$ = s => [...el.querySelectorAll(s)];
   const on = (e, ev, fn) => e.addEventListener(ev, fn);
   const txt = (e, s) => { if (e.textContent !== s) e.textContent = s; };
-  let meta = null, pane = 'sortie', preview = 'knight', startSpells = [], sig = '', pickSlot = -1, tCls = null;
+  let meta = null, pane = 'sortie', preview = 'knight', startSpells = [], sig = '', pickSlot = -1, tCls = null, lastCls = null;
 
   const tree = createTalentTree($('.cp-thost'), el, {
     onAllocate: key => !!H.onCampAct?.({ type: 'talent', cls: tCls, key }),
@@ -253,7 +253,8 @@ export function createCamp(root, H = {}) {
     sig = s;
     validStart();
     const hero = meta.hero, cls = cur();
-    if (!HERO_CLASSES[preview]) preview = cls;
+    if (!HERO_CLASSES[preview] || cls !== lastCls) preview = cls; // 영웅 화면('영웅 선택')에서 바꾼 클래스도 무대에 바로
+    lastCls = cls;
     txt($('.cp-best'), `${meta.best}층`);
     txt($('.cp-runs'), meta.runs ? `도전 ${meta.runs}회` : '첫 도전');
     txt($('.cp-gemn'), fmt(meta.gems));
@@ -303,14 +304,14 @@ export function createCamp(root, H = {}) {
     $('.cp-gear-slots').innerHTML = SLOTS.map(sl => {
       const it = hero.equip[sl];
       return it ? `<button class="k-slot cp-gs" data-r="${it.rarity}" aria-label="${SLOT_NAMES[sl]} ${it.name}"><img src="${itemIconURL(sl, it.rarity, cls, 80)}" alt="" draggable="false"></button>`
-        : `<button class="k-slot empty cp-gs" aria-label="${SLOT_NAMES[sl]} 비어 있음"><span>${SLOT_NAMES[sl]}</span></button>`;
+        : `<button class="k-slot empty cp-gs" aria-label="${SLOT_NAMES[sl]} 비어 있음">${slotSil(sl)}<span>${SLOT_NAMES[sl]}</span></button>`; // 빈 칸 = 부위 실루엣(영웅 화면과 같은 그림)
     }).join('');
     for (const b of $$('.cp-gs')) on(b, 'click', () => H.onOpenHero?.({ tab: 'char' }));
     // 시작 스킬 칸
     const n = startSlots(meta), choices = startSpellChoices(meta);
     txt($('.cp-h-sub'), n ? `${startSpells.length}/${n}칸` : '잠김');
     $('.cp-ss-slots').innerHTML = [0, 1].map(i => {
-      if (i >= n) return `<button class="cp-ss-slot locked" data-i="${i}">${icon('lock')}<span>보석 강화로<br>해금</span></button>`;
+      if (i >= n) return `<button class="cp-ss-slot locked" data-i="${i}" aria-label="시작 스킬 칸 잠김 — 보석 강화로 열기">${icon('lock')}<span>${i === n ? `${icon('gem')}${fmt(metaCost('startSlot', n))}<br>보석 강화에서 열기` : '보석 강화로<br>해금'}</span></button>`; // 다음 칸은 값까지(누르면 보석 탭)
       const k = startSpells[i], s = k && SPELL_BY_KEY[k];
       return s ? `<button class="cp-ss-slot full el-${s.element}" data-i="${i}"><span class="cp-ss-art">${emblemImg(k)}</span><span class="cp-ss-name">${s.name}<em>Lv1</em></span></button>`
         : `<button class="cp-ss-slot empty" data-i="${i}"><span class="cp-ss-plus"></span><span>스킬 고르기</span></button>`;

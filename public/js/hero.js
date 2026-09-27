@@ -10,7 +10,7 @@ export const HERO_CLASSES = {
     name: '기사', role: '근접 탱커 — 도발로 적을 붙잡는다', weapon: '검',
     base: { hp: 260, atk: 12, range: 48, atkSpd: 1.0, moveSpd: 95 },
     passive: '반경 120 안의 적은 성벽 대신 기사를 노린다(도발)',
-    taunt: 120, melee: true, dps: 1.6,
+    taunt: 120, melee: true, dps: 1.45,
     ult: { name: '성스러운 방패', cd: 26, dur: 3, r: 170 },
     ultDesc: '3초간 무적 + 주변 적 기절',
     unlock: () => true,
@@ -19,7 +19,7 @@ export const HERO_CLASSES = {
     name: '궁수', role: '원거리 속사 — 관통 화살', weapon: '활',
     base: { hp: 150, atk: 9, range: 400, atkSpd: 2.6, moveSpd: 115 },
     passive: '화살이 최대 2마리를 관통하고, 맞은 적을 살짝 밀어낸다',
-    pierce: 2, push: 20, melee: false, dps: 0.82,
+    pierce: 2, push: 20, melee: false, dps: 0.95,
     ult: { name: '화살비', cd: 20, dur: 2.2, r: 170 },
     ultDesc: '전방 넓은 범위에 화살비',
     unlock: () => true,
@@ -28,7 +28,7 @@ export const HERO_CLASSES = {
     name: '마법사', role: '원거리 광역 마법', weapon: '지팡이',
     base: { hp: 150, atk: 11, range: 340, atkSpd: 0.9, moveSpd: 100 },
     passive: '공격이 착탄 지점 주변에도 피해를 준다',
-    splash: 60, melee: false, dps: 1.2,
+    splash: 60, melee: false, dps: 1,
     ult: { name: '블리자드', cd: 30, dur: 4, r: 220 },
     ultDesc: '넓은 범위에 냉기 폭풍(큰 피해)',
     unlock: () => true,
@@ -46,7 +46,7 @@ export const HERO_CLASSES = {
     name: '암살자', role: '순간이동 연속 베기, 보스 특화', weapon: '단검',
     base: { hp: 170, atk: 13, range: 56, atkSpd: 1.6, moveSpd: 130 },
     passive: '치명타 확률 +20%p, 보스 피해 +30%',
-    critBonus: 0.2, bossBonus: 1.3, melee: true, dps: 0.8, blink: 1.6, // blink = 그림자 순간이동 쿨타임(초)
+    critBonus: 0.2, bossBonus: 1.3, melee: true, dps: 0.95, blink: 1.6, // blink = 그림자 순간이동 쿨타임(초)
     ult: { name: '그림자 난무', cd: 24, dur: 1.6, n: 5 },
     ultDesc: '적 최대 5마리를 순식간에 베어넘긴다',
     unlock: best => best >= 40,
@@ -124,7 +124,7 @@ export const BAG_SIZE = 30;
 
 export function newHero() {
   return {
-    cls: null, level: 1, xp: 0, autoEquip: false,
+    cls: null, level: 1, xp: 0, autoEquip: true, // 자동 장착 기본 켬(주운 장비가 바로 영웅을 바꾼다 — 가방 토글로 끌 수 있다)
     talents: {},        // 클래스별 특성 배분 { [cls]: { [nodeKey]: rank } } — talents.js
     autoTalent: false,  // 자동 강화 on일 때 남는 특성 포인트를 추천 빌드로 자동 배분(bot.js)
     equip: { weapon: null, helm: null, armor: null, trinket: null, cape: null },
@@ -975,7 +975,11 @@ export function lootDrop(g, source, x, y, api) {
   const hero = g.hero;
   const item = rollItem(g.stage, source, g.heroRng, hero.cls);
   const overflow = addToBag(hero, item);
-  if (overflow) g.players[0].gold += sellValue(overflow);
+  if (overflow) { // 가방이 넘치면 판매 — 판매 골드는 이어하기 체크포인트에도(sim.js saleGold와 같은 이유)
+    const v = sellValue(overflow);
+    g.players[0].gold += v;
+    if (g.run?.checkpoint) g.run.checkpoint.players[0].gold += v;
+  }
   if (hero.autoEquip) autoEquipAll(hero);
   api.emit(g, { type: 'loot', item, x, y });
 }

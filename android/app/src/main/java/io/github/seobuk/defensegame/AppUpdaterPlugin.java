@@ -61,7 +61,9 @@ public class AppUpdaterPlugin extends Plugin {
     private static boolean allowedUrl(String s) {
         try {
             URL u = new URL(s);
-            if ("https".equals(u.getProtocol())) return true;
+            // GitHub Releases 다운로드만(github.com → *.githubusercontent.com 리다이렉트). 리다이렉트마다 다시 검사한다
+            String host = u.getHost() == null ? "" : u.getHost().toLowerCase(java.util.Locale.ROOT);
+            if ("https".equals(u.getProtocol())) return host.equals("github.com") || host.endsWith(".githubusercontent.com");
             // 디버그 빌드 전용: 에뮬레이터에서 PC 로컬 목 서버(10.0.2.2) 테스트
             return BuildConfig.DEBUG && "http".equals(u.getProtocol()) && "10.0.2.2".equals(u.getHost());
         } catch (Exception e) {

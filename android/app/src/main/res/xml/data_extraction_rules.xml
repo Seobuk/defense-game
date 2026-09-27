@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 자동 백업·기기 이전(Android 12+): 게임 저장은 옮기되, 받은 업데이트 APK(files/updates)는 빼기 -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="updates/" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="updates/" />
+    </device-transfer>
+</data-extraction-rules>

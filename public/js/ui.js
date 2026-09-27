@@ -6,6 +6,7 @@ import {
   SPELL_BY_KEY, SKILL_BY_KEY, FUSION_BY_KEY, COLLAB_BY_KEY, COLLAB_FX, PICK_AUTO_T, SPELL_SLOTS, SPELL_MAX_LV, AWAKENINGS, AWAKEN_BY_KEY,
 } from './config.js';
 import { collabSlots } from './sim.js';
+import { ultWorth } from './bot.js';
 import { spellCooldown } from './spells.js';
 import { HERO_CLASSES, heroTitle, RARITIES, MILESTONES, heroPower, heroClearXp, heroTier } from './hero.js';
 import { heroPortrait, bestRarityIdx, CLS_INFO } from './heroui.js';
@@ -309,7 +310,9 @@ export function createUI(root, handlers = {}) {
       heroUlt.b.classList.toggle('ready', ready);
     }
     heroUlt.b.classList.toggle('off', view?.phase !== 'play');
-    const label = `${cls.ult.name}, ${down ? '영웅이 쓰러짐' : cool ? `남은 시간 ${sec}초` : ready ? '준비됨' : '전투 중에만 사용'}`;
+    const idle = ready && !!view?.hero && !ultWorth(view, h); // 닿는 곳에 적이 없으면 흐리게(쓰면 헛방 — 막을 필요는 없다)
+    if (heroUlt.idle !== idle) { heroUlt.idle = idle; heroUlt.b.classList.toggle('idle', idle); }
+    const label = `${cls.ult.name}, ${down ? '영웅이 쓰러짐' : cool ? `남은 시간 ${sec}초` : idle ? '준비됨 — 주변에 적이 없어요' : ready ? '준비됨' : '전투 중에만 사용'}`;
     if (heroUlt.label !== label) { heroUlt.label = label; heroUlt.b.setAttribute('aria-label', label); }
   }
 
@@ -495,10 +498,10 @@ export function createUI(root, handlers = {}) {
   }
 
   // ── 융합 합체 연출: 두 구슬이 날아와 하나로 → 폭발 → 빈 칸 반짝 + '슬롯 해제!' ──
-  let pendingMerge = null;
+  let pendingMerge = null, mergeUntil = 0; // 합체 연출이 끝나는 시각(다음 카드는 그 뒤에 뜬다)
   function captureMerge(ev) { // 스택이 바뀌기 전(같은 프레임 update 앞)에 재료 두 칸의 자리를 기억
     const from = (ev.from || []).map(k => { const s = slots.find(x => x.key === k); return s ? { key: k, r: relRect(s.orb) } : null; }).filter(Boolean);
-    pendingMerge = { fusion: ev.fusion, from };
+    pendingMerge = { fusion: ev.fusion, from, full: ev.full !== false };
   }
   function playMerge(pm) {
     const tgt = slots.find(s => s.key === pm.fusion);
@@ -508,6 +511,7 @@ export function createUI(root, handlers = {}) {
     const mx = wide ? cx : cx - Math.min(110, stage.clientWidth * 0.22), my = wide ? cy - 70 : cy - 30; // 모이는 곳: 전장 쪽 허공
     const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
     const T = reduce ? 10 : 820;
+    mergeUntil = performance.now() + T + (pm.full ? 900 : 200);
     tgt.orb.style.opacity = '0';
     pm.from.forEach((f, i) => {
       const t = skillTone(f.key), g = document.createElement('div');
@@ -534,7 +538,7 @@ export function createUI(root, handlers = {}) {
       tgt.orb.animate([{ transform: 'scale(.3)' }, { transform: 'scale(1.45)', offset: 0.5 }, { transform: 'scale(1)' }], { duration: 520, easing: 'cubic-bezier(.3,1.9,.5,1)' });
       // 비워진 칸 반짝 + '슬롯 해제!'
       const free = slots.find(s => !s.key);
-      if (free) {
+      if (free && pm.full) { // '슬롯 해제!'는 꽉 찬 슬롯에서 합체했을 때만(빈 칸이 남아 있으면 의미 없는 말)
         free.b.classList.remove('freed'); void free.b.offsetWidth; free.b.classList.add('freed');
         setTimeout(() => free.b.classList.remove('freed'), 1500);
         const fr = relRect(free.orb), tag = document.createElement('div');
@@ -590,6 +594,7 @@ export function createUI(root, handlers = {}) {
 
   // ── 협공 빛줄기: 영웅 버튼 초상 ↔ 엮인 스킬 구슬 (SVG, 배치가 바뀔 때만 다시 그림) ──
   let beamKey = '';
+  const newCollabs = []; // 이번에 켜진 협공(collab 이벤트) — 빛줄기를 다시 그린 뒤 한 번 흐르게
   const SVGNS = 'http://www.w3.org/2000/svg';
   function updateBeams(v) {
     const on1 = v.phase === 'play' && !E['btn-hero'].hidden && (v.collabs || []).length > 0;
@@ -627,6 +632,7 @@ export function createUI(root, handlers = {}) {
       }
       if (g.childElementCount) E.beams.append(g);
     }
+    for (const k of newCollabs.splice(0)) procCollab(k); // 방금 켜진 협공: 빛이 한 번 흐른다
   }
 
   // ── 상태 칩: 부활 결계 · 각성 · 광폭화 경고 ──
@@ -701,8 +707,10 @@ export function createUI(root, handlers = {}) {
     const n = pick.cards.length;
     // 머리글: 도전 시작 무료 카드 · 칸이 다 찼으면 '강화만'
     const full = Object.keys(view?.spells || {}).length >= SPELL_SLOTS;
-    txt(E.pick.querySelector('.pick-ribbon'), pick.starter ? '출정의 축복!' : full ? `스킬 칸 ${SPELL_SLOTS}/${SPELL_SLOTS}` : '마나 폭주!');
-    txt(E['pick-h'], pick.starter ? '첫 마법을 고르세요' : full ? '스킬을 강화하세요' : '스킬을 선택하세요');
+    // 1층 처치 0에서 뜨는 (무료 카드 아닌) 카드 = 영웅 Lv30 보너스 카드 — 마나를 모으기 전이라 '마나 폭주'가 아니다
+    const gift = !pick.starter && view?.stage === 1 && !(view?.progress?.killed > 0);
+    txt(E.pick.querySelector('.pick-ribbon'), pick.starter ? '출정의 축복!' : gift ? '영웅의 선물!' : full ? `스킬 칸 ${SPELL_SLOTS}/${SPELL_SLOTS}` : '마나 폭주!');
+    txt(E['pick-h'], pick.starter ? '첫 마법을 고르세요' : gift ? '영웅 Lv30 보너스 카드' : full ? '스킬을 강화하세요' : '스킬을 선택하세요');
     E['pick-cards'].classList.toggle('four', n === 4); // 4장 = 2×2, 5장 = 3 + 2
     E['pick-cards'].classList.toggle('five', n >= 5);
     pickCardEls.forEach((c, i) => {
@@ -747,8 +755,28 @@ export function createUI(root, handlers = {}) {
     pickCardEls.forEach((c, i) => { if (i < n) setTimeout(() => c.b.classList.add('in'), 90 * i); });
     syncPickRing(pick);
     E.pick.hidden = false;
+    fitPickDescs(n);
     syncInert();
     pickCardEls[0].b.focus?.({ preventScroll: true });
+  }
+  // 고정 설명 칸에 글이 넘치면 글자를 반 px씩 줄인다(줄 수 제한으로 마지막 줄이 반만 잘려 한글이 부서져 보이던 문제).
+  // 가장 작게 해도 넘치면 칸에 온전히 들어가는 줄 수까지만(반쪽 줄 없음)
+  function fitPickDescs(n) {
+    const over = d => d.scrollHeight > d.clientHeight + 1;
+    for (let i = 0; i < n; i++) {
+      const d = pickCardEls[i].desc, full = d.textContent;
+      d.style.fontSize = ''; d.style.webkitLineClamp = 'unset'; d.style.flex = '';
+      const fs0 = parseFloat(getComputedStyle(d).fontSize) || 12;
+      const shrink = () => { let fs = fs0; d.style.fontSize = ''; while (over(d) && fs > 9.5) { fs -= 0.5; d.style.fontSize = fs + 'px'; } };
+      shrink();
+      const cut = full.indexOf(' — '); // 지원 사격 꼬리말('— 영웅이 싸우는 적을 먼저 노린다')은 자리가 모자라면 뺀다(툴팁·aria엔 그대로)
+      if (over(d) && cut > 0) { d.textContent = full.slice(0, cut); shrink(); }
+      if (over(d)) { // 그래도 넘치면 온전히 들어가는 줄 수까지만 — 칸도 그 높이로 줄여 잘린 반쪽 줄이 보이지 않게
+        const cs = getComputedStyle(d), lh = parseFloat(cs.lineHeight) || fs0 * 1.25;
+        d.style.webkitLineClamp = String(Math.max(1, Math.floor((d.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom)) / lh)));
+        d.style.flex = '0 1 auto';
+      }
+    }
   }
   function syncPickRing(pick) {
     const has = pick.autoLeft != null;
@@ -1056,12 +1084,14 @@ export function createUI(root, handlers = {}) {
   function renderCodex() {
     const d = discovered();
     codexCount = d.size;
-    let n = 0;
-    for (const c of cards) if (renderCodexCard(c, d)) n++;
-    for (const c of fusionCards) if (renderCodexCard(c, d)) n++;
-    let nc = 0;
+    let nh = 0, nf = 0, nc = 0;
+    for (const c of cards) if (renderCodexCard(c, d)) nh++;
+    for (const c of fusionCards) if (renderCodexCard(c, d)) nf++;
     for (const c of collabCards) if (renderCodexCard(c, d)) nc++;
-    n += nc;
+    const n = nh + nf + nc;
+    // 세 탭 모두 같은 규칙으로 발견 수(0이면 이름만)
+    txt(E['ctab-hidden'], nh ? `히든 조합 ${nh}` : '히든 조합');
+    txt(E['ctab-fusion'], nf ? `원소 융합 ${nf}` : '원소 융합');
     txt(E['ctab-collab'], nc ? `협공 ${nc}` : '협공');
     txt(E['codex-count'], `${n}/${SYNERGIES.length} 발견`);
     prop(E['codex-fill'], '--p', frac(n / SYNERGIES.length));
@@ -1297,7 +1327,7 @@ export function createUI(root, handlers = {}) {
         // 보스 WARNING·컷인이 끝난 뒤 카드가 뜨게 잠깐 기다린다(최대 4초)
         const now = performance.now();
         if (pickWaitRef !== v.pick) { pickWaitRef = v.pick; pickWaitT = now; }
-        if (momentLeft() <= 0.15 || now - pickWaitT > 4000) { pickRef = v.pick; openPick(v.pick); }
+        if ((momentLeft() <= 0.15 && now >= mergeUntil) || now - pickWaitT > 4000) { pickRef = v.pick; openPick(v.pick); } // 합체 연출('슬롯 해제!')이 끝난 뒤에
       } else syncPickRing(v.pick);
     } else { pickRef = null; pickWaitRef = null; if (pickOpen && !pickClosing) hidePick(); } // 이벤트 없이 사라진 경우(클리어·패배) 즉시 닫음
     syncReroll(v.rerollLeft | 0);
@@ -1360,11 +1390,12 @@ export function createUI(root, handlers = {}) {
           if (v.stage !== runStage) { runStage = v.stage; runGold = 0; runDrops.length = 0; }
           runGold += ev.gold || 0;
           break;
-        case 'defeat': clearTimeout(clearDelay); showDefeat(ev.stage ?? v.stage); break;
+        case 'defeat': clearTimeout(clearDelay); E.toasts.replaceChildren(); showDefeat(ev.stage ?? v.stage); break; // 패배 도장 위에 남은 알림은 치운다
         case 'fusionMerge': captureMerge(ev); break;
         case 'cast': if (ev.o === 0 && !ev.basic) flashSlot(slotOf(v, ev.spell), !!ev.linked); break;
         case 'linkFinish': flashSlot(slotOf(v, ev.spell), true); break;
         case 'collabProc': procCollab(ev.key); break;
+        case 'collab': newCollabs.push(ev.key); break;
         case 'spellPick': manaSpent = v.stage; resolvePick(ev); break;
         case 'revive':
           toast(ev.hero ? '부활 결계 강화 발동! 성벽 40% 회복' : '부활 결계 발동! 성벽 50% 회복', 'wall');

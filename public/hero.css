@@ -511,8 +511,10 @@
 .cp-gear-slots { display: flex; gap: 5px; flex: 1 1 auto; min-width: 0; }
 .cp-gs { width: auto; flex: 1 1 0; max-width: 48px; min-width: 0; padding: 0; cursor: pointer; }
 .cp-gs img { width: 88%; height: 88%; object-fit: contain; pointer-events: none; }
-.cp-gs.empty span { font-size: 10px; color: rgba(210, 200, 255, .7); }
-.cp-gs.empty { background: radial-gradient(circle at 50% 42%, rgba(123, 108, 255, .3), rgba(20, 15, 46, .8) 72%); box-shadow: inset 0 0 0 2px rgba(160, 148, 255, .4); }
+.cp-gs.empty { position: relative; color: rgba(200, 190, 255, .55); background: linear-gradient(180deg, rgba(90, 76, 190, .55) 0 48%, rgba(40, 30, 96, .85) 52%);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, .28), inset 0 -3px 0 rgba(0, 0, 0, .3), 0 3px 0 rgba(10, 6, 24, .55); } /* 젤리 버튼 결: 윗광택 + 아랫입술 */
+.cp-gs.empty .hu-sil { width: 58%; height: 58%; margin-top: -8px; }
+.cp-gs.empty span { position: absolute; left: 0; right: 0; bottom: 2px; font-size: 9.5px; color: rgba(225, 218, 255, .85); text-align: center; -webkit-text-stroke: 2px var(--ink); paint-order: stroke fill; }
 .cp-gear-btn { flex: none; gap: 5px; padding: 6px 10px; }
 .cp-gear-btn .k-ico { --ico: 22px; }
 .cp-card { padding: 12px 12px 14px; border-radius: 18px; border: 2px solid var(--ink); background: linear-gradient(180deg, rgba(43, 35, 102, .94), rgba(29, 23, 69, .94)); box-shadow: inset 0 1px 0 var(--night-300), 0 4px 0 rgba(0, 0, 0, .3); }
@@ -539,6 +541,7 @@
 .cp-ss-name em { font-style: normal; font-size: 11px; color: var(--gold-hi); }
 .cp-ss-slot.locked { justify-content: center; color: #8f86c0; font-size: 12px; line-height: 1.2; text-align: center; background: #140f2e; box-shadow: inset 0 0 0 2px rgba(123, 108, 255, .15); }
 .cp-ss-slot.locked .k-ico { --ico: 24px; opacity: .7; }
+.cp-ss-slot.locked span .k-ico { --ico: 15px; opacity: 1; vertical-align: -3px; margin-right: 2px; } /* 다음 칸 값(보석) */
 .cp-goal { display: flex; align-items: center; gap: 10px; }
 .cp-goal-l { flex: none; width: 46px; height: 56px; display: grid; place-items: end center; }
 .cp-goal-l .k-ico { --ico: 44px; }

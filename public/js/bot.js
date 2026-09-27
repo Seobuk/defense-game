@@ -94,7 +94,8 @@ export const TALENT_BUILDS = {
   assassin: ['execute', 'poison', 'shadow'],
 };
 // 남은 포인트를 전부 배분. mode 'build' = 추천 빌드, 'random' = 찍을 수 있는 노드 중 무작위(동등성 테스트용, rng 필요)
-export function botTalents(hero, cls, mode = 'build', rng = Math.random) {
+// alloc = 한 랭크 찍기(기본: 게임 없이 직접. 도전 중엔 act 'talent'로 — 협공 갈래 조건·저장 이벤트까지)
+export function botTalents(hero, cls, mode = 'build', rng = Math.random, alloc = k => allocateTalent(hero, cls, k)) {
   const branches = TALENTS[cls];
   if (!branches) return 0;
   let n = 0;
@@ -107,7 +108,7 @@ export function botTalents(hero, cls, mode = 'build', rng = Math.random) {
       const rank = nd => order.indexOf(talentNode(cls, nd.key).branch.key);
       pick = open.reduce((a, b) => (rank(b) < rank(a) ? b : a));
     }
-    allocateTalent(hero, cls, pick.key);
+    if (!alloc(pick.key)) return n;
     n++;
   }
 }
@@ -128,7 +129,7 @@ export function autoHero(g) {
       act(g, 0, { type: 'autoEquip', on: true });
     }
   }
-  if (hero.cls && hero.autoTalent) botTalents(hero, hero.cls); // 레벨업으로 생긴 포인트
+  if (hero.cls && hero.autoTalent) botTalents(hero, hero.cls, 'build', Math.random, key => act(g, 0, { type: 'talent', key })); // 레벨업으로 생긴 포인트
   if (hero.autoEquip) autoEquipAll(hero); // lootDrop도 즉시 장착하지만, 레벨업 등으로 스탯이 바뀐 뒤에도 재확인
   const h = g.heroUnit;
   if (h && h.state !== 'down' && h.ultCd <= 0 && ultWorth(g, h)) act(g, 0, { type: 'heroUlt' });

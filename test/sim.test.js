@@ -9,8 +9,8 @@ import {
   AWAKEN_KEYS, META_KEYS, metaCost, metaMax, metaFx, RUN_GEMS, MAX_STAGE, TRAIN_KEYS, MAGE_TRAINING, trainCost, trainMax, trainDisplay,
   goldPerKill, EARLY_FLOORS, START_CARDS, COLLABS, COLLAB_KEYS, COLLAB_FX, SYNERGIES, SKILL_BY_KEY,
 } from '../public/js/config.js';
-import { createGame, startStage, step, act, drainEvents, setPlayer, tickPick, refreshFusion, serializeRun, normalizeRun, cardCount, slotsUsed, collabSlots } from '../public/js/sim.js';
-import { pickCard, botSpendGems, botSpendGold, botLoadout, botTalents, randomTalents, TALENT_BUILDS, ultWorth } from '../public/js/bot.js';
+import { createGame, startStage, step, act, drainEvents, setPlayer, tickPick, refreshFusion, serializeRun, normalizeRun, cardCount, slotsUsed, collabSlots, reofferPick } from '../public/js/sim.js';
+import { pickCard, botSpendGems, botSpendGold, botLoadout, botTalents, randomTalents, TALENT_BUILDS, ultWorth, autoHero } from '../public/js/bot.js';
 import { newRun, restoreRun, endRun, buyMeta, buyTraining, validLoadout, startSpellChoices, campAct, applyOffline } from '../public/js/run.js';
 import { defaults } from '../public/js/save.js';
 import { spellCooldown } from '../public/js/spells.js';
@@ -553,6 +553,11 @@ function fantasyPick() {
   const cg = createGame({ seed: 1, hero: hero15(), metaLv: { choice: 1 } });
   assert.equal(cardCount(cg), 5);
   assert.equal(genOffer(cg).length, 5);
+  // 미뤄 둔 카드(main.js holdPicks)는 다시 띄울 때 지금 빌드로 새로 뽑는다(낡은 레벨·7번째 슬롯 방지)
+  const hg = createGame({ stage: 5, players: [{}, {}], seed: 56 });
+  hg.spells = { fireball: 2, lightningStrike: 2, iceLance: 2, tornado: 2, holyLight: 2, curseMark: 1 };
+  const stale = { cards: [{ spell: 'gale', level: 1, rarity: 'common', fusionHint: false }, { spell: 'curseMark', level: 1, rarity: 'common', fusionHint: false }], autoLeft: null };
+  assert.ok(reofferPick(hg, stale) && hg.pick.cards.every(c => c.awaken || (hg.spells[c.spell] && c.level === hg.spells[c.spell] + 1)), '다시 띄운 카드 = 지금 빌드 기준');
   console.log('판타지 스킬(런 빌드·슬롯·각성) 통과');
 }
 
@@ -671,6 +676,7 @@ function fantasyFusions() {
     let up = null;
     for (let k = 0; k < 300 && !up; k++) up = genOffer(g).find(c => c.spell === f.key);
     assert.ok(up && up.fusion && up.level === lvl + 1, `${f.key}: 융합 스킬 강화 카드`);
+    for (let k = 0; k < 60; k++) assert.ok(genOffer(g).every(c => c.spell !== a && c.spell !== b), `${f.key}: 합체된 재료는 새 카드로 다시 나오지 않는다`);
     const fresh = createGame({ stage: 5, players: [{}, {}], seed: 52 });
     for (let k = 0; k < 30; k++) assert.ok(genOffer(fresh).every(c => !c.fusion), '융합 스킬은 합체로만 생긴다');
     // 런 안에서 유지 + 이어하기 저장
@@ -1329,7 +1335,12 @@ function runLifecycle() {
     playStage(g, 900, ev);
     assert.equal(g.phase, 'clear', `${g.stage}층 클리어`);
     cleared++;
+    // 클리어 화면에서 앱이 꺼져도: 체크포인트는 이미 다음 층(첫 돌파 보석·골드가 들어 있다)
+    assert.deepEqual([g.run.checkpoint.stage, g.run.checkpoint.floors, g.run.checkpoint.gems.first, g.run.checkpoint.players[0].gold],
+      [g.stage + 1, g.run.floors, g.run.gems.first, g.players[0].gold], '클리어 즉시 다음 층 체크포인트');
+    const cpClear = g.run.checkpoint;
     startStage(g, g.stage + 1);
+    assert.deepEqual(g.run.checkpoint, cpClear, '다음 층 시작 체크포인트와 같다');
   }
   assert.equal(g.run.floors, 3);
   const cp = g.run.checkpoint;
@@ -1337,6 +1348,11 @@ function runLifecycle() {
   assert.equal(cp.floors, 3);
   assert.equal(cp.players[0].gold, g.players[0].gold);
   assert.ok(!act(g, 0, { type: 'heroClass', cls: 'knight' }), '2층부터 클래스 변경 불가');
+  // 도전 중 판매 골드는 체크포인트에도(아이템은 영웅에서 바로 빠진다 — 이어하기·포기로 되돌아가지 않게)
+  g.hero.bag.push(rollItem(10, 'elite', mulberry32(9), g.hero.cls));
+  const cg0 = cp.players[0].gold, pg0 = g.players[0].gold;
+  assert.ok(act(g, 0, { type: 'sell', itemId: g.hero.bag[g.hero.bag.length - 1].id }));
+  assert.ok(g.players[0].gold > pg0 && cp.players[0].gold - cg0 === g.players[0].gold - pg0, '판매 골드 → 체크포인트');
 
   // 이어하기: JSON 왕복 → 같은 스테이지 시작 상태
   const saved = JSON.parse(JSON.stringify(cp));
@@ -1578,6 +1594,15 @@ function runCollab(g, secs) {
   return ev;
 }
 function collabs() {
+  { // 자동 특성(자동 진행 봇)도 act 'talent'로 찍는다 → 갈래 조건 협공(서리 방벽)이 다음 층까지 기다리지 않고 바로 켜진다
+    const hero = newHero();
+    Object.assign(hero, { cls: 'knight', level: 60, autoTalent: true });
+    const g = createGame({ stage: 5, players: [{}, {}], seed: 3, hero, run: { spells: { frostWard: 1 } } });
+    drainEvents(g);
+    assert.ok(!g.collabs.includes('frostBastion'));
+    autoHero(g);
+    assert.ok(g.collabs.includes('frostBastion') && drainEvents(g).some(e => e.type === 'talent'), '자동 특성 → 협공 즉시 재계산');
+  }
   const table = COLLABS.filter(c => c.cls);
   assert.ok(table.length >= 12 && COLLABS.length <= 15, `협공 ${COLLABS.length}종`);
   for (const cls of HERO_CLASS_KEYS) assert.ok(table.filter(c => c.cls === cls).length >= 2, `${cls}: 협공 2~3종`);

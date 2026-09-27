@@ -17,8 +17,10 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET') return;
   if (new URL(req.url).origin !== self.location.origin) return;
 
+  // cache:'no-cache' = HTTP 캐시를 거치되 항상 재검증(ETag 304). GitHub Pages는 max-age=600이라 그냥 fetch하면
+  // 업데이트 새로고침 뒤에도 10분 동안 옛 JS 모듈이 HTTP 캐시에서 나온다(새 index.html + 옛 ui.js 섞임)
   e.respondWith(
-    fetch(req)
+    fetch(req, { cache: 'no-cache' })
       .then((res) => {
         if (res.ok) {
           const copy = res.clone();

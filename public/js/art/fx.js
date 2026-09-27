@@ -676,10 +676,10 @@ function soul(x, y) {
   s.cx = x + (GOLD_POS.x - x) * 0.15 + (rnd() - 0.5) * 120; s.cy = Math.min(y, 500) - 180 - rnd() * 80;
   part(K_GLOW, x, y, 0, -30, 0.3, 40, '#b04dff');
 }
+// 마나 가득: 바를 따라 흐르는 작은 빛 + 반짝이(큰 흰 원판·고리가 웨이브 바·보석 알약을 덮지 않게)
 export function manaSparkle() {
-  burst(K_STAR, MANA_POS.x, MANA_POS.y, 18, 60, 260, 0.8, 16, ['#ffffff', '#e0a0ff', '#ff9ad8'], 160, 1.4, 40);
-  part(K_GLOW, MANA_POS.x, MANA_POS.y, 0, 0, 0.35, 160, '#d890ff');
-  ring(MANA_POS.x, MANA_POS.y, 10, 140, 0.45, '#f0d0ff', 5);
+  burst(K_STAR, MANA_POS.x, MANA_POS.y, 12, 40, 180, 0.7, 12, ['#ffffff', '#e0a0ff', '#ff9ad8'], 160, 1.2, 30);
+  for (let k = 0; k < 6; k++) part(K_GLOW, MANA_POS.x - 110 + k * 44, MANA_POS.y, 90, 0, 0.18 + k * 0.05, 34, k % 2 ? '#ffffff' : '#d890ff');
 }
 // 증기 폭발 (화염 + 냉기 융합)
 function steamFx(x, y, r) {
@@ -941,10 +941,12 @@ function mote(x0, y0, x1, y1, col, dur, arc = 60, big = 1) {
 }
 // 쿨타임 주문 시전: 주문이 '허공에서'가 아니라 마법사 지팡이에서 출발한다
 // 스킬이 주인공(DESIGN 스킬 중심 개편): 시전마다 오브 섬광 + 원소색 마력 구슬이 표적으로. 융합 = 두 원소 줄기가 꼬여 날아감
+const castFlashAt = [-9, -9];
 function castLaunch(ev) {
   const o = ev.o === 1 ? 1 : 0, M = MF[o], [col, col2] = skillCols(ev.spell), ox = M.ox, oy = M.oy, fused = !!FUSION_BY_KEY[ev.spell];
   const tx = +ev.tx || 360, ty = warpY(tx, +ev.ty || 500);
-  sprPop(starFlash(col), ox, oy, 0.4, fused ? 1.8 : 1.3, 0.22);
+  // 지팡이 섬광: 오브 크기 정도로(마법사를 하얗게 덮지 않게), 같은 마법사는 0.3초에 한 번만(분당 160회 시전에 계속 번쩍이지 않게)
+  if (RT - castFlashAt[o] > 0.3 || ev.linked) { castFlashAt[o] = RT; sprPop(starFlash(col), ox, oy, 0.3, fused ? 1.05 : 0.8, 0.2); }
   if (fused) { // 합체 스킬: 두 원소 마법진이 겹쳐 돈다 + 두 줄기가 꼬여 표적으로
     sprPop(runeCircle(col), ox, oy, 0.5, 1.5, 0.35, 0, 3);
     sprPop(runeCircle(col2), ox, oy, 0.5, 1.2, 0.35, 0.4, -3);
@@ -1139,11 +1141,11 @@ export function drawCollab(view) {
   if (h && h.state !== 'down') {
     let w = 0, c0 = COLLAB_COL[0], c1 = COLLAB_COL[1];
     for (const t of TETHERS) if (t.life > 0) { const a = t.life / t.max; if (t.w * a > w) { w = t.w * a; c0 = t.c0; c1 = t.c1; } }
-    if (view.linkT > 0) w = Math.max(w, 0.55 + 0.25 * Math.sin(RT * 12));
+    if (view.linkT > 0) w = Math.max(w, 0.5 + 0.15 * Math.sin(RT * 5)); // 느린 맥동(빠른 떨림은 지저분한 낙서처럼 보인다)
     if (w > 0.02) {
       const hx = h.x, hy = warpY(h.x, h.y) - 60, mx = (hx + M.ox) / 2, my = Math.min(hy, M.oy) - 90;
-      for (const [c, lw, al] of [[c0, 16, 0.3], [c1, 6, 0.75], ['#ffffff', 2.2, 1]]) {
-        ctx.globalAlpha = Math.min(1, w) * al; ctx.strokeStyle = c; ctx.lineWidth = lw * Math.min(1.6, 0.6 + w * 0.5);
+      for (const [c, lw, al] of [[c0, 10, 0.25], [c1, 4, 0.7], ['#ffffff', 1.8, 0.95]]) { // 가는 빛줄기(굵기 상한 1.3배)
+        ctx.globalAlpha = Math.min(1, w) * al; ctx.strokeStyle = c; ctx.lineWidth = lw * Math.min(1.3, 0.6 + w * 0.4);
         ctx.beginPath(); ctx.moveTo(M.ox, M.oy); ctx.quadraticCurveTo(mx, my, hx, hy); ctx.stroke();
       }
       const g = gl('#ffffff');
@@ -1626,7 +1628,8 @@ export function drawBullets(view) {
   if (!bs.length) return;
   const n = bs.length, twin = view.duo && view.duo.includes('twin'), frz = view.frenzyT > 0; // 광란: 불꽃이 더 거세게
   const keep = n <= MAIN_BOLTS ? 2 : MAIN_BOLTS / n, dense = n > MAIN_BOLTS;
-  const sp = Math.min(0.3, 24 / n), tk = 0.8 * (twin ? 1.12 : 1) * (dense ? 1.1 : 1); // 기본 주문은 약한 견제 — 스킬보다 작게
+  // 기본 주문은 약한 견제지만 초반(탄이 적을 때)엔 마법으로 또렷이 보이게 크게, 탄이 많아지면 스킬보다 작게
+  const sp = Math.min(0.3, 24 / n), tk = (n <= 16 ? 1.3 : n <= 40 ? 1.05 : 0.8) * (twin ? 1.12 : 1) * (dense ? 1.1 : 1);
   const top = hudY(96);
   if (BY_.length < n) { BY_ = new Float32Array(n * 2); BA_ = new Float32Array(n * 2); }
   for (let i = 0; i < n; i++) {
@@ -1729,12 +1732,19 @@ export function drawBeams() {
   ctx.globalCompositeOperation = 'source-over';
 }
 
+// 가산 빛 밀도 감쇠: 스킬이 겹치는 붐비는 층에서 빛 스프라이트·빛 입자·광선이 전부 더해져 화면 가운데가 하얗게 타고
+// 적·보스·영웅이 사라지던 문제 → 한꺼번에 떠 있는 가산 빛이 많을수록 각각을 옅게(적을 땐 그대로). 매 프레임 drawSprs가 센다
+let glowK = 1;
 export function drawSprs() {
+  let live = 0;
+  for (const s of SPRS) if (s.life > 0) live++;
+  for (const b of LBEAMS) if (b.life > 0) live += 6;
+  glowK = clamp(1.2 - live / 70, 0.45, 1);
   additive(true);
   for (const s of SPRS) {
     if (s.life <= 0) continue;
     const u = 1 - s.life / s.max, k = s.s0 + (s.s1 - s.s0) * easeOut(u);
-    ctx.globalAlpha = Math.min(1, (1 - u) * 1.8);
+    ctx.globalAlpha = Math.min(1, (1 - u) * 1.8) * glowK;
     place(s.x, s.y, s.ang, k * s.sq, k);
     ctx.rotate(s.vs + s.spin * u);
     ctx.drawImage(s.img, -s.img.hw, -s.img.hh, s.img.hw * 2, s.img.hh * 2);
@@ -1946,16 +1956,19 @@ export function drawSouls() {
 export function drawLBeams() {
   drawRevive();
   additive(true);
+  let nb = 0;
+  for (const b of LBEAMS) if (b.life > 0) nb++;
+  const bk = nb > 2 ? Math.max(0.5, 2 / nb) : 1; // 전신 광선이 여러 줄 겹치면 줄마다 옅게
   for (const b of LBEAMS) {
     if (b.life <= 0) continue;
     const u = b.life / b.max, hgt = b.y1 - b.y0, w = b.w * (0.55 + 0.6 * u);
-    ctx.globalAlpha = Math.min(1, u * 1.5) * 0.55;
+    ctx.globalAlpha = Math.min(1, u * 1.5) * 0.55 * bk;
     spr(gl(b.halo), b.x, b.y0 + hgt / 2, w * 2.2, hgt + 60);
-    ctx.globalAlpha = Math.min(1, u * 2) * 0.9;
+    ctx.globalAlpha = Math.min(1, u * 2) * 0.9 * bk;
     ctx.drawImage(beamSpr(b.halo), b.x - w * 0.55, b.y0, w * 1.1, hgt);
-    ctx.globalAlpha = Math.min(1, u * 2) * 0.7;
+    ctx.globalAlpha = Math.min(1, u * 2) * 0.7 * bk;
     spr(gl(b.core), b.x, b.y0 + hgt / 2, w * 0.45, hgt);
-    ctx.globalAlpha = u * 0.55;
+    ctx.globalAlpha = u * 0.55 * bk;
     spr(gl(b.halo), b.x, b.y1 - 6, w * 2.6, w * 0.8);
   }
   ctx.globalAlpha = 1;
@@ -2026,8 +2039,8 @@ export function drawParticles() {
     const p = P[i];
     if (p.life <= 0 || p.k >= K_CONF) continue;
     const u = p.life / p.max;
-    if (p.k === K_GLOW) { // 큰 빛일수록 옅게(화면이 우윳빛으로 덮이지 않게 — 반경 220 넘으면 비례 감쇠)
-      ctx.globalAlpha = Math.min(1, u * 1.6) * (p.size > 220 ? Math.max(0.3, 220 / p.size) : 1);
+    if (p.k === K_GLOW) { // 큰 빛일수록 옅게(화면이 우윳빛으로 덮이지 않게 — 반경 220 넘으면 비례 감쇠) · 붐비면 glowK
+      ctx.globalAlpha = Math.min(1, u * 1.6) * (p.size > 220 ? Math.max(0.3, 220 / p.size) : 1) * glowK;
       const s = p.size * (0.4 + 0.6 * u);
       spr(gl(p.col), p.x, p.y, s, s);
     } else if (p.k === K_SPARK) {

@@ -1,6 +1,6 @@
 // 부팅 · 게임 루프 · 저장/업데이트 배선 — 로그라이트: 타이틀 → (이어하기 | 정비) → 도전 → 결과 → 정비 (docs/DESIGN.md '로그라이트 구현 계약')
 // 1차: 싱글 플레이, 슬롯 1 = AI 동료
-import { startStage, step, act, drainEvents, tickPick, refreshFusion } from './sim.js';
+import { startStage, step, act, drainEvents, tickPick, refreshFusion, reofferPick } from './sim.js';
 import { DT, SPEED3_UNLOCK, SPELL_KEYS, SPELL_MAX_LV, SYNERGIES, WALL_Y, WORLD_W, MAX_STAGE } from './config.js';
 import { MAX_HERO_LV, RARITY_KEYS, rollItem, addToBag } from './hero.js';
 import { newRun, restoreRun, endRun, applyOffline, campAct, buyMeta } from './run.js';
@@ -20,7 +20,7 @@ const SAVE_EVERY = 3000;
 const MAX_STEPS = 20;             // 한 프레임 최대 시뮬 스텝(큰 공백은 버림)
 const HUD_H = 90;                 // 전장 탭 무시: 월드 y < 90 은 상단 HUD
 // 카드가 네임드 보스 등장 배너·운석 착탄을 덮지 않게: 그동안 전투는 계속 돌고 카드는 뒤에 뜬다
-const PICK_HOLD_BOSS = 1800, PICK_HOLD_METEOR = 800;
+const PICK_HOLD_BOSS = 1800, PICK_HOLD_METEOR = 800, PICK_HOLD_ULT = 1400; // 궁극기·합동 필살 연출을 카드가 가리지 않게
 const FUSION_KEYS = new Set(SYNERGIES.filter(s => s.kind === 'fusion').map(s => s.key));
 
 const native = updater.isNative();
@@ -33,6 +33,7 @@ let game = null;
 let mode = 'title';               // 'title' | 'camp' | 'run' | 'result'
 let acc = 0, lastT = performance.now(), stopUntil = 0, nextAt = 0, saveAt = 0, backAt = 0;
 let pickHoldUntil = 0;
+let stackAt = 0, stackLeft = NaN; // 오른쪽 스킬 스택 왼쪽 끝(월드 x, 콤보 위치용)
 const heldPicks = [];             // 미뤄 둔 카드(보스 배너·운석 뒤에 띄움)
 let pendingResult = null;         // runOver → 이번 프레임 UI 이벤트(패배 도장) 뒤에 결과 화면
 let pendingUpdate = null, updSnooze = false;
@@ -353,6 +354,7 @@ function holdPicks(events, now) {
     if (e.type === 'pickOffer') offered = true;
     else if (e.type === 'bossSpawn' && e.named) pickHoldUntil = Math.max(pickHoldUntil, now + PICK_HOLD_BOSS);
     else if (e.type === 'boom' && e.kind === 'meteor') pickHoldUntil = Math.max(pickHoldUntil, now + PICK_HOLD_METEOR);
+    else if (e.type === 'heroUlt' || e.type === 'linkFinish') pickHoldUntil = Math.max(pickHoldUntil, now + PICK_HOLD_ULT);
   }
   if (game.pick && offered && now < pickHoldUntil) {
     heldPicks.push(game.pick);
@@ -361,8 +363,7 @@ function holdPicks(events, now) {
   }
   if (game.phase !== 'play') heldPicks.length = 0; // 클리어·패배 순간 떠 있던 카드는 sim도 버린다
   else if (!game.pick && heldPicks.length && now >= pickHoldUntil) {
-    game.pick = heldPicks.shift();
-    events.push({ type: 'pickOffer' });
+    if (reofferPick(game, heldPicks.shift())) events.push({ type: 'pickOffer' }); // 카드는 지금 빌드로 새로 뽑는다(그사이 다른 카드를 골랐을 수 있다)
   }
   return events;
 }
@@ -504,8 +505,13 @@ function frame(now) {
   let events = drainEvents(g);
   if (mode === 'run') events = holdPicks(events, now);
   handleEvents(events, now);
+  if (now >= stackAt) { // 스킬 스택(전장 위에 겹칠 때) 왼쪽 끝 — 레이아웃 읽기라 0.5초마다만
+    stackAt = now + 500;
+    const r = document.getElementById('side-r').getBoundingClientRect();
+    stackLeft = r.width > 0 ? renderer.toWorld(r.left, r.top).x : NaN;
+  }
   const out = renderer.frame(g, events, dt, {
-    dmgNumbers: data.settings.dmgNumbers, shake: data.settings.shake, hitstop: holding || paused, myIndex: 0,
+    dmgNumbers: data.settings.dmgNumbers, shake: data.settings.shake, hitstop: holding || paused, myIndex: 0, stackLeft,
   });
   if (out.coins > 0) audio.play('coin');
   ui.onEvents(events, g);
