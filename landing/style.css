@@ -1,0 +1,325 @@
+@import url('https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Gowun+Dodum&family=Jua&display=swap');
+
+:root {
+  /* Colors from kit.css */
+  --ink: #22163a;
+  --ink-soft: #4a3a6b;
+  --night-900: #140f2e;
+  --night-800: #1d1745;
+  --night-700: #2b2366;
+  --night-500: #4535a0;
+  --night-300: #7b6cff;
+  --paper: #fff6e6;
+  --paper-edge: #e8d3ad;
+  --paper-shadow: #b8935e;
+  
+  --gold-hi: #fff3a8;
+  --gold: #ffc92e;
+  --gold-lo: #e08a00;
+  --gold-ink: #6b3300;
+  
+  --r-s: 10px;
+  --r-m: 16px;
+  --r-l: 22px;
+  
+  --font-impact: 'Black Han Sans', sans-serif;
+  --font-display: 'Jua', sans-serif;
+  --font-body: 'Gowun Dodum', sans-serif;
+  
+  --ease-out: cubic-bezier(.22, 1, .36, 1);
+  --ease-back: cubic-bezier(.34, 1.56, .64, 1);
+  --shadow-drop: 0 8px 14px rgba(20, 15, 46, .35);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--font-body);
+  background-color: var(--night-900);
+  color: var(--paper);
+  line-height: 1.5;
+  overflow-x: hidden;
+  word-break: keep-all;
+}
+
+h1, h2, h3, h4, .font-impact {
+  font-family: var(--font-impact);
+}
+.font-display {
+  font-family: var(--font-display);
+}
+
+a { color: inherit; text-decoration: none; }
+
+/* Buttons */
+.k-btn {
+  --top: #ffe45a; --bot: #ffb21a; --lip: #c26a00; --txt-ol: #7a3a00;
+  position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 14px 24px; border: 2px solid var(--ink); border-radius: var(--r-m);
+  font-family: var(--font-display); font-size: 18px; line-height: 1.1; color: #fff;
+  -webkit-text-stroke: 3px var(--txt-ol); paint-order: stroke fill; text-shadow: 0 2px 0 var(--txt-ol);
+  background: linear-gradient(180deg, var(--top) 0 52%, var(--bot) 56% 100%);
+  box-shadow: inset 0 2px 0 rgba(255,255,255,0.55), inset 0 -3px 0 rgba(0, 0, 0, .12), 0 5px 0 var(--lip), var(--shadow-drop);
+  transform: translateY(0); transition: transform .18s var(--ease-back), box-shadow .18s var(--ease-back);
+  cursor: pointer; user-select: none; text-align: center;
+}
+.k-btn:active {
+  transform: translateY(4px);
+  box-shadow: inset 0 2px 0 rgba(255,255,255,0.55), inset 0 -2px 0 rgba(0, 0, 0, .12), 0 1px 0 var(--lip), 0 3px 6px rgba(20, 15, 46, .3);
+}
+.k-btn.secondary {
+  --top: #6fd0ff; --bot: #1f86f0; --lip: #0f4ea8; --txt-ol: #0b3070;
+}
+.k-btn .k-sub {
+  display: block; font-size: 0.65em; -webkit-text-stroke-width: 2px; opacity: 0.95; margin-top: 4px;
+}
+
+/* Container */
+.container {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 0 20px;
+}
+
+/* Header */
+header.hero {
+  text-align: center;
+  padding: 60px 20px;
+  background: radial-gradient(circle at top center, var(--night-700), var(--night-900) 80%);
+  border-bottom: 2px solid var(--ink);
+  position: relative;
+  overflow: hidden;
+}
+
+header.hero::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0; height: 100%;
+  background: url('data:image/svg+xml;utf8,<svg width="20" height="20" xmlns="http://www.w3.org/2000/svg"><circle cx="2" cy="2" r="1" fill="rgba(255,255,255,0.05)"/></svg>') repeat;
+  pointer-events: none;
+}
+
+.logo {
+  font-size: 48px;
+  margin-bottom: 16px;
+  color: #fff;
+  -webkit-text-stroke: 4px var(--ink);
+  paint-order: stroke fill;
+  text-shadow: 0 4px 0 var(--ink), 0 8px 16px rgba(0,0,0,0.5);
+  background: linear-gradient(180deg, #fffbe0 0%, #ffc92e 100%);
+  -webkit-background-clip: text;
+  color: transparent;
+  display: inline-block;
+  line-height: 1.2;
+}
+@media(min-width: 768px) {
+  .logo { font-size: 72px; -webkit-text-stroke: 6px var(--ink); text-shadow: 0 6px 0 var(--ink), 0 10px 20px rgba(0,0,0,0.5); }
+}
+
+.hook {
+  font-size: 20px;
+  margin-bottom: 40px;
+  color: var(--paper);
+  text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+}
+
+.cta-group {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  align-items: center;
+  margin-bottom: 24px;
+}
+@media(min-width: 600px) {
+  .cta-group { flex-direction: row; justify-content: center; }
+}
+
+.release-info {
+  font-family: var(--font-display);
+  font-size: 14px;
+  color: #aab;
+  margin-top: 10px;
+}
+
+/* Media Area */
+.media-area {
+  padding: 40px 0;
+  display: flex;
+  gap: 20px;
+  overflow-x: auto;
+  snap-type: x mandatory;
+  padding-bottom: 20px; /* scrollbar */
+}
+.media-area::-webkit-scrollbar { height: 8px; }
+.media-area::-webkit-scrollbar-track { background: var(--night-800); border-radius: 4px; }
+.media-area::-webkit-scrollbar-thumb { background: var(--night-500); border-radius: 4px; }
+
+.mockup-frame {
+  flex: 0 0 280px;
+  height: 580px;
+  border-radius: 36px;
+  border: 12px solid var(--ink);
+  background: linear-gradient(135deg, var(--night-500), var(--night-800));
+  box-shadow: 0 20px 40px rgba(0,0,0,0.5), inset 0 0 0 4px #444;
+  position: relative;
+  overflow: hidden;
+  scroll-snap-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mockup-frame::after {
+  content: "";
+  position: absolute;
+  top: 0; left: 50%;
+  transform: translateX(-50%);
+  width: 120px; height: 24px;
+  background: var(--ink);
+  border-bottom-left-radius: 16px;
+  border-bottom-right-radius: 16px;
+}
+.mockup-placeholder-text {
+  font-family: var(--font-display);
+  color: rgba(255,255,255,0.3);
+  font-size: 18px;
+}
+
+/* Sections */
+section {
+  padding: 60px 20px;
+  border-bottom: 2px solid var(--ink);
+}
+section:nth-child(even) {
+  background-color: var(--night-800);
+}
+
+.section-title {
+  text-align: center;
+  font-size: 32px;
+  margin-bottom: 40px;
+  color: var(--gold-hi);
+  -webkit-text-stroke: 2px var(--ink);
+  paint-order: stroke fill;
+  text-shadow: 0 3px 0 var(--ink);
+}
+
+/* Features */
+.features-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 24px;
+}
+@media(min-width: 768px) {
+  .features-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+.feature-card {
+  background: var(--night-700);
+  border: 2px solid var(--ink);
+  border-radius: var(--r-m);
+  padding: 24px;
+  box-shadow: inset 0 1px 0 var(--night-300), 0 6px 14px rgba(0,0,0,0.3);
+}
+.feature-card h3 {
+  font-size: 22px;
+  margin-bottom: 12px;
+  color: #fff;
+  -webkit-text-stroke: 1.5px var(--ink);
+  paint-order: stroke fill;
+}
+
+/* Install Steps */
+.install-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 32px;
+}
+@media(min-width: 768px) {
+  .install-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+.install-box {
+  background: var(--paper);
+  color: var(--ink);
+  border: 3px solid var(--ink);
+  border-radius: var(--r-l);
+  padding: 24px;
+  box-shadow: inset 0 0 0 2px var(--paper-edge), 0 8px 0 var(--paper-shadow);
+}
+.install-box h3 {
+  font-size: 24px;
+  margin-bottom: 16px;
+  text-align: center;
+}
+.install-step {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  font-size: 16px;
+  font-weight: bold;
+}
+.install-step span.step-num {
+  background: var(--ink);
+  color: #fff;
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-impact);
+}
+.install-icon {
+  display: block; margin: 16px auto; width: 64px; height: 64px;
+}
+
+/* Trust */
+.trust-section {
+  text-align: center;
+  background: var(--night-900);
+}
+.trust-info {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+  font-size: 14px;
+  opacity: 0.8;
+}
+.trust-info code {
+  background: var(--night-700);
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-family: monospace;
+}
+.trust-info a {
+  color: var(--gold-hi);
+  text-decoration: underline;
+}
+
+/* FAQ */
+.faq-item {
+  margin-bottom: 20px;
+  background: var(--night-700);
+  border: 2px solid var(--ink);
+  border-radius: var(--r-m);
+  padding: 16px 20px;
+}
+.faq-q {
+  font-family: var(--font-display);
+  font-size: 18px;
+  color: var(--gold-hi);
+  margin-bottom: 8px;
+}
+.faq-a {
+  font-size: 15px;
+}
+
+/* Footer */
+footer {
+  text-align: center;
+  padding: 40px 20px;
+  font-size: 14px;
+  opacity: 0.6;
+  background: var(--night-900);
+}

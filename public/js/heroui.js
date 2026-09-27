@@ -11,10 +11,12 @@ import { icon } from './icons.js';
 import { heroPortraitURL, itemIconURL } from './art/units.js';
 import { emblemImg } from './art/emblems.js';
 import { glyph } from './art/fx.js';
+import { createTalentTree } from './talentui.js';
+import { talentLeft } from './talents.js';
 
 // 받침대 룬 서클(고해상도, 한 번 굽기) — 전장 마법진과 같은 문양(동심원 + 육망성 + 룬 10자)
 let runeURL = '';
-function runeRingURL() {
+export function runeRingURL() {
   if (runeURL) return runeURL;
   const c = document.createElement('canvas'), R = 256;
   c.width = c.height = R;
@@ -43,14 +45,14 @@ const SUB_NAME = Object.fromEntries(SUBSTATS.map(s => [s.key, s.name]));
 const MAIN_STAT_NAME = { atkPct: '영웅 공격력', heroHpPct: '영웅 체력', dmgReducePct: '피해 감소', critDmgPct: '치명타 피해', atkSpeedPct: '영웅 공격 속도' };
 const SLOT_MAIN_KEY = { weapon: 'atkPct', helm: 'heroHpPct', armor: 'dmgReducePct', trinket: 'critDmgPct', cape: 'atkSpeedPct' };
 // 클래스 쇼케이스 수치(장식용, 1~5) · 역할 배지 · 대표 색 — 조정은 이 표만
-const CLS_INFO = {
+export const CLS_INFO = {
   knight: { diff: 2, pow: 2, surv: 5, role: '탱커', col: '#5a8cff' },
   ranger: { diff: 2, pow: 4, surv: 2, role: '원거리', col: '#4fd06a' },
   sorcerer: { diff: 3, pow: 4, surv: 2, role: '광역', col: '#b27aff' },
   cleric: { diff: 3, pow: 2, surv: 4, role: '회복', col: '#ffc92e' },
   assassin: { diff: 4, pow: 5, surv: 1, role: '암살', col: '#ff4d6a' },
 };
-const UNLOCK_TEXT = { cleric: '20층 클리어 시 해금', assassin: '40층 클리어 시 해금' };
+export const UNLOCK_TEXT = { cleric: '20층 클리어 시 해금', assassin: '40층 클리어 시 해금' };
 const TIER_R = ['common', 'uncommon', 'rare', 'epic', 'legend']; // 티어 배지 색 = 희귀도 색
 const SLOT_ORDER_L = ['helm', 'armor', 'cape'], SLOT_ORDER_R = ['weapon', 'trinket'];
 // 빈 장비 칸 실루엣 (부위 모양, 반투명)
@@ -95,7 +97,8 @@ const heroSig = (hero, ctx) => {
   for (const slot of SLOTS) s += '|' + (hero.equip[slot] ? hero.equip[slot].id : '-');
   s += '|' + hero.bag.length;
   for (const it of hero.bag) s += ',' + it.id;
-  return s + '|' + Math.floor(ctx.stage || 0) + '|' + Math.floor(ctx.gold || 0);
+  s += '|' + JSON.stringify(hero.talents || {}) + (hero.autoTalent ? 1 : 0);
+  return s + '|' + Math.floor(ctx.stage || 0) + '|' + Math.floor(ctx.gold || 0) + '|' + (ctx.camp ? 1 : 0);
 };
 const bars = (n, max = 5) => Array.from({ length: max }, (_, i) => `<i class="${i < n ? 'on' : ''}"></i>`).join('');
 
@@ -155,8 +158,9 @@ export function createHeroUI(root, handlers = {}) {
           <div class="hu-power"><span>전투력</span><b class="hu-powernum k-num k-grad gold" data-text="0">0</b></div>
         </div>
         <div class="k-tabs hu-tabs" role="tablist">
-          <button class="k-tab" data-tab="char" role="tab" aria-selected="true">영웅 정보</button>
-          <button class="k-tab" data-tab="bag" role="tab" aria-selected="false">가방<span class="hu-newdot" hidden>0</span></button>
+          <button class="k-tab" data-tab="char" role="tab" aria-selected="true">영웅</button>
+          <button class="k-tab" data-tab="talent" role="tab" aria-selected="false">특성<span class="hu-newdot hu-tdot" hidden>0</span></button>
+          <button class="k-tab" data-tab="bag" role="tab" aria-selected="false">가방<span class="hu-newdot hu-bdot" hidden>0</span></button>
         </div>
         <section class="hu-panel hu-panel-char" data-panel="char">
           <button class="k-btn s neutral hu-changeclass">${icon('hero')}클래스 변경</button>
@@ -165,6 +169,7 @@ export function createHeroUI(root, handlers = {}) {
           <h3 class="hu-sec-h">성장 마일스톤</h3>
           <div class="hu-milestones"></div>
         </section>
+        <section class="hu-panel hu-panel-talent" data-panel="talent" hidden></section>
         <section class="hu-panel hu-panel-bag" data-panel="bag" hidden>
           <div class="hu-toolbar">
             <label class="hu-autoeq-l"><button class="k-toggle hu-autoeq" aria-pressed="false" aria-label="자동 장착"></button><span>자동 장착</span></label>
@@ -174,6 +179,7 @@ export function createHeroUI(root, handlers = {}) {
           </div>
           <div class="hu-baggrid"></div>
           <div class="hu-sellrow"></div>
+          <p class="hu-campnote" hidden>${icon('coin')}<span>판매는 도전 중에만 할 수 있어요. 판 골드는 그 도전의 강화에 쓰여요.</span></p>
         </section>
       </div>
     </div>
@@ -227,7 +233,7 @@ export function createHeroUI(root, handlers = {}) {
   const cp = $('.hu-cp'), cpBack = $('.hu-cp-back'), cpHero = $('.hu-cp-hero'), cpThumbs = $('.hu-thumbs'), cpGo = $('.hu-cp-go');
   const cpLock = $('.hu-cp-lock');
   const main = $('.hu-main');
-  const panels = { char: $('.hu-panel-char'), bag: $('.hu-panel-bag') };
+  const panels = { char: $('.hu-panel-char'), talent: $('.hu-panel-talent'), bag: $('.hu-panel-bag') };
   const tabs = $$('.hu-tabs .k-tab');
   const goldEl = $('.hu-gold');
   const slotBtns = Object.fromEntries($$('.hu-eq').map(b => [b.dataset.slot, b]));
@@ -236,7 +242,14 @@ export function createHeroUI(root, handlers = {}) {
   const powerNum = $('.hu-powernum');
   const bonusesEl = $('.hu-bonuses'), milestonesEl = $('.hu-milestones');
   const autoEqBtn = $('.hu-autoeq'), sortBtns = $$('.hu-sorts .k-tab'), sellRow = $('.hu-sellrow'), bagGrid = $('.hu-baggrid');
-  const newDot = $('.hu-newdot');
+  const newDot = $('.hu-bdot'), tDot = $('.hu-tdot');
+  // 특성 트리: 정비 화면이면 무료 초기화까지(onReset), 도전 중이면 찍기만
+  const th = {
+    onAllocate: key => { const ok = H.onTalent?.(key); forceRender(); return ok !== false; },
+    onReset: null,
+    onAutoToggle: v => { H.onToggleAutoTalent?.(v); forceRender(); },
+  };
+  const tree = createTalentTree(panels.talent, main, th);
   const isOv = $('.hu-itemsheet-ov'), isBox = $('.hu-item'), isRb = $('.hu-is-rb'), isName = $('.hu-is-name'), isIcon = $('.hu-is-icon'), isRarity = $('.hu-is-rarity');
   const isIlvl = $('.hu-is-ilvl'), isStats = $('.hu-is-stats'), isCmp = $('.hu-is-cmp'), isEquipBtn = $('.hu-is-equip'), isSellBtn = $('.hu-is-sell');
   const scOv = $('.hu-sellconfirm-ov'), scBody = $('.hu-sc-body');
@@ -374,6 +387,7 @@ export function createHeroUI(root, handlers = {}) {
     H.onClose?.();
   }
   function hideAll() {
+    tree.close();
     cp.hidden = true; main.hidden = true; isOv.hidden = true; scOv.hidden = true;
     openView = null;
     setSiblingsInert(false);
@@ -386,8 +400,7 @@ export function createHeroUI(root, handlers = {}) {
     if (activeTab === tab) return;
     activeTab = tab;
     for (const b of tabs) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
-    panels.char.hidden = tab !== 'char';
-    panels.bag.hidden = tab !== 'bag';
+    for (const k in panels) panels[k].hidden = tab !== k;
     const sc = $('.hu-scroll'); if (sc) sc.scrollLeft = 0; // 가로로 밀린 채 남아 탭 글자가 잘리던 문제
     if (tab === 'bag') newDot.hidden = true; // 가방 탭을 보면 NEW 카운트 확인한 것으로 간주(타일별 표시는 유지)
     renderPanel();
@@ -403,12 +416,18 @@ export function createHeroUI(root, handlers = {}) {
     pruneNewItems();
     updateNewDot();
     txt(goldEl, fmt(curCtx.gold || 0));
+    goldEl.parentElement.hidden = !!curCtx.camp; // 골드는 도전 한정
+    $('.hu-changeclass').hidden = !curCtx.classChange;
+    th.onReset = curCtx.camp ? () => !!H.onTalentReset?.() : null;
+    const tl = curHero && curHero.cls ? talentLeft(curHero, curHero.cls) : 0;
+    tDot.hidden = !(tl > 0) || activeTab === 'talent';
+    tDot.textContent = '+' + tl;
     renderStage();
     renderPanel();
   }
   function renderPanel() {
     if (!curHero) return;
-    if (activeTab === 'char') renderCharacter(); else renderBag();
+    if (activeTab === 'char') renderCharacter(); else if (activeTab === 'talent') tree.render(curHero, curHero.cls, true); else renderBag();
   }
 
   // 무대(초상 + 장비 칸 + 이름판) — 두 탭 공통
@@ -472,6 +491,8 @@ export function createHeroUI(root, handlers = {}) {
     for (const it of hero.bag) { counts[it.rarity] = (counts[it.rarity] || 0) + 1; gold[it.rarity] = (gold[it.rarity] || 0) + sellValue(it); }
     sellRow.innerHTML = '<span class="hu-sell-h">등급별 일괄 판매</span>' + RARITIES.map(r => `<button class="hu-chip" data-r="${r.key}" data-rarity="${r.key}" ${counts[r.key] ? '' : 'disabled'}><i></i>${r.name}<b class="k-num">${counts[r.key] || 0}</b></button>`).join('');
     for (const b of sellRow.querySelectorAll('.hu-chip')) on(b, 'click', () => openSellConfirm(b.dataset.rarity));
+    sellRow.hidden = !!curCtx.camp;
+    $('.hu-campnote').hidden = !curCtx.camp;
 
     const items = sortByPower ? hero.bag.slice().sort((a, b) => itemPower(b) - itemPower(a)) : hero.bag;
     let html = items.map((it, i) => `<button class="k-slot hu-tile" data-r="${it.rarity}" data-id="${it.id}" aria-label="${it.name}" style="--i:${Math.min(i, 8)}">
@@ -522,7 +543,7 @@ export function createHeroUI(root, handlers = {}) {
         ? `<div class="hu-cmp ${diff >= 0 ? 'up' : 'down'}"><span>착용 중인 ${equippedNow.name} 대비</span><b class="k-num ${diff >= 0 ? 'ok' : 'bad'}"><i class="hu-arrow"></i>${diff >= 0 ? '+' : ''}${fmt(diff)}</b></div>`
         : `<div class="hu-cmp up"><span>빈 칸 — 장착하면 바로 강해져요</span><b class="k-num ok"><i class="hu-arrow"></i>+${fmt(itemPower(item))}</b></div>`;
     isEquipBtn.hidden = equipped;
-    isSellBtn.hidden = equipped;
+    isSellBtn.hidden = equipped || !!curCtx.camp;
     isSellBtn.innerHTML = `판매 <span class="hu-coin"></span>${fmt(sellValue(item))}`;
     isOv.hidden = false;
     isEquipBtn.focus?.({ preventScroll: true });
@@ -586,11 +607,14 @@ export function createHeroUI(root, handlers = {}) {
     if (openView === 'main' && activeTab === 'bag') renderBag();
   }
 
-  function open(hero, ctx = {}) {
+  // ctx: { stage: 최고 기록(클래스 해금), gold: 런 골드, camp: 정비 화면이면 true(판매·골드 숨김, 특성 무료 초기화), classChange: 클래스 변경 버튼 }
+  // opt.tab: 'char' | 'talent' | 'bag'
+  function open(hero, ctx = {}, opt = {}) {
     prevFocus = document.activeElement;
     curHero = hero; curCtx = ctx || {};
-    if (!hero || !hero.cls) showClassPick('pick');
-    else showMain();
+    if (!hero || !hero.cls) { showClassPick('pick'); return; }
+    if (opt.tab && panels[opt.tab]) { activeTab = ''; setTab(opt.tab); }
+    showMain();
   }
   function close() { hideAll(); }
   function isOpen() { return openView !== null; }
@@ -604,6 +628,7 @@ export function createHeroUI(root, handlers = {}) {
     renderAll();
   }
   function handleBack() {
+    if (openView === 'main' && tree.handleBack()) return true;
     if (!isOv.hidden) { closeItemSheet(); return true; }
     if (!scOv.hidden) { scOv.hidden = true; return true; }
     if (openView === 'classpick') {

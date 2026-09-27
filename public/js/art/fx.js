@@ -6,28 +6,20 @@ import { fmt, clamp } from '../util.js';
 import { BOSSES } from '../stages.js';
 import {
   TAU, S, bake, bakeO, circ, poly, rad, lin, fs, shine, lite, dim, mulberry, INK2, EL,
-  ctx, K, BX, BY, T, RT, topExtra, GOLD_POS, hudY,
+  ctx, K, BX, BY, T, RT, topExtra, GOLD_POS, hudY, frameNo,
   shake, flash, punchZoom, colA, flashA, flashCol, MANA_POS, NUM_FONT, OWN, rnd, easeOut, lerp, pool, take,
   wt, ht, place, placeH, spr, additive, groundRune,
 } from './core.js';
 import { MF, HF, visOf, stuns, afterImage, MAGE_FEET, bone, visR, bossDY, warpY } from './units.js';
 import { coins } from './world.js';
-import { stamp } from './hud.js';
+import { stamp, pop } from './hud.js';
 
-// 마법탄 원소 스타일 [코어, 메인, 에지, 꼬리 길이, 크기]
+// 기본 주문 탄 팔레트 [코어, 메인, 에지, 꼬리 길이, 크기] — p0fire = P1 화염구, p1 = P2 서리 화살
 export const MSTY = {
-  p0: ['#fff2a0', '#ffb030', '#b3230f', 1, 1],
   p0fire: ['#fff2a0', '#ff6a1f', '#8a1a08', 1.15, 1.1],
   p1: ['#ffffff', '#7fe3ff', '#2a78e0', 1, 1],
-  flame: ['#fff2a0', '#ff5a1a', '#8a1a08', 1.25, 1.15],
-  pierce: ['#ffffff', '#ffd23a', '#a65200', 2.1, 1.05],   // 관통: 길게 뻗는 마력 창
-  pierce1: ['#ffffff', '#9fe8ff', '#2a78e0', 2.1, 1.05],
-  homing: ['#fff0fb', '#ff8ad8', '#8a1f7a', 1.3, 1],      // 유도: 휘어 들어가는 도깨비불
-  homing1: ['#f4f0ff', '#b89aff', '#4a2aa8', 1.3, 1],
 };
-export const mstyle = (kind, owner, fireP1) => kind === 'flame' ? MSTY.flame
-  : kind === 'pierce' || kind === 'homing' ? MSTY[owner === 1 ? kind + '1' : kind]
-  : owner === 1 ? MSTY.p1 : fireP1 ? MSTY.p0fire : MSTY.p0;
+export const mstyle = (kind, owner) => kind === 'frostbolt' || (kind !== 'fireball' && owner === 1) ? MSTY.p1 : MSTY.p0fire;
 export const HERO_NUM = ['#ffb8f6', '#3a0636'];   // 영웅 피해 숫자 [채움, 테두리]
 export const CANDY = ['#ff5a8a', '#ffd23a', '#5ae0ff', '#7aff6a', '#b88aff', '#ff9a3a', '#ffffff'];
 const GOO = {
@@ -44,13 +36,13 @@ const P = pool(400, () => ({ life: 0, max: 1, x: 0, y: 0, vx: 0, vy: 0, g: 0, dr
 const RINGS = pool(90, () => ({ life: 0, max: 1, x: 0, y: 0, r0: 0, r1: 0, col: '#fff', w: 2 }));
 const NUMS = pool(24, () => ({ on: false, x: 0, y: 0, vy: 0, t: 0, mt: 0, age: 0, life: 1, txt: '', col: '#fff', top: '#fff', ink: '#000', s: 1, s0: 1, crit: false, val: 0, cls: '', o: 0, tgt: null, w: 0, punch: 0 }));
 const BOLTS = pool(32, () => ({ life: 0, max: 1, pts: null, col: '#8ff', halo: '#3aa8ff', w: 1 }));
-const METEORS = pool(20, () => ({ on: false, x0: 0, y0: 0, x1: 0, y1: 0, t: 0, delay: 0, dur: 0.3, kills: null }));
+const METEORS = pool(20, () => ({ on: false, x0: 0, y0: 0, x1: 0, y1: 0, t: 0, delay: 0, dur: 0.3, kills: null, r: 110 }));
 const DECALS = pool(24, () => ({ life: 0, max: 1, x: 0, y: 0, r: 0 }));
 const BEAMS = pool(4, () => ({ life: 0, max: 1, x: 0, y0: 0 }));
 const SPRS = pool(150, () => ({ life: 0, max: 1, x: 0, y: 0, s0: 1, s1: 1, ang: 0, spin: 0, vs: 0, sq: 1, img: null }));
 const FIREBALLS = pool(10, () => ({ on: false, t: 0, dur: 0.28, x0: 0, y0: 0, x1: 0, y1: 0, r: 100, plasma: false, kills: [] }));
 const SOULS = pool(48, () => ({ on: false, t: 0, dur: 0.8, x0: 0, y0: 0, cx: 0, cy: 0 }));
-const HSHOTS = pool(24, () => ({ on: false, t: 0, dur: 0.1, cls: '', x0: 0, y0: 0, x1: 0, y1: 0, crit: false }));
+const HSHOTS = pool(24, () => ({ on: false, t: 0, delay: 0, dur: 0.1, cls: '', x0: 0, y0: 0, x1: 0, y1: 0, crit: false }));
 const ULTS = pool(6, () => ({ on: false, t: 0, dur: 1, cls: '', x: 0, y: 0, r: 0, tg: [], k: 0 }));
 const ARROWS = pool(64, () => ({ on: false, t: 0, delay: 0, x: 0, y: 0 }));
 const LBEAMS = pool(8, () => ({ life: 0, max: 1, x: 0, w: 50, y0: 0, y1: WALL_Y, core: '#fff', halo: '#fa0' }));
@@ -735,8 +727,7 @@ function spellFx(view, ev, n) {
   switch (ev.key) {
     case 'lightningStrike': strike(x, y, fus.includes('superconduct'), n === 0); break;
     case 'iceLance': {
-      const M = MF[0];
-      M.cast = 1;
+      const M = MF[ev.o === 1 ? 1 : 0];
       ring(M.ox, M.oy, 6, 56, 0.3, '#bff4ff', 4);
       sprPop(starFlash('#7fe3ff'), M.ox, M.oy, 0.3, 1, 0.22);
       burst(K_SHARD, M.ox, M.oy, 6, 80, 240, 0.45, 5, ['#ffffff', '#7fe3ff'], 300, 2);
@@ -779,9 +770,9 @@ function fireballBoom(fb) {
   shake(0.13);
 }
 // 영웅 원거리 투사체
-function shot(cls, x0, y0, x1, y1, crit, speed) {
+function shot(cls, x0, y0, x1, y1, crit, speed, delay = 0) {
   const s = take(HSHOTS);
-  s.on = true; s.t = 0; s.cls = cls; s.x0 = x0; s.y0 = y0; s.x1 = x1; s.y1 = y1; s.crit = crit;
+  s.on = true; s.t = 0; s.delay = delay; s.cls = cls; s.x0 = x0; s.y0 = y0; s.x1 = x1; s.y1 = y1; s.crit = crit;
   s.dur = clamp(Math.hypot(x1 - x0, y1 - y0) / speed, 0.05, 0.32);
 }
 function heroAttackFx(view, ev) {
@@ -816,12 +807,12 @@ function heroAttackFx(view, ev) {
     shake(0.02);
   }
 }
-const ULT_CALL = { knight: ['성스러운 방패', '#ffe07a'], ranger: ['화살비', '#8dff6a'], sorcerer: ['블리자드', '#9fe8ff'], cleric: ['천상의 치유', '#fff3a8'], assassin: ['그림자 난무', '#ff8ad8'] };
+const ULT_CALL = { absZero: ['절대영도', '#bff8ff'], knight: ['성스러운 방패', '#ffe07a'], ranger: ['화살비', '#8dff6a'], sorcerer: ['블리자드', '#9fe8ff'], cleric: ['천상의 치유', '#fff3a8'], assassin: ['그림자 난무', '#ff8ad8'] };
 function heroUltFx(view, ev) {
   const u = take(ULTS), x = +ev.x || 360, y = +ev.y || 900, r = +ev.r || 170;
   u.on = true; u.t = 0; u.cls = ev.cls; u.x = x; u.y = y + 14; u.r = r; u.tg.length = 0; u.k = 0;
   shake(0.3);
-  const cn = ULT_CALL[ev.cls];
+  const cn = ULT_CALL[ev.variant === 'absZero' ? 'absZero' : ev.cls];
   if (cn) stamp(cn[0] + '!', cn[1], 300, 58, 1.1); // 궁극기 이름 외침(클래스 색) — 효과만 번쩍이고 끝나지 않게
   switch (ev.cls) {
     case 'knight':
@@ -829,7 +820,7 @@ function heroUltFx(view, ev) {
       // 바닥 룬 서클이 펼쳐지며(원근) 테두리 금빛 고리 하나 — 흰 충격파 없음
       sprPop(runeCircle('#ffc94a'), x, y + 14, 0.6, r / 31, 0.7, Math.PI / 2, 1.2, 0.38);
       ring(x, y, 20, r, 0.45, '#ffc94a', 8);
-      sprPop(starFlash('#ffd23a'), x, y - 34, 0.5, 1.8, 0.3);
+      sprPop(starFlash('#ffd23a'), x, y - 34, 0.4, 1.1, 0.25);
       burst(K_STAR, x, y - 30, 16, 120, 360, 0.7, 18, ['#ffffff', '#ffe07a'], 0, 2);
       flash(0.12, '#ffd23a');
       for (const e of view.enemies) if (!e.dead && Math.hypot(e.x - x, e.y - y) <= r + e.r) stuns.set(e.id, RT + 1.5);
@@ -845,8 +836,15 @@ function heroUltFx(view, ev) {
     }
     case 'sorcerer':
       u.dur = 2;
+      if (ev.variant === 'absZero') { // 절대영도: 반경 280 전체가 얼어붙는다 — 거대한 서리 룬 + 얼음 결정 폭발 + 기절 별
+        u.dur = 2.6;
+        sprPop(runeCircle('#e8fbff'), x, y + 14, 0.5, r / 28, 1.2, Math.PI / 2, 0.8, 0.38);
+        ring(x, y, 20, r * 1.05, 0.7, '#7fe3ff', 8);
+        burst(K_SHARD, x, y - 20, 40, 200, 720, 1.1, 9, ['#ffffff', '#bff4ff', '#7fe3ff'], 300, 1);
+        for (const e of view.enemies) if (!e.dead && Math.hypot(e.x - x, e.y - y) <= r + e.r) stuns.set(e.id, RT + (e.named ? 1.5 : 3));
+      }
       flash(0.3, '#bff4ff');
-      ring(x, y, 20, r, 0.6, '#e8fbff', 12);
+      ring(x, y, 20, r, 0.6, '#7fe3ff', 9);
       burst(K_SHARD, x, y - 20, 24, 150, 520, 0.9, 8, ['#ffffff', '#bff4ff', '#7fe3ff'], 300, 1);
       break;
     case 'cleric': {
@@ -868,6 +866,254 @@ function heroUltFx(view, ev) {
       break;
     }
   }
+}
+
+// ═════════════ 성벽 마법사 주문 · 영웅 궁극 특성 · 로그라이트 순간 ═════════════
+const FRAGS = pool(40, () => ({ on: false, t: 0, dur: 0.2, x0: 0, y0: 0, x1: 0, y1: 0 }));      // 불꽃 산탄 파편
+const MOTES = pool(24, () => ({ on: false, t: 0, dur: 0.3, x0: 0, y0: 0, x1: 0, y1: 0, arc: 60, col: '#fff', big: 1 })); // 시전 → 표적으로 날아가는 마력 구슬
+const TOSS = pool(4, () => ({ on: false, t: 0, pts: [], seg: 0.1 }));                             // 튕기는 방패
+const LINES = pool(8, () => ({ life: 0, max: 0.3, x0: 0, y0: 0, x1: 0, y1: 0, col: '#fff', halo: '#fff', w: 1 })); // 관통 저격 직선
+const REVIVE = { t: 9, hero: false };                                                             // 부활 결계(성벽 방패 폭발)
+export const SUMMON_COL = { wolf: '#8fe8ff', shadow: '#b04dff', arcane: '#c08aff' };
+let fbBooms = 0, frags = 0, berserkRT = -9;
+export let warcryUntil = -9; // 전군 강화 함성: 두 마법사·영웅 금빛 오라(units)
+
+// 불꽃 산탄: 화염구 파편이 가까운 적들에게 흩어진다
+function shardsFx(ev) {
+  if (!Array.isArray(ev.pts) || frags > 10) return;
+  frags++;
+  const y0 = warpY(ev.x, ev.y);
+  for (const pt of ev.pts) {
+    const f = take(FRAGS);
+    f.on = true; f.t = 0; f.x0 = ev.x; f.y0 = y0; f.x1 = pt[0]; f.y1 = warpY(pt[0], pt[1]);
+    f.dur = clamp(Math.hypot(f.x1 - f.x0, f.y1 - f.y0) / 900, 0.08, 0.2);
+  }
+}
+function mote(x0, y0, x1, y1, col, dur, arc = 60, big = 1) {
+  const m = take(MOTES);
+  m.on = true; m.t = 0; m.x0 = x0; m.y0 = y0; m.x1 = x1; m.y1 = y1; m.col = col; m.dur = dur; m.arc = arc; m.big = big;
+}
+// 쿨타임 주문 시전: 주문이 '허공에서'가 아니라 마법사 지팡이에서 출발한다
+function castLaunch(ev) {
+  const o = ev.o === 1 ? 1 : 0, M = MF[o], sp = SPELL_BY_KEY[ev.spell];
+  const col = sp && EL[sp.element] ? EL[sp.element][1] : '#ffffff', ox = M.ox, oy = M.oy;
+  const tx = +ev.tx || 360, ty = warpY(tx, +ev.ty || 500);
+  sprPop(starFlash(col), ox, oy, 0.4, 1.3, 0.22);
+  switch (ev.spell) {
+    case 'lightningStrike': { // 지팡이에서 하늘로 번개를 쏘아 올린다 → 낙뢰가 떨어짐
+      const b = take(BOLTS), top = Math.min(oy - 360, 80);
+      b.pts = [[ox, oy], [ox + (rnd() - 0.5) * 60, (oy + top) / 2], [ox + (rnd() - 0.5) * 120, top]];
+      b.life = b.max = 0.2; b.col = '#ffe53a'; b.halo = '#7b5cff'; b.w = 0.8;
+      part(K_GLOW, ox, oy, 0, 0, 0.2, 70, '#ffe53a');
+      break;
+    }
+    case 'tornado': mote(ox, oy, tx, ty - 20, '#6ff0c0', 0.3, 40); break;
+    case 'judgment': // 지팡이에서 가는 빛줄기가 하늘로 → 심판 광선이 내려온다
+      lightBeam(ox, 12, oy - 420, oy, 0.3, '#ffffff', '#e0a72e');
+      break;
+    case 'iceLance': part(K_GLOW, ox, oy, 0, 0, 0.18, 60, '#7fe3ff'); break;
+    default: part(K_GLOW, ox, oy, 0, 0, 0.16, 56, col);
+  }
+}
+
+// 영웅 궁극 특성·특성 효과 (heroProc)
+const HP_COL = { judgeBolt: '#fff0a8', pillar: '#ffd23a', scythe: '#b04dff', plague: '#9dff5a', meteor: '#ff8a1e' };
+function heroProcFx(view, ev) {
+  const x = +ev.x || 360, y = warpY(x, +ev.y || 500), r = +ev.r || 90;
+  switch (ev.kind) {
+    case 'shieldToss': { // 금빛 방패가 적 사이를 튕겨 다닌다
+      if (!Array.isArray(ev.pts) || ev.pts.length < 2) break;
+      const s = take(TOSS);
+      s.on = true; s.t = 0; s.pts = ev.pts.map(p => [p[0], warpY(p[0], p[1]) - 20]); s.seg = 0.09;
+      break;
+    }
+    case 'judgeBolt': { // 심판의 번개: 하늘에서 금빛 번개 + 바닥 룬
+      const b = take(BOLTS);
+      b.pts = [[x + (rnd() - 0.5) * 80, y - 520], [x + (rnd() - 0.5) * 50, y - 240], [x, y]]; b.life = b.max = 0.26; b.col = '#fff6c0'; b.halo = '#e0a72e'; b.w = 1.3;
+      sprPop(runeCircle('#ffd23a'), x, y + 6, 0.5, r / 30, 0.4, Math.PI / 2, 2, 0.38);
+      ring(x, y, 10, r, 0.3, '#fff0a8', 6);
+      part(K_GLOW, x, y, 0, 0, 0.2, r * 1.4, '#ffe07a');
+      burst(K_SPARK, x, y, 8, 300, 700, 0.18, 3, ['#ffffff', '#ffe07a'], 0, 6);
+      shake(0.06);
+      break;
+    }
+    case 'warcry': { // 전군 강화 함성: 영웅에서 금빛 파동 3겹 → 두 마법사에게 번짐
+      warcryUntil = RT + (+ev.t || 8);
+      for (let k = 0; k < 3; k++) ring(x, y - 30, 10 + k * 20, 160 + k * 90, 0.5 + k * 0.12, k === 1 ? '#ffffff' : '#ffb03a', 8 - k * 2);
+      for (const M of MF) mote(x, y - 40, M.ox, M.oy, '#ffc94a', 0.35, 90);
+      stamp('전군 강화!', '#ffc23a', 390, 56, 1);
+      break;
+    }
+    case 'snipe': { // 관통 저격: 화면 끝까지 뻗는 초록·흰 직선
+      const L = take(LINES);
+      L.x0 = x + (ev.tx > x ? 16 : -16); L.y0 = y - 20; L.x1 = +ev.tx; L.y1 = warpY(+ev.tx, +ev.ty);
+      L.life = L.max = 0.32; L.col = '#f4ffe8'; L.halo = '#6aff5a'; L.w = 1;
+      sprPop(starFlash('#b8ffb0'), L.x0, L.y0, 0.4, 1.4, 0.2);
+      shake(0.05);
+      break;
+    }
+    case 'arrowStorm': { // 화살 폭풍: 3연사(첫 발은 heroAttack이 쏜다)
+      const tx = +ev.tx, ty = warpY(tx, +ev.ty);
+      for (let k = 1; k < 3; k++) shot('ranger', x + (ev.tx >= x ? 16 : -16), y - 16 - k * 6, tx + (rnd() - 0.5) * 30, ty + (rnd() - 0.5) * 20, false, 1400, k * 0.06);
+      break;
+    }
+    case 'meteor': { // 작은 운석: 하늘에서 떨어져 표적 주변 폭발
+      const m = take(METEORS);
+      m.on = true; m.x1 = x; m.y1 = y; m.x0 = x - 140; m.y0 = y - 520; m.t = 0; m.delay = 0; m.dur = 0.2; m.kills = null; m.r = r;
+      break;
+    }
+    case 'pillar': // 천벌 기둥: 가장 밀집한 무리에 굵은 금빛 기둥 + 바닥 룬
+      lightBeam(x, r * 0.8, -60, y + 10, 0.6, '#ffffff', '#ffc92e');
+      sprPop(runeCircle('#ffd23a'), x, y + 8, 0.6, r / 28, 0.6, Math.PI / 2, 1.5, 0.38);
+      ring(x, y, 10, r * 1.1, 0.4, '#fff0a8', 8);
+      burst(K_STAR, x, y - 20, 14, 80, 320, 0.8, 16, ['#ffffff', '#ffe07a'], -60, 2);
+      shake(0.12);
+      break;
+    case 'scythe': { // 처형자의 낫: 보라 초승달이 영웅 주위를 한 바퀴 휩쓸고 지나감
+      for (let k = 0; k < 2; k++) sprPop(slashArc('#8a2ae0'), x, y - 20, r / 70, r / 44, 0.3, k * Math.PI, TAU * 0.6); // 낫 두 번 휘두름(보라, 흰 원판 금지)
+      ring(x, y - 10, 20, r, 0.3, '#b04dff', 6);
+      burst(K_SMOKE, x, y - 10, 6, 40, 160, 0.6, 34, 'rgba(60,20,90,0.5)', -20, 2);
+      shake(0.1);
+      break;
+    }
+    case 'plague': { // 역병: 독 구름이 터지며 주변 적에게 번진다
+      burst(K_SMOKE, x, y, 7, 30, 140, 0.9, 40, 'rgba(90,170,40,0.45)', -30, 1.5);
+      ring(x, y, 10, r, 0.4, '#9dff5a', 6);
+      if (Array.isArray(ev.pts)) for (const p of ev.pts.slice(0, 6)) mote(x, y, p[0], warpY(p[0], p[1]), '#9dff5a', 0.25, 30, 0.7);
+      break;
+    }
+    case 'execute': // 즉사: 붉은 X 베기 + 해골 섬광(짧게)
+      for (const r2 of [-0.8, 0.8]) sprPop(slashArc('#ff3a4a'), x, y, 0.5, 0.9, 0.18, r2 + Math.PI / 2, 0);
+      sprPop(starFlash('#ff5a6a'), x, y, 0.3, 0.9, 0.2);
+      break;
+    case 'cardBless': { // 카드 축복: 영웅 → 내 마법사로 금빛 구슬 + 알림
+      const h = view.heroUnit, M = MF[0];
+      if (h) mote(h.x, h.y - 50, M.ox, M.oy, '#ffe07a', 0.45, 120, 1.4);
+      pop('카드 축복!', '스킬 레벨 +1', '#ffd23a', 360, 700);
+      break;
+    }
+  }
+}
+// 소환물 공격: 늑대 물기(흰 초승달 2개) · 그림자 분신 X 베기 · 비전 분신 보라 마력탄
+function summonAtkFx(ev) {
+  const tx = +ev.tx, ty = warpY(tx, +ev.ty), x = +ev.x, y = warpY(x, +ev.y), ang = Math.atan2(ty - y, tx - x);
+  if (ev.kind === 'wolf') {
+    sprPop(slashArc('#dff8ff'), tx, ty - 6, 0.45, 0.7, 0.16, ang + 0.6, 0);
+    sprPop(slashArc('#dff8ff'), tx, ty + 6, 0.45, 0.7, 0.16, ang - 0.6, 0);
+    burst(K_SPARK, tx, ty, 3, 200, 420, 0.12, 2.2, ['#ffffff', '#8fe8ff'], 0, 6);
+  } else if (ev.kind === 'shadow') {
+    for (const r2 of [-0.8, 0.8]) sprPop(slashArc('#c070ff'), tx, ty, 0.5, 0.85, 0.16, ang + r2, 0);
+    burst(K_SMOKE, tx, ty, 2, 20, 70, 0.4, 22, 'rgba(70,20,100,0.5)', -20, 2);
+  } else shot('sorcerer', x, y - 30, tx, ty, false, 1000);
+}
+// 부활 결계: 무너지던 성벽에 룬 방패가 되살아나며 폭발(금 → 청록), 1.5초 빙결
+function reviveFx(ev) {
+  REVIVE.t = 0; REVIVE.hero = !!ev.hero;
+  const col = ev.hero ? '#ffe07a' : '#8ff4ff';
+  stamp(ev.hero ? '성스러운 부활!' : '부활 결계!', ev.hero ? '#ffd23a' : '#8ff4ff', 420, 70, 1.5);
+  for (let k = 0; k < 3; k++) ring(360, WALL_Y - 20, 30 + k * 30, 420 + k * 120, 0.6 + k * 0.15, k === 1 ? '#ffffff' : col, 12 - k * 3);
+  for (let k = 0; k < 40; k++) part(K_STAR, 20 + rnd() * 680, WALL_Y - rnd() * 30, (rnd() - 0.5) * 60, -160 - rnd() * 260, 1.1, 14, rnd() < 0.5 ? '#ffffff' : col, 80, 1);
+  flash(0.3, col);
+  shake(0.4);
+}
+function drawRevive() {
+  const t = REVIVE.t;
+  if (t > 1.6) return;
+  const a = t < 0.15 ? t / 0.15 : Math.max(0, 1 - (t - 0.15) / 1.45), col = REVIVE.hero ? '#ffd86a' : '#9ff4ff';
+  additive(true);
+  // 성벽을 따라 되살아나는 룬 방패: 룬 띠 두 줄이 가운데에서 양옆으로 펼쳐진다 + 벽 위 빛 커튼(알파 ≤ 0.2)
+  const open = easeOut(Math.min(1, t / 0.35)), half = 400 * open;
+  ctx.save(); ctx.beginPath(); ctx.rect(360 - half, WALL_Y - 260, half * 2, 320); ctx.clip();
+  ctx.globalAlpha = a;
+  ctx.drawImage(runeBand(col), -40 + (RT * 60) % 48, WALL_Y - 44, 820, 26);
+  ctx.drawImage(runeBand(col), -(RT * 60) % 48, WALL_Y - 110, 820, 20);
+  ctx.globalAlpha = a * 0.2;
+  ctx.drawImage(beamSpr(col), -40, WALL_Y - 250, 800, 250);
+  ctx.restore();
+  ctx.globalAlpha = a * 0.6;
+  spr(gl(col), 360, WALL_Y - 30, 900 * open, 90);
+  groundRune(runeCircle(col), 360, WALL_Y - 12, 3.2 * open, RT * 0.6, a * 0.8);
+  ctx.globalAlpha = 1;
+  additive(false);
+}
+
+// 파편 · 마력 구슬 · 튕기는 방패 · 저격선 (drawFireballs 층에서 함께)
+function drawProcs() {
+  additive(true);
+  for (const f of FRAGS) {
+    if (!f.on) continue;
+    const u = easeOut(f.t / f.dur), x = lerp(f.x0, f.x1, u), y = lerp(f.y0, f.y1, u) - Math.sin(u * Math.PI) * 24;
+    ctx.globalAlpha = 1;
+    spr(gl('#ff7a1e'), x, y, 30, 30);
+    spr(hotCore('#ffd23a'), x, y, 12, 12);
+  }
+  for (const m of MOTES) {
+    if (!m.on) continue;
+    const u = m.t / m.dur, e = u * u * (3 - 2 * u), cx = (m.x0 + m.x1) / 2, cy = Math.min(m.y0, m.y1) - m.arc;
+    for (let k = 3; k >= 0; k--) {
+      const q = Math.max(0, e - k * 0.06), a = 1 - q;
+      const x = a * a * m.x0 + 2 * a * q * cx + q * q * m.x1, y = a * a * m.y0 + 2 * a * q * cy + q * q * m.y1;
+      ctx.globalAlpha = 1 - k * 0.22;
+      spr(gl(k ? m.col : '#ffffff'), x, y, (30 - k * 5) * m.big, (30 - k * 5) * m.big);
+    }
+  }
+  for (const L of LINES) {
+    if (L.life <= 0) continue;
+    const u = L.life / L.max, ang = Math.atan2(L.y1 - L.y0, L.x1 - L.x0), len = Math.hypot(L.x1 - L.x0, L.y1 - L.y0);
+    place(L.x0, L.y0, ang, 1, 1);
+    for (const [c, w, al] of [[L.halo, 22, 0.35], [L.halo, 9, 0.8], [L.col, 3.5, 1]]) {
+      ctx.globalAlpha = u * al;
+      ctx.fillStyle = c;
+      ctx.fillRect(0, -w * u / 2, len, w * u);
+    }
+    wt();
+  }
+  ctx.globalAlpha = 1;
+  additive(false);
+  const sh = tossShield();
+  for (const s of TOSS) {
+    if (!s.on) continue;
+    const n = s.pts.length - 1, k = Math.min(n - 1, Math.floor(s.t / s.seg)), u = clamp(s.t / s.seg - k, 0, 1);
+    const [x0, y0] = s.pts[k], [x1, y1] = s.pts[k + 1], x = lerp(x0, x1, u), y = lerp(y0, y1, u) - Math.sin(u * Math.PI) * 18;
+    additive(true); ctx.globalAlpha = 0.8; spr(gl('#ffd23a'), x, y, 64, 64); additive(false);
+    ctx.globalAlpha = 1;
+    place(x, y, RT * 22, 1, 1);
+    ctx.drawImage(sh, -sh.hw, -sh.hh, sh.hw * 2, sh.hh * 2);
+    wt();
+  }
+}
+// 튕기는 방패(기사 수호 궁극 특성): 둥근 금테 방패 + 십자
+function tossShield() {
+  return bake('f:toss', 16, 16, x => {
+    circ(x, 0, 0, 14); fs(x, rad(x, 0, 0, 1, 14, [[0, '#8fc0ff'], [0.7, '#3a6ee8'], [1, '#1a3a9a']], -4, -5), 2.6, INK2);
+    circ(x, 0, 0, 11); x.lineWidth = 2.6; x.strokeStyle = '#ffd23a'; x.stroke();
+    x.beginPath(); x.moveTo(0, -8); x.lineTo(0, 8); x.moveTo(-6, -2); x.lineTo(6, -2); x.lineWidth = 3; x.strokeStyle = '#ffffff'; x.stroke();
+    shine(x, -5, -6, 3, 1.6, -0.6, 0.8);
+  }, Math.min(S, 2));
+}
+function updateProcs(da) {
+  for (const f of FRAGS) {
+    if (!f.on || (f.t += da) < f.dur) continue;
+    f.on = false;
+    part(K_GLOW, f.x1, f.y1, 0, 0, 0.14, 40, '#ff8a1e');
+    burst(K_SPARK, f.x1, f.y1, 3, 150, 380, 0.12, 2.2, ['#ffd23a', '#ffffff'], 0, 6);
+  }
+  for (const m of MOTES) {
+    if (!m.on || (m.t += da) < m.dur) continue;
+    m.on = false;
+    ring(m.x1, m.y1, 4, 36 * m.big, 0.25, m.col, 4);
+    part(K_GLOW, m.x1, m.y1, 0, 0, 0.18, 50 * m.big, m.col);
+  }
+  for (const L of LINES) if (L.life > 0) L.life -= da;
+  for (const s of TOSS) {
+    if (!s.on) continue;
+    const k0 = Math.floor(s.t / s.seg);
+    s.t += da;
+    const k1 = Math.floor(s.t / s.seg);
+    if (k1 > k0 && k1 < s.pts.length) { const [bx, by] = s.pts[k1]; burst(K_SPARK, bx, by, 5, 200, 480, 0.14, 2.6, ['#ffffff', '#ffe07a'], 0, 6); ring(bx, by, 4, 40, 0.2, '#ffe07a', 4); }
+    if (s.t >= s.seg * (s.pts.length - 1)) s.on = false;
+  }
+  REVIVE.t += da;
 }
 
 // 처치: 번쩍 + 고리 + 색종이 + 점액 + 동전 (보스는 크게)
@@ -895,6 +1141,17 @@ function boom(view, ev) {
   const x = ev.x, y = ev.y, r = +ev.r || 60;
   switch (ev.kind) {
     case 'steam': steamFx(x, y, r); break; // 증기 폭발(융합)
+    case 'fireball': { // 화염구 명중: 작은 폭발(반경 r) — 불꽃 링 + 불티 + 가끔 연기. 연사 중엔 예산 안에서만 크게
+      const fy = warpY(x, y);
+      if (fbBooms++ < 7) {
+        part(K_GLOW, x, fy, 0, 0, 0.16, r * 1.6, '#ff6a1f'); // 작은 적이 빛 덩어리에 묻히지 않게 흰 심은 작게
+        part(K_GLOW, x, fy, 0, 0, 0.06, r * 0.6, '#ffd23a');
+        ring(x, fy, r * 0.3, r * 1.05, 0.22, '#ffb040', 5);
+        burst(K_GLOW, x, fy, 4, 40, 170, 0.35, 12, ['#ffe45a', '#ff6a1f', '#ff4a1a'], -140, 3);
+        if (rnd() < 0.3) part(K_SMOKE, x, fy - 6, (rnd() - 0.5) * 20, -40, 0.7, 26, 'rgba(70,40,30,0.4)', 0, 1);
+      } else if (fbBooms < 24) part(K_GLOW, x, fy, 0, 0, 0.12, r * 1.6, '#ff7a1e');
+      break;
+    }
     case 'crit':
       ring(x, y, 6, r, 0.28, '#ffb040', 5);
       part(K_GLOW, x, y, 0, 0, 0.2, r * 1.6, '#ff9a30');
@@ -919,7 +1176,7 @@ function boom(view, ev) {
         const kv = meteorKills[k];
         const tx = kv ? kv.x : 60 + rnd() * 600, ty = kv ? kv.y : 200 + rnd() * 700;
         m.on = true; m.x1 = tx; m.y1 = ty; m.x0 = tx - 220 - rnd() * 120; m.y0 = ty - 900 - rnd() * 200;
-        m.t = 0; m.delay = k * 0.045 + rnd() * 0.06; m.dur = 0.28;
+        m.t = 0; m.delay = k * 0.045 + rnd() * 0.06; m.dur = 0.28; m.r = 110;
         m.kills = meteorKills.filter((_, i) => i % n === k);
       }
       meteorKills.length = 0; // 이중 운석의 두 번째는 빈 하늘에
@@ -1001,84 +1258,150 @@ export function drawEshots(view) {
   ctx.globalCompositeOperation = 'source-over';
 }
 
-// 마법탄: 원소색 꼬리(가산) + 헤일로 + 반짝 입자 + 코어. 다중 시전은 부채꼴 그대로
-// 마법탄(§9.7): 곧은 스미어 하나로 "핀·막대"처럼 보이던 것을 — 짧은 연결 스미어(속도 방향 정렬)
-// + 점점 작아지는 잔상 구슬 사슬(원소 메인→에지, 탄마다 위상·간격을 살짝 어긋내 "벽지" 패턴 제거)
-// + 헤드 주위를 도는 반짝 스파클로 바꾼다. 위 여분(y<0)으로 나가 사라지기 직전엔 부드럽게 페이드.
-// 마법탄 (§9.7). 탄이 많을 때(다중 시전 + 최고 시전 속도 = 140발+) 전부 같은 크기로 그리면 "점 벽지"가 된다 →
-// 탄마다 고정 시드로 약 44발만 '주탄'(크게·꼬리·반짝)으로, 나머지는 '보조탄'(60% 크기·반투명 헤드 + 옅은 빛)으로 그린다.
-// 판정·개수는 그대로이고 그리기 호출 수가 크게 줄어든다(성능 §12).
+// ═════════════ 기본 주문 탄 (성벽 마법사) — DESIGN '성벽 마법사 주문 시전 구현 계약' ═════════════
+// P1 화염구(fireball): 불꽃 혀가 뒤로 날리는 불덩이 + 불티 꼬리 → 명중 시 작은 폭발(boom kind 'fireball').
+// P2 서리 화살(frostbolt): 각진 얼음 결정 + 서리 꼬리 + 떨어지는 결정 가루 → 관통, 맞은 적은 푸른 서리(slowT).
+// 히든 조합(b.syn): 관통 = 길게 늘어난 화염 창/얼음 창 · 불꽃 산탄 = 더 크고 거센 불꽃 · 유도 = 휘어진 도깨비불 궤적.
+// 탄이 많으면(다중 시전 × 최고 시전 속도) 고정 시드로 약 30발만 '주탄'(모양·꼬리)으로, 나머지는 작은 빛(성능 §12).
 const MAIN_BOLTS = 30;
 let BY_ = new Float32Array(256), BA_ = new Float32Array(256); // 탄별 그려질 y(보스 왜곡) · 알파(HUD·화면 끝 페이드)
+// 불덩이 머리(+x 방향, 머리 중심 = 원점 +5). v = 불꽃 혀 모양 변형(깜빡임용 2장)
+function fireHead(v) {
+  return bake('f:fh|' + v, 36, 16, x => {
+    const tongue = (s, col, rim) => {
+      x.save(); x.translate(5, 0); x.scale(s, s);
+      x.beginPath();
+      x.moveTo(11, 0);
+      x.bezierCurveTo(11, -9, 2, -12, -6, -10);
+      x.quadraticCurveTo(-16, -9, v ? -36 : -32, v ? -9 : -6);
+      x.quadraticCurveTo(-20, -3, v ? -28 : -33, 2);
+      x.quadraticCurveTo(-18, 4, v ? -30 : -25, 11);
+      x.quadraticCurveTo(-10, 12, -4, 10);
+      x.bezierCurveTo(4, 11, 11, 8, 11, 0);
+      x.closePath();
+      x.fillStyle = col; x.fill();
+      if (rim) { x.lineWidth = 1.6 / s; x.strokeStyle = rim; x.stroke(); }
+      x.restore();
+    };
+    tongue(1, '#e0400f', 'rgba(110,16,4,0.9)');
+    tongue(0.8, '#ff8a1e');
+    tongue(0.58, '#ffd23a');
+    circ(x, 8, 0, 6.2); x.fillStyle = '#fff4c0'; x.fill();
+    circ(x, 8.5, -0.5, 3.6); x.fillStyle = '#ffffff'; x.fill();
+  }, Math.min(S, 2));
+}
+// 얼음 결정 화살(+x 방향). 외곽선 = 짙은 청색(밝은 풀밭에서도 읽히게)
+function frostShard() {
+  return bake('f:frs', 20, 9, x => {
+    for (const sd of [-1, 1]) { poly(x, [-4, sd * 3, -13, sd * 8.5, -9, sd * 2]); fs(x, '#d8f8ff', 1.3, '#1e4a8a'); }
+    poly(x, [19, 0, 7, -6, -12, -4, -18, 0, -12, 4, 7, 6]);
+    fs(x, lin(x, 0, -6, 0, 6, [[0, '#ffffff'], [0.45, '#bff4ff'], [0.5, '#7fe3ff'], [1, '#3aa8e8']]), 2, '#1e4a8a');
+    x.strokeStyle = 'rgba(255,255,255,0.9)'; x.lineWidth = 1.1;
+    x.beginPath(); x.moveTo(17, 0); x.lineTo(-14, 0); x.moveTo(7, -5); x.lineTo(2, 0); x.lineTo(7, 5); x.stroke();
+  }, Math.min(S, 2));
+}
+// 유도탄 궤적: 탄마다 최근 위치 8개(링 버퍼) → 휘어진 도깨비불 꼬리
+const HIST = new WeakMap();
+function histOf(b, y) {
+  let h = HIST.get(b);
+  if (!h) HIST.set(b, h = { p: new Float32Array(16), n: 0, i: 0, f: -1 });
+  if (h.f !== frameNo) { h.f = frameNo; h.p[h.i * 2] = b.x; h.p[h.i * 2 + 1] = y; h.i = (h.i + 1) % 8; h.n = Math.min(8, h.n + 1); }
+  return h;
+}
+const isFrost = b => b.kind === 'frostbolt' || (b.kind !== 'fireball' && b.owner === 1);
 export function drawBullets(view) {
   const bs = view.bullets;
   if (!bs.length) return;
-  const n = bs.length, twin = view.duo && view.duo.includes('twin'), fireP1 = !!(view.spells && view.spells.flameBullet), frz = view.frenzyT > 0; // 광란: 내 탄 붉은 금빛
+  const n = bs.length, twin = view.duo && view.duo.includes('twin'), frz = view.frenzyT > 0; // 광란: 불꽃이 더 거세게
   const keep = n <= MAIN_BOLTS ? 2 : MAIN_BOLTS / n, dense = n > MAIN_BOLTS;
-  const sp = Math.min(0.3, 24 / n), tk = (twin ? 1.18 : 1) * (dense ? 1.2 : 1);
+  const sp = Math.min(0.3, 24 / n), tk = (twin ? 1.12 : 1) * (dense ? 1.1 : 1);
   const top = hudY(96);
   if (BY_.length < n) { BY_ = new Float32Array(n * 2); BA_ = new Float32Array(n * 2); }
-  // 빗나간 탄이 화면 위(HUD 밑)·양옆 끝으로 날아가며 "색종이"처럼 쌓이지 않게 가까워지면 사라진다. AI 동료 탄은 한 톤 약하게
   for (let i = 0; i < n; i++) {
     const b = bs[i], y = warpY(b.x, b.y);
     BY_[i] = y;
-    BA_[i] = clamp((y - top) / 110, 0, 1) * clamp(Math.min(b.x, WORLD_W - b.x) / 50, 0, 1) * (b.owner === 1 ? 0.78 : 1);
+    BA_[i] = clamp((y - top) / 110, 0, 1) * clamp(Math.min(b.x, WORLD_W - b.x) / 50, 0, 1);
   }
-  const isMain = (b, seed) => seed < (b.owner === 1 ? keep * 0.45 : keep);
+  const isMain = (b, seed) => seed < (b.owner === 1 ? keep * 0.6 : keep);
   additive(true);
-  // 1) 보조탄: 옅은 빛만 (가산)
-  if (dense) for (let i = 0; i < n; i++) {
-    const b = bs[i];
-    if (isMain(b, seedOf(b)) || BA_[i] <= 0) continue;
-    const st = mstyle(b.kind, b.owner, fireP1);
-    ctx.globalAlpha = 0.3 * BA_[i];
-    spr(gl(st[1]), b.x, BY_[i], 16, 16);
-  }
-  // 2) 주탄: 가늘어지는 리본 꼬리(속도 방향, 길이는 속도 비례) + 원소 헤일로 + 흰 백열 코어 — 전부 가산, 어두운 테 없음
-  for (let i = 0; i < n; i++) {
-    const b = bs[i], seed = seedOf(b), fade = BA_[i];
-    if (!isMain(b, seed) || fade <= 0) continue;
-    const by = BY_[i], own = b.owner === 1 ? 0.8 : 1;
-    const st = frz && b.owner === 0 ? MSTY.flame : mstyle(b.kind, b.owner, fireP1), jr = (0.92 + 0.16 * seed) * own, spd = Math.hypot(b.vx, b.vy) || 1;
-    const len = clamp(spd / 1600, 0.6, 1) * Math.min(st[3], 1.6) * tk * jr, wid = st[4] * tk * jr;
-    const puls = 1 + 0.08 * Math.sin(RT * (16 + seed * 8) + seed * 20);
-    ctx.globalAlpha = fade;
-    place(b.x, by, Math.atan2(b.vy, b.vx), len, wid * 1.1);
-    const tr = missileTrail(st[1], st[0]);
-    ctx.drawImage(tr, -tr.hw, -tr.hh, tr.hw * 2, tr.hh * 2);
-    wt();
-    ctx.globalAlpha = 0.8 * fade;
-    spr(gl(st[1]), b.x, by, 46 * wid * puls, 46 * wid * puls);
-    ctx.globalAlpha = fade;
-    spr(hotCore(st[0]), b.x, by, 24 * wid * puls, 24 * wid * puls);
-  }
-  ctx.globalAlpha = 1;
-  if (n < 100) { // 3) 주탄 헤드 주위를 0.3초 주기로 도는 반짝
-    const sk = sparkle('#ffffff');
-    for (let i = 0; i < n; i++) {
-      const b = bs[i], seed = seedOf(b);
-      if (!isMain(b, seed) || BA_[i] <= 0) continue;
-      const st = mstyle(b.kind, b.owner, fireP1);
-      const ph = RT * (TAU / 0.3) + seed * TAU, orbR = 12 * st[4] * tk, tw = 0.5 + 0.5 * Math.sin(RT * 20 + seed * 12);
-      ctx.globalAlpha = BA_[i];
-      spr(sk, b.x + Math.cos(ph) * orbR, BY_[i] + Math.sin(ph) * orbR * 0.6, 12 * tw * tk, 12 * tw * tk);
-    }
-    ctx.globalAlpha = 1;
-  }
-  // 4) 보조탄 코어 + 주탄 마력 입자(꼬리 뒤로 떨어지는 반짝 — 파티클 예산 §12 안에서)
+  // 1) 빛 층(가산): 보조탄 = 작은 빛 + 코어 · 주탄 = 헤일로 + 꼬리(유도 = 휘어진 궤적)
   for (let i = 0; i < n; i++) {
     const b = bs[i], fade = BA_[i];
     if (fade <= 0) continue;
-    const st = mstyle(b.kind, b.owner, fireP1), seed = seedOf(b), main = isMain(b, seed);
-    if (!main) { ctx.globalAlpha = 0.6 * fade; spr(hotCore(st[0]), b.x, BY_[i], 11, 11); continue; }
-    if (rnd() < sp * 0.5) {
-      const fire = b.kind === 'flame' || (fireP1 && b.owner === 0);
-      part(fire ? K_GLOW : rnd() < 0.4 ? K_STAR : K_GLOW, b.x - b.vx * 0.02 + (rnd() - 0.5) * 8, BY_[i] - b.vy * 0.02 + (rnd() - 0.5) * 8,
-        (rnd() - 0.5) * 40, (rnd() - 0.5) * 40 - (fire ? 50 : 0), 0.36, fire ? 11 : 10, rnd() < 0.5 ? st[1] : st[0], 0, 2);
+    const seed = seedOf(b), frost = isFrost(b), by = BY_[i];
+    if (!isMain(b, seed)) { // 보조탄: 옅은 빛만(몸은 아래 몸 층에서 작게)
+      ctx.globalAlpha = 0.4 * fade;
+      spr(gl(frost ? '#7fe3ff' : '#ff7a1e'), b.x, by, 22, 22);
+      continue;
+    }
+    const own = b.owner === 1 ? 0.88 : 1, jr = (0.92 + 0.16 * seed) * own * tk, spd = Math.hypot(b.vx, b.vy) || 1;
+    const syn = b.syn, flame = syn === 'flame' || (!frost && frz), pierce = syn === 'pierce', homing = syn === 'homing';
+    const main = frost ? '#7fe3ff' : flame ? '#ff4a1a' : '#ff7a1e', core = frost ? '#e8fbff' : '#ffd23a';
+    const puls = 1 + 0.07 * Math.sin(RT * (18 + seed * 8) + seed * 20), hs = 44 * jr * puls * (flame ? 1.2 : 1);
+    ctx.globalAlpha = 0.55 * fade;
+    spr(gl(main), b.x, by, hs, hs);
+    if (homing) { // 휘어진 궤적: 지난 위치를 따라 작아지는 도깨비불
+      const h = histOf(b, by), wc = frost ? '#b89aff' : '#ff8ad8', g = gl(wc);
+      let px = b.x, py = by;
+      for (let k = 1; k < h.n; k++) { // 지난 위치를 잇는 가늘어지는 리본(구간마다 늘인 빛)
+        const j = (h.i - 1 - k + 16) % 8, qx = h.p[j * 2], qy = h.p[j * 2 + 1], u = 1 - k / 8, L = Math.hypot(px - qx, py - qy);
+        if (L > 0.5) {
+          ctx.globalAlpha = fade * u * 0.85;
+          place((px + qx) / 2, (py + qy) / 2, Math.atan2(py - qy, px - qx), (L + 14) / 32, (18 * u + 4) * jr / 32);
+          ctx.drawImage(g, -16, -16, 32, 32);
+        }
+        px = qx; py = qy;
+      }
+      wt();
+    } else {
+      const len = clamp(spd / 1600, 0.6, 1) * (pierce ? 1.9 : flame ? 1.25 : 1) * jr;
+      ctx.globalAlpha = 0.9 * fade;
+      place(b.x, by, Math.atan2(b.vy, b.vx), len * 0.8, jr * (frost ? 0.75 : 0.95));
+      const tr = missileTrail(main, core);
+      ctx.drawImage(tr, -tr.hw, -tr.hh, tr.hw * 2, tr.hh * 2);
+      wt();
+    }
+    // 꼬리 입자: 불티(위로 솟음) / 결정 가루(떨어짐)
+    if (rnd() < sp * (flame ? 0.6 : 0.3)) { // 꼬리 바로 뒤에서 짧게(전장에 점이 흩뿌려지지 않게)
+      if (frost) part(K_SHARD, b.x - b.vx * 0.015, by - b.vy * 0.015, (rnd() - 0.5) * 40, (rnd() - 0.5) * 40, 0.25, 3.5, rnd() < 0.5 ? '#ffffff' : '#bff4ff', 200, 4);
+      else part(K_GLOW, b.x - b.vx * 0.018 + (rnd() - 0.5) * 6, by - b.vy * 0.018 + (rnd() - 0.5) * 6, (rnd() - 0.5) * 30, -30 - rnd() * 40, 0.26, flame ? 12 : 9, rnd() < 0.5 ? '#ff9a2a' : '#ff5a1a', -40, 4);
     }
   }
   additive(false);
+  // 2) 몸 층(일반 합성): 불덩이 / 얼음 결정 — 가산만으로는 밝은 바닥에서 흰 덩어리로 날아가므로 테가 있는 실체를 올린다
+  const fh0 = fireHead(0), fh1 = fireHead(1), fr = frostShard();
+  for (let i = 0; i < n; i++) {
+    const b = bs[i], seed = seedOf(b), fade = BA_[i];
+    if (fade <= 0) continue;
+    const main = isMain(b, seed); // 보조탄은 같은 모양을 60% 크기·반투명으로(점 벽지 대신 작은 불덩이·결정 떼)
+    const frost = isFrost(b), syn = b.syn, pierce = syn === 'pierce', flame = syn === 'flame' || (!frost && frz);
+    const jr = (0.92 + 0.16 * seed) * (b.owner === 1 ? 0.88 : 1) * tk * (main ? 1 : 0.62), a = Math.atan2(b.vy, b.vx);
+    ctx.globalAlpha = fade * (main ? 1 : 0.8);
+    if (frost) {
+      place(b.x, BY_[i], a, jr * (pierce ? 1.45 : 0.95), jr * 0.95);
+      ctx.drawImage(fr, -fr.hw - 4, -fr.hh, fr.hw * 2, fr.hh * 2);
+    } else {
+      const img = ((RT * 18 + seed * 7) | 0) & 1 ? fh1 : fh0, s = 0.72 * jr * (flame ? 1.2 : 1);
+      place(b.x, BY_[i], a, s * (pierce ? 1.6 : 1) * (1 + 0.06 * Math.sin(RT * 30 + seed * 9)), s * (pierce ? 0.8 : 1));
+      ctx.drawImage(img, -img.hw - 5, -img.hh, img.hw * 2, img.hh * 2);
+    }
+  }
+  wt();
   ctx.globalAlpha = 1;
+  // 3) 반짝: 서리 화살 주위를 도는 눈꽃 (탄이 적을 때만)
+  if (n < 90) {
+    const sk = sparkle('#e8fbff');
+    additive(true);
+    for (let i = 0; i < n; i++) {
+      const b = bs[i], seed = seedOf(b);
+      if (!isFrost(b) || !isMain(b, seed) || BA_[i] <= 0) continue;
+      const ph = RT * (TAU / 0.35) + seed * TAU, tw = 0.5 + 0.5 * Math.sin(RT * 20 + seed * 12);
+      ctx.globalAlpha = BA_[i];
+      spr(sk, b.x + Math.cos(ph) * 11, BY_[i] + Math.sin(ph) * 7, 11 * tw, 11 * tw);
+    }
+    additive(false);
+    ctx.globalAlpha = 1;
+  }
 }
 
 export function drawBeams() {
@@ -1149,7 +1472,7 @@ export function drawTelegraph(view) {
 
 export function drawHeroShots() {
   for (const s of HSHOTS) {
-    if (!s.on) continue;
+    if (!s.on || s.delay > 0) continue;
     const u = s.t / s.dur, x = lerp(s.x0, s.x1, u), y = lerp(s.y0, s.y1, u) - Math.sin(u * Math.PI) * (s.cls === 'ranger' ? 14 : 6);
     const a = Math.atan2(s.y1 - s.y0, s.x1 - s.x0);
     additive(true);
@@ -1259,6 +1582,7 @@ export function drawLances(view) {
 }
 
 export function drawFireballs() {
+  drawProcs();
   for (const fb of FIREBALLS) {
     if (!fb.on) continue;
     const u = fb.t / fb.dur;
@@ -1307,6 +1631,7 @@ export function drawSouls() {
 }
 // 심판 광선 · 성직자 타격 · 부활/레벨업 빛기둥
 export function drawLBeams() {
+  drawRevive();
   additive(true);
   for (const b of LBEAMS) {
     if (b.life <= 0) continue;
@@ -1411,7 +1736,14 @@ export function drawParticles() {
     if (r.life <= 0) continue;
     const u = 1 - r.life / r.max, e = 1 - (1 - u) * (1 - u);
     const R = r.r0 + (r.r1 - r.r0) * e, k = 1 + Math.min(0.35, r.w * 0.02) * (1 - u);
-    ctx.globalAlpha = (1 - u) * 0.95 * clamp(1 - (r.r1 - 220) / 500, 0.4, 1); // 큰 고리일수록 옅게(화면을 하얗게 덮지 않게)
+    ctx.globalAlpha = (1 - u) * 0.95 * clamp(1 - (r.r1 - 110) / 320, 0.3, 1); // 큰 고리일수록 옅게(화면·영웅을 우윳빛 원판으로 덮지 않게)
+    if (R * k > 120) { // 큰 충격파: 구운 띠(반경의 30% 두께)는 원판처럼 보이므로 가는 선 고리 두 겹으로
+      ctx.strokeStyle = r.col; ctx.lineWidth = Math.max(3, r.w * 1.2) * (1 - u * 0.5);
+      ctx.beginPath(); ctx.arc(r.x, r.y, R * k, 0, TAU); ctx.stroke();
+      ctx.strokeStyle = '#ffffff'; ctx.lineWidth *= 0.35;
+      ctx.stroke();
+      continue;
+    }
     const img = ringSpr(r.col);
     ctx.drawImage(img, r.x - R * k, r.y - R * k, R * 2 * k, R * 2 * k);
   }
@@ -1569,6 +1901,11 @@ export function drawOverlays(view) {
     ctx.globalAlpha = (0.3 - ratio) / 0.3 * (0.4 + 0.4 * pulse);
     ctx.drawImage(vignette('rgba(200,0,20,0.8)', 0.6), 0, -topExtra, WORLD_W, WORLD_H + topExtra);
   }
+  if (view.berserk > 1 && view.phase === 'play') { // 광폭화: 가장자리 붉은 맥박(느리게, 가운데는 깨끗하게). 광란 비네트와 겹치면 약하게
+    const bp = 0.5 + 0.5 * Math.sin(RT * 4.5);
+    ctx.globalAlpha = Math.min(1, (RT - berserkRT) / 0.6 + 0.3) * (0.28 + 0.22 * bp) * (view.frenzyT > 0 ? 0.35 : 1);
+    ctx.drawImage(vignette('rgba(190,0,20,0.85)', 0.62), 0, -topExtra, WORLD_W, WORLD_H + topExtra);
+  }
   if (defeatA > 0) { // 패배: 전장 채도를 빼고(회색 톤) 붉은 비네트 — 패배 모달 뒤가 "무너진 순간"처럼
     ctx.globalCompositeOperation = 'saturation';
     ctx.globalAlpha = defeatA * 0.75;
@@ -1595,7 +1932,6 @@ export function events(view, evs, opts) {
   bossBand = !!view.boss;
   meteorKills.length = 0;
   let meteorFrame = false;
-  const fireP1 = !!(view.spells && view.spells.flameBullet);
   const fus = view.fusions || [];
   let runes = 0, souls = 0, strikes = 0;
   const soulOn = !!(view.spells && view.spells.soulHarvest);
@@ -1604,14 +1940,14 @@ export function events(view, evs, opts) {
     if (ev.type === 'boom' && ev.kind === 'meteor') meteorFrame = true;
     // 파이어볼: 처치 이벤트보다 늦게 오므로 먼저 띄워 두고, 반경 안 처치 연출은 착탄 때 터뜨린다
     else if (ev.type === 'spell' && ev.key === 'fireball') {
-      const fb = take(FIREBALLS), M = MF[0];
+      const fb = take(FIREBALLS), M = MF[ev.o === 1 ? 1 : 0];
       fb.on = true; fb.t = 0; fb.x0 = M.ox; fb.y0 = M.oy; fb.x1 = +ev.x || 360; fb.y1 = +ev.y || 400; fb.r = +ev.r || 100;
       fb.dur = clamp(Math.hypot(fb.x1 - fb.x0, fb.y1 - fb.y0) / 2600, 0.16, 0.3);
       fb.plasma = fus.includes('plasma'); fb.kills.length = 0;
       fbFrame.push(fb);
-      MF[0].cast = 1;
     }
   }
+  fbBooms = 0; frags = 0;
   for (let i = 0; i < evs.length; i++) {
     const ev = evs[i];
     switch (ev.type) {
@@ -1628,17 +1964,21 @@ export function events(view, evs, opts) {
           break;
         }
         const o = ev.o === 1 ? 1 : 0, full = hits++ < (view.speed >= 3 ? 6 : 12); // 프레임당 풀 연출 12개까지(3배속은 6 — 파티클 예산 §12)
-        const st = mstyle(ev.kind, o, fireP1), kc = st[1];
-        // 맞은 적의 대포 쪽 표면에 튀김 (보스 얼굴을 가리지 않게)
+        const st = mstyle(ev.kind, o), kc = st[1], frostK = st === MSTY.p1;
+        // 맞은 적의 성벽 쪽 표면에 튀김 (보스 얼굴을 가리지 않게)
         const e = nearest(view, ev.x, ev.y, 40), er = e ? e.r : 0;
         const ha = Math.PI * (0.2 + rnd() * 0.6);
         const hx = ev.x + Math.cos(ha) * er * 0.75, hy = warpY(ev.x, ev.y) + Math.sin(ha) * er * 0.75;
         const hs = e ? clamp(visR(e) / 36, 0.45, 1.2) : 0.8; // 타격 빛은 맞은 적 크기에 맞춘다(잡몹이 빛 덩어리에 묻히지 않게)
-        if (full) { // 마력 폭발: 룬 섬광 + 파편 + 불티
-          if (runes++ < 8) sprPop(runeCircle(kc), hx, hy, 0.16, (ev.crit ? 0.8 : 0.5) * hs, 0.2, 0, 3);
-          part(K_GLOW, hx, hy, 0, 0, 0.1, (ev.crit ? 56 : 38) * hs, kc);
-          burst(K_SHARD, hx, hy, ev.big ? 5 : 3, 120, 300, 0.35, 4.5, [st[1], st[0]], 500, 2, 60);
-          burst(K_SPARK, hx, hy, ev.crit ? 5 : 3, 250, 520, 0.14, 2.6, [kc, '#ffffff'], 0, 6);
+        if (full) {
+          if (frostK) { // 서리 화살: 얼음 결정이 부서지며 눈꽃 + 결정 파편(관통하며 박힐 때마다)
+            if (runes++ < 8) sprPop(sparkle('#e8fbff'), hx, hy, 0.4, 1.3 * hs, 0.2, rnd() * TAU, 3);
+            part(K_GLOW, hx, hy, 0, 0, 0.12, 40 * hs, '#7fe3ff');
+            burst(K_SHARD, hx, hy, ev.big ? 6 : 4, 120, 320, 0.45, 5, ['#ffffff', '#bff4ff', '#7fe3ff'], 500, 2, 60);
+          } else { // 화염구: 폭발은 boom(kind 'fireball')이 그리고, 여기선 불티만
+            part(K_GLOW, hx, hy, 0, 0, 0.1, 34 * hs, '#ffb040');
+            burst(K_SPARK, hx, hy, ev.crit ? 5 : 3, 250, 520, 0.14, 2.6, ['#ffd23a', '#ffffff'], 0, 6);
+          }
         } else if (hits < 40) part(K_GLOW, ev.x, warpY(ev.x, ev.y), 0, 0, 0.12, 30 * hs, kc);
         if (ev.crit && full && crits++ < 2) { // 별빛 폭발 (프레임당 2개까지 — 연타에 적이 흰 덩어리로 묻히지 않게)
           sprPop(starFlash(kc), hx, hy, 0.3, (ev.big ? 1.35 : 0.95) * Math.max(0.6, hs), 0.2, 0, 0.6);
@@ -1686,6 +2026,40 @@ export function events(view, evs, opts) {
         break;
       }
       case 'boom': boom(view, ev); break;
+      case 'shards': shardsFx(ev); break;
+      case 'cast': if (!ev.basic) castLaunch(ev); break;
+      case 'heroProc': heroProcFx(view, ev); break;
+      case 'summonAttack': summonAtkFx(ev); break;
+      case 'summonSpawn': // 소환진 확산 → 소환물이 오버슈트로 착지(units)
+        sprPop(runeCircle(SUMMON_COL[ev.kind] || '#ff6fd2'), ev.x, ev.y + 16, 0.4, 1.5, 0.6, Math.PI / 2, 2, 0.38);
+        ring(ev.x, ev.y, 6, 60, 0.35, SUMMON_COL[ev.kind] || '#ff6fd2', 5);
+        burst(K_STAR, ev.x, ev.y - 10, 8, 60, 200, 0.5, 12, ['#ffffff', SUMMON_COL[ev.kind] || '#ff6fd2'], 0, 2);
+        break;
+      case 'summonDespawn':
+        burst(K_SMOKE, ev.x, ev.y - 6, 5, 20, 90, 0.6, 30, ev.kind === 'shadow' ? 'rgba(60,20,90,0.5)' : 'rgba(200,220,255,0.45)', -30, 2);
+        break;
+      case 'heroRetreat': // 후퇴: 땀방울 + 먼지(units가 절뚝이는 자세)
+        burst(K_SMOKE, ev.x, ev.y + 12, 3, 20, 70, 0.5, 22, 'rgba(210,200,170,0.5)', -10, 2);
+        break;
+      case 'heroAdvance': // 재진격: 기합 링 + 불꽃
+        ring(ev.x, ev.y - 30, 10, 70, 0.3, '#ffe07a', 5);
+        burst(K_STAR, ev.x, ev.y - 40, 6, 80, 220, 0.4, 12, ['#ffffff', '#ffe07a'], 0, 2);
+        break;
+      case 'talent': { // 도전 중 특성 습득: 영웅 발밑 룬 + 별
+        const h = view.heroUnit;
+        if (h) { sprPop(runeCircle('#ffd23a'), h.x, h.y + 14, 0.5, 1.4, 0.5, Math.PI / 2, 2, 0.38); burst(K_STAR, h.x, h.y - 40, 10, 60, 200, 0.6, 14, ['#ffffff', '#ffe07a'], -60, 2); }
+        break;
+      }
+      case 'revive': reviveFx(ev); break;
+      case 'berserk':
+        stamp('광폭화!', '#ff3a3a', 360, 84, 1.4);
+        flash(0.3, '#ff1a1a');
+        shake(0.35);
+        berserkRT = RT;
+        break;
+      case 'runOver':
+        if (ev.victory) { for (let k = 0; k < 120; k++) part(K_CONF, rnd() * WORLD_W, -20 - rnd() * 300, (rnd() - 0.5) * 140, 120 + rnd() * 220, 3.6, 9, CANDY[(rnd() * CANDY.length) | 0], 60, 0.4); flash(0.2, '#ffe07a'); }
+        break;
       case 'spell': spellFx(view, ev, strikes++); break;
       case 'spellPick': {
         const sp = SPELL_BY_KEY[ev.spell];
@@ -1832,15 +2206,16 @@ export function update(view, da, dt) {
     m.t += da;
     if (m.t >= m.dur) {
       m.on = false;
-      part(K_GLOW, m.x1, m.y1, 0, 0, 0.3, 200, '#ff9a2a');
-      part(K_GLOW, m.x1, m.y1, 0, 0, 0.12, 90, '#ffffff');
-      burst(K_GLOW, m.x1, m.y1, 8, 80, 300, 0.5, 26, ['#ffe45a', '#ff8a1e', '#ff4a1a'], -100, 3);
-      burst(K_DEBRIS, m.x1, m.y1, 5, 150, 400, 0.8, 7, ['#3a2a28', '#6a5552'], 900, 0.5, 150);
-      ring(m.x1, m.y1, 10, 110, 0.4, '#ffd080', 9);
+      const mr = m.r / 110; // 영웅 작은 운석은 반경에 맞춰 작게
+      part(K_GLOW, m.x1, m.y1, 0, 0, 0.3, 200 * mr, '#ff9a2a');
+      part(K_GLOW, m.x1, m.y1, 0, 0, 0.12, 90 * mr, '#ffffff');
+      burst(K_GLOW, m.x1, m.y1, mr < 1 ? 5 : 8, 80, 300 * mr, 0.5, 26, ['#ffe45a', '#ff8a1e', '#ff4a1a'], -100, 3);
+      burst(K_DEBRIS, m.x1, m.y1, mr < 1 ? 3 : 5, 150, 400, 0.8, 7, ['#3a2a28', '#6a5552'], 900, 0.5, 150);
+      ring(m.x1, m.y1, 10, m.r, 0.4, '#ffd080', 9);
       if (m.kills) { m.kills.forEach((kv, i) => killFx(kv, i < 3, lastMode)); m.kills = null; }
       const d = take(DECALS);
-      d.x = m.x1; d.y = m.y1; d.r = 60; d.life = d.max = 6;
-      shake(0.1);
+      d.x = m.x1; d.y = m.y1; d.r = 60 * mr; d.life = d.max = mr < 1 ? 3 : 6;
+      shake(0.1 * mr);
     }
   }
   defeatA = view.phase === 'defeat' ? Math.min(1, defeatA + dt * 2) : Math.max(0, defeatA - dt * 3);
@@ -1860,6 +2235,7 @@ export function update(view, da, dt) {
 }
 
 function updateMagic(view, da, dt) {
+  updateProcs(da);
   for (const s of SPRS) if (s.life > 0) s.life -= da;
   for (const b of LBEAMS) if (b.life > 0) b.life -= da;
   for (const fb of FIREBALLS) {
@@ -1877,6 +2253,7 @@ function updateMagic(view, da, dt) {
   }
   for (const s of HSHOTS) {
     if (!s.on) continue;
+    if (s.delay > 0) { s.delay -= da; continue; }
     if ((s.t += da) < s.dur) continue;
     s.on = false;
     if (s.cls === 'sorcerer') {
@@ -2008,7 +2385,7 @@ export function drawFlash() {
     ctx.globalCompositeOperation = 'source-over';
   }
   if (flashA > 0) {
-    ctx.globalAlpha = Math.min(0.45, flashA * 0.6);
+    ctx.globalAlpha = Math.min(0.2, flashA * 0.35); // 전체 흰 채움 ≤ 0.2 — 우윳빛으로 날아가지 않게
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, -topExtra, WORLD_W, WORLD_H + topExtra);
   }

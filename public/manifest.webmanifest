@@ -1,0 +1,17 @@
+{
+  "name": "벽 지키기: 100층 돌파",
+  "short_name": "벽 지키기",
+  "description": "마법 성벽 디펜스 로그라이트 — 100층까지 밀어붙이기",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#10131c",
+  "theme_color": "#10131c",
+  "lang": "ko",
+  "icons": [
+    { "src": "assets/pwa/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "assets/pwa/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "assets/pwa/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

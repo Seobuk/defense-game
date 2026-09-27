@@ -1,21 +1,22 @@
 // 유닛 — 적·엘리트·네임드 보스·영웅(클래스×티어·장비)·성벽 마법사 2명(P1 나, P2 AI 동료)·소환수(새끼 드래곤·돌 골렘·망령).
 // 스프라이트(오프스크린 캐시) + 전장 그리기 + 유닛별 연출 상태(피격 번쩍임·찌그러짐·시전 자세 등). docs/ART.md §3, §10.5
 // 소유: 유닛 에이전트. 계약(아래 export 목록과 render.js 호출 순서)은 docs/ART.md §14 참고.
-import { WALL_Y, CANNONS } from '../config.js';
+import { WALL_Y, CANNONS, SPELL_BY_KEY } from '../config.js';
 import { HERO_CLASSES } from '../hero.js';
 import { clamp } from '../util.js';
 import {
-  TAU, INK, bake, tint, circ, ell, rrect, fs, rad, lin, poly, shine, mulberry, INK2, SKIN, RARITY_COL, TIER_RARITY,
+  TAU, INK, bake, tint, circ, ell, rrect, fs, rad, lin, poly, shine, mulberry, INK2, SKIN, RARITY_COL, TIER_RARITY, EL,
   mix, lite, dim, cel, bakeO, tintOf, cache, S,
   ctx, T, RT, frameNo, frameDt, topExtra, hudY,
   shake, flash, FONT, OWN, rnd, easeOut, easeBack, lerp, pool, take,
   wt, place, spr, put, txt, rr, additive, groundRune,
 } from './core.js';
 import {
-  gl, part, burst, ring, sprPop, lightBeam, K_GLOW, K_SPARK, K_STAR, K_SMOKE, K_DEBRIS, MSTY,
+  gl, part, burst, ring, sprPop, lightBeam, K_GLOW, K_SPARK, K_STAR, K_SMOKE, K_DEBRIS, K_SHARD, MSTY,
   glyph, shadow, flame, bubble, ice, reticle, sparkle, rays, runeCircle, magicCore, curseSigil, shieldDome, lightWings,
-  numZone,
+  numZone, arrowSpr, warcryUntil,
 } from './fx.js';
+import { emblem } from './emblems.js';
 
 export const MAGE_FEET = 1004;             // 성벽 위 마법사 발 위치(y)
 const mageTier = lv => (lv ? clamp(Math.floor(((lv.multi | 0) + Math.min(5, (lv.atk | 0) / 12)) / 2), 0, 4) : 0);
@@ -30,7 +31,8 @@ const ANIM = {
 const vis = new Map(); // 적 id → 연출 상태 (스냅샷으로 재구성된 view에서도 유지되게 id 기준)
 const order = [];
 // 성벽 마법사 [0, 1]: cast 시전 자세(1→0), aim 조준각, ox/oy 지팡이 오브(마법탄 발사 위치), hx/hy 빈손
-export const MF = [0, 1].map(i => ({ cast: 0, aim: -Math.PI / 2, runeT: 0, ox: CANNONS[i].x, oy: 940, hx: CANNONS[i].x, hy: 970 }));
+export const MF = [0, 1].map(i => ({ cast: 0, aim: -Math.PI / 2, runeT: 0, ox: CANNONS[i].x, oy: 940, hx: CANNONS[i].x, hy: 970, col: i ? '#8fe8ff' : '#ff8a2a', big: 0, ground: 0, fanT: 0 }));
+const ALLY = { t: 9, key: '', level: 1 }; // AI 동료 새 주문 습득 연출
 // 영웅: atk 공격 후 경과, tx/ty 공격 표적, hurt 피격 번쩍임, down 쓰러진 뒤 경과, pop 등장 스프링, walk 걸음 위상, body 현재 몸 스프라이트
 export const HF = { atk: 9, tx: 0, ty: 0, hurt: 0, down: 0, pop: 1, walk: 0, lx: 0, ly: 0, mvKey: '', body: null, cmd: 0 };
 const GF = { on: false, pop: 1, hit: 0, lastHp: 0 };   // 돌 골렘
@@ -1687,8 +1689,10 @@ function drawPops() {
 
 const FLY = { doomDragon: 70, wraith: 16, lichLord: 18 };
 const GOO_COL = { kingSlime: '#6fb6ff', goblinChariot: '#e0a060', lichLord: '#b27aff', magmaGolem: '#ff7a2a', demonLord: '#ff4060', doomDragon: '#ff6a4a' };
+let berserkOn = false;
 export function drawEnemies(view) {
   fadeTop = hudY(72);
+  berserkOn = view.berserk > 1 && view.phase === 'play';
   setWarp(view);
   order.length = 0;
   for (const e of view.enemies) if (!e.dead && e.y + e.r * 2 > -60 - topExtra) order.push(e);
@@ -1860,6 +1864,16 @@ function drawBody(e) {
     const s = vr * 2.1;
     ctx.drawImage(ice(), -s / 2, -fo - s / 2 + vr * 0.12, s, s);
   }
+  if (!e.frozen && e.slowT > 0) { // 서리 화살 둔화: 푸른 서리 덮개(빙결보다 옅게)
+    ctx.globalAlpha = 0.4 * fa * Math.min(1, e.slowT * 3);
+    ctx.drawImage(enemy(e.type, e.r, 'f', cls), bx, by, hw * 2, hh * 2);
+    ctx.globalAlpha = fa;
+  }
+  if (berserkOn && !e.frozen) { // 광폭화: 붉게 맥동
+    ctx.globalAlpha = fa * (0.14 + 0.2 * (0.5 + 0.5 * Math.sin(T * 7 + ph)));
+    ctx.drawImage(enemy(e.type, e.r, 'r', cls), bx, by, hw * 2, hh * 2);
+    ctx.globalAlpha = fa;
+  }
   // 흰 번쩍임: 보스는 계속 맞아도 형체가 보이게 약하게, 큰 타격(punch)만 강하게
   const fl = e.isBoss ? Math.max(h * 0.2, pu * 0.28) : Math.max(h * 0.4, pu * 0.36); // 흰 틴트 ≤ 40% → 연타에도 형체·색 유지
   if (e.state === 'fuse' && (T * 10) % 1 < 0.5) {
@@ -1932,14 +1946,14 @@ function eliteCrown() {
 export function drawGroundFx(view) {
   const h = view.heroUnit, hero = view.hero;
   if (h && hero && h.state !== 'down') {
-    if ((h.cls || hero.cls) === 'knight') { // 도발 오라
-      const R = (HERO_CLASSES.knight && HERO_CLASSES.knight.taunt) || 150;
+    const R = h.engageR || 0;
+    if ((h.cls || hero.cls) === 'knight' && R > 60) { // 도발 오라
       // 바닥에 눕힌 옅은 룬 고리(원근) — 채운 빛 없음. 도발 범위 안에 적이 들어오면(끌어당길 때만) 잠깐 밝아진다
       let pull = false;
       for (const e of view.enemies) if (!e.dead && (e.x - h.x) ** 2 + (e.y - h.y) ** 2 < R * R) { pull = true; break; }
       HF.taunt = clamp((HF.taunt || 0) + (pull ? 3 : -1.5) * frameDt, 0, 1);
       additive(true);
-      groundRune(runeCircle('#ffb060'), h.x, h.y + 14, R / 31, RT * 0.25, 0.13 + HF.taunt * (0.2 + 0.08 * Math.sin(RT * 6)));
+      groundRune(runeCircle('#ffc070'), h.x, h.y + 14, R / 31, RT * 0.25, 0.08 + HF.taunt * (0.1 + 0.04 * Math.sin(RT * 6))); // 옅은 바닥 룬 고리
       additive(false);
       ctx.globalAlpha = 1;
     }
@@ -2045,6 +2059,61 @@ function drawEnemyMarks(view, order) {
 }
 
 // ── 영웅 ──
+// 전장 전체를 누비는 자율 전투(DESIGN '영웅 특성 트리 & 자율 전투'): 걸음/달리기(gait) · 바라보는 쪽 전환(종이 뒤집듯) ·
+// 클래스별 공격 준비(windup) → 타격 · 후퇴(절뚝임·몸 기울임·붉은 맥박) · 집결 지점 두리번 · 뒷걸음 카이팅(다리가 거꾸로)
+const LEG_COL = { cleric: '#c8b888', assassin: '#1e1a2e' };
+// 몸 한 벌(다리 + 망토 + 몸 + 무기). 영웅과 소환 분신이 같이 쓴다. o.tint = 덮개 색(분신), o.glowTip = 무기 끝 충전 빛
+function figure(cls, tier, eq, x, fy, face, o) {
+  const rar = k => (eq && eq[k] && eq[k].rarity) || null;
+  const body = heroBody(cls, tier, rar('armor'), rar('helm'));
+  const sx = face * (o.pop || 1) * HS, sy = (o.pop || 1) * HS * (o.sy || 1), bob = o.bob || 0, lean = o.lean || 0;
+  const tintC = o.tint, tA = o.tintA || 0;
+  if (eq && eq.cape && !tintC) {
+    place(x - face * 3 * HS, fy - 40 * HS + bob, lean, sx, sy);
+    ctx.transform(1, 0, -0.1 * Math.sin(RT * 3.2) - (o.moving ? (o.run ? 0.34 : 0.2) : 0.04), 1, 0, 0);
+    put(heroCape(rar('cape')));
+  }
+  // 다리: 걸음 위상 ph, 달리기는 보폭·들림이 크다
+  place(x, fy, lean, sx, (o.pop || 1) * HS);
+  const stride = o.run ? 7 : 5, lift = o.run ? 5 : 3;
+  for (const k of [-1, 1]) {
+    const q = o.ph + (k > 0 ? 0 : Math.PI);
+    const sw = o.moving ? Math.sin(q) * stride : 0, up = o.moving ? Math.max(0, Math.sin(q)) * lift : 0;
+    rr(k * 5 + sw - 4.5, -17 - up, 9, 16, 4);
+    ctx.fillStyle = tintC || LEG_COL[cls] || '#5a3a2a'; ctx.fill();
+    ctx.lineWidth = 2.6; ctx.strokeStyle = '#22163a'; ctx.stroke();
+  }
+  place(x + (o.recoil || 0) * face, fy + bob, lean, sx, sy);
+  put(body);
+  if (tintC) { ctx.globalAlpha = (o.alpha ?? 1) * tA; put(tintOf(body, tintC)); ctx.globalAlpha = o.alpha ?? 1; }
+  if (o.hurt > 0) { ctx.globalAlpha = o.hurt; put(tintOf(body, '#ffffff')); ctx.globalAlpha = 1; }
+  if (o.redA > 0) { ctx.globalAlpha = o.redA; put(tintOf(body, '#ff4a5a')); ctx.globalAlpha = 1; }
+  if (o.gold > 0) { ctx.globalAlpha = o.gold; put(tintOf(body, '#ffe07a')); ctx.globalAlpha = 1; }
+  // 무기
+  ctx.translate(HERO_GRIP.x, HERO_GRIP.y);
+  ctx.rotate(o.wAng);
+  const wr = rar('weapon') || 'common', wimg = heroWeapon(cls, wr);
+  if (!tintC && (wr === 'epic' || wr === 'legend' || wr === 'rare')) {
+    additive(true);
+    ctx.globalAlpha = 0.35 + 0.2 * Math.sin(RT * 5);
+    spr(gl(RARITY_COL[wr][0]), 0, -26, 30, 62);
+    additive(false);
+    ctx.globalAlpha = 1;
+  }
+  put(wimg);
+  if (tintC) { ctx.globalAlpha = (o.alpha ?? 1) * tA; put(tintOf(wimg, tintC)); ctx.globalAlpha = o.alpha ?? 1; }
+  if (o.glowTip > 0) { // 공격 준비: 지팡이 오브·철퇴 머리에 모이는 빛
+    const tip = cls === 'sorcerer' ? -50 : cls === 'cleric' ? -36 : -40, c = cls === 'sorcerer' ? '#c08aff' : cls === 'cleric' ? '#ffe07a' : '#ffffff';
+    additive(true);
+    ctx.globalAlpha = o.glowTip;
+    spr(gl(c), 0, tip, 20 + 34 * o.glowTip, 20 + 34 * o.glowTip);
+    additive(false);
+    ctx.globalAlpha = 1;
+  }
+  wt();
+  return body;
+}
+
 export function drawHero(view) {
   const h = view.heroUnit, hero = view.hero;
   if (!h || !hero) return;
@@ -2054,13 +2123,28 @@ export function drawHero(view) {
   const tier = clamp(h.tier | 0, 0, 4);
   const body = heroBody(cls, tier, rar('armor'), rar('helm'));
   HF.body = body;
-  const face = h.facing < 0 ? -1 : 1, fx = h.x, fy = warpY(h.x, h.y) + 14; // 보스 등장 구간에선 보스와 같은 왜곡
+  const dt = frameDt, fx = h.x, fy = warpY(h.x, h.y) + 14; // 보스 등장 구간에선 보스와 같은 왜곡
   const down = h.state === 'down';
+  // 바라보는 쪽: 종이를 뒤집듯 0.1초에 걸쳐 돈다(두리번·표적 전환이 딱 끊기지 않게)
+  const want = h.facing < 0 ? -1 : 1;
+  if (!HF.face) HF.face = want;
+  const pf = HF.face;
+  HF.face = clamp(HF.face + clamp(want - HF.face, -14 * dt, 14 * dt), -1, 1);
+  if (Math.sign(pf) !== Math.sign(HF.face) && h.mode === 'rally') HF.turn = 1; // 두리번 순간 톡
+  HF.turn = Math.max(0, (HF.turn || 0) - dt * 5);
+  const face = HF.face >= 0 ? 1 : -1, fscale = Math.max(0.12, Math.abs(HF.face));
   const mv = Math.hypot(h.x - HF.lx, h.y - HF.ly);
   HF.lx = h.x; HF.ly = h.y;
-  const walking = !down && (h.state === 'walk' || mv > 0.3) && mv < 40;
-  if (walking) HF.walk += clamp(mv, 0.6, 4) * 0.16;
-  const ph = HF.walk, bob = walking ? -Math.abs(Math.sin(ph)) * 3.2 : 0;
+  const gait = down ? 'idle' : h.gait || (mv > 0.3 && mv < 40 ? 'walk' : 'idle');
+  const moving = gait !== 'idle', run = gait === 'run', retreat = h.mode === 'retreat';
+  // 뒷걸음(카이팅): 이동 방향이 바라보는 쪽과 반대면 다리를 거꾸로 돌린다
+  const back = moving && (h.vx || 0) * face < -20 ? -1 : 1;
+  if (moving) HF.walk += (retreat ? 8 : run ? 15 : 10) * dt * back;
+  const ph = HF.walk;
+  // 걸음 들썩임: 후퇴는 한쪽 다리를 저는 비대칭 박자
+  const s = Math.sin(ph);
+  let bob = moving ? -Math.abs(s) * (run ? 4.5 : 3.2) : 0;
+  if (retreat && moving) bob = -(Math.sin(ph) > 0 ? Math.abs(s) * 5.5 : Math.abs(s) * 1.2);
   const tierCol = RARITY_COL[TIER_RARITY[tier]][0];
   // 그림자 + 티어 오라
   ctx.globalAlpha = 0.9;
@@ -2075,29 +2159,39 @@ export function drawHero(view) {
     ctx.globalAlpha = 1;
   }
   if (down) { drawHeroDown(h, body, face, fx, fy); return; }
+  // 달리기: 발밑 흙먼지
+  if (run && rnd() < dt * 9) part(K_SMOKE, fx - face * 10, fy - 2, -face * 30, -12, 0.45, 18, 'rgba(215,200,170,0.45)', 0, 2);
   const pop = HF.pop < 1 ? easeBack(HF.pop) : 1;
-  // 공격 동작
-  const au = clamp(HF.atk / 0.3, 0, 1), attacking = HF.atk < 0.3;
-  let wAng, lean = 0, recoilX = 0;
+  // 공격: 준비(h.windup 0→1, 타격 전) → 타격(heroAttack 이벤트 후 HF.atk 0→0.3)
+  const au = clamp(HF.atk / 0.3, 0, 1), striking = HF.atk < 0.3, wu = h.state === 'attack' ? clamp(h.windup || 0, 0, 1) : 0;
+  const prep = !striking ? clamp((wu - 0.45) / 0.55, 0, 1) : 0, pe = easeOut(prep);
+  let wAng, lean = 0, recoil = 0, sy = 1, glowTip = 0;
   if (cls === 'knight' || cls === 'cleric' || cls === 'assassin') {
     const idle = cls === 'assassin' ? 1.7 : 0.45;
-    if (attacking) {
-      wAng = au < 0.3 ? lerp(idle, -1.3, easeOut(au / 0.3)) : au < 0.55 ? lerp(-1.3, 2.3, easeOut((au - 0.3) / 0.25)) : lerp(2.3, idle, (au - 0.55) / 0.45);
-      lean = au > 0.3 && au < 0.7 ? 0.1 : 0;
-    } else wAng = idle + Math.sin(RT * 2.4) * 0.05 + (walking ? Math.sin(ph) * 0.15 : 0);
+    const back = cls === 'assassin' ? 2.6 : -1.35; // 암살자는 단검을 뒤로 젖힌다
+    if (striking) {
+      wAng = au < 0.35 ? lerp(back, cls === 'assassin' ? -0.6 : 2.3, easeOut(au / 0.35)) : lerp(cls === 'assassin' ? -0.6 : 2.3, idle, (au - 0.35) / 0.65);
+      lean = au < 0.5 ? 0.12 : 0;
+    } else if (prep > 0) { wAng = lerp(idle, back, pe); lean = -0.06 * pe; sy = 1 - (cls === 'assassin' ? 0.06 : 0.02) * pe; }
+    else wAng = idle + Math.sin(RT * 2.4) * 0.05 + (moving ? Math.sin(ph) * (run ? 0.3 : 0.15) : 0);
+    if (cls === 'cleric') glowTip = Math.max(pe, striking ? 1 - au : 0) * 0.9;
   } else if (cls === 'ranger') {
     const aim = Math.atan2(HF.ty - (fy - 30 * HS), Math.max(1, (HF.tx - fx) * face));
-    wAng = attacking ? clamp(aim, -1.2, 1.2) : 0.12 + (walking ? Math.sin(ph) * 0.1 : 0);
-    if (attacking) recoilX = -3 * (1 - au);
-  } else {
-    wAng = attacking ? (au < 0.35 ? lerp(0.15, 1.1, easeOut(au / 0.35)) : lerp(1.1, 0.15, (au - 0.35) / 0.65)) : 0.15 + Math.sin(RT * 2) * 0.05;
-    lean = attacking && au < 0.5 ? 0.06 : 0;
+    wAng = striking || prep > 0 ? clamp(aim, -1.2, 1.2) : 0.12 + (moving ? Math.sin(ph) * 0.1 : 0);
+    if (striking) recoil = -3 * (1 - au);
+    else if (prep > 0) { recoil = -2 * pe; lean = -0.04 * pe; }
+  } else { // 마법사: 지팡이를 들어 오브에 마력을 모은다 → 휘둘러 발사
+    wAng = striking ? lerp(1.1, 0.15, au) : prep > 0 ? lerp(0.15, -0.5, pe) : 0.15 + Math.sin(RT * 2) * 0.05;
+    lean = striking && au < 0.5 ? 0.06 : 0;
+    glowTip = Math.max(pe, striking ? 1 - au : 0);
   }
+  if (moving && !striking && prep <= 0) lean += (run ? 0.12 : 0.05) * back; // 달릴 땐 앞으로 기운다
+  if (retreat) { lean = -0.1; wAng += cls === 'ranger' ? 0 : 0.5; } // 후퇴: 몸을 뒤로 빼고 무기를 늘어뜨림
   // 명령 제스처: 탭 이동 직후 무기를 앞으로 겨누며 살짝 뛰어오름
   const cmd = HF.cmd > 0 ? Math.sin(Math.min(1, HF.cmd) * Math.PI) : 0;
-  if (cmd > 0 && !attacking) wAng = lerp(wAng, cls === 'ranger' ? -0.5 : -1.25, cmd);
-  const hop = -cmd * 6;
-  const sx = face * pop * HS, sy = pop * HS * (1 + (walking ? 0 : 0.018 * Math.sin(RT * 2.4)) + cmd * 0.04);
+  if (cmd > 0 && !striking) wAng = lerp(wAng, cls === 'ranger' ? -0.5 : -1.25, cmd);
+  const hop = -cmd * 6 - Math.sin(HF.turn * Math.PI) * 3;
+  sy *= 1 + (moving ? 0 : 0.018 * Math.sin(RT * 2.4)) + cmd * 0.04;
   if (tier >= 4) { // 전설: 빛의 날개
     additive(true);
     ctx.globalAlpha = 0.65 + 0.2 * Math.sin(RT * 3);
@@ -2106,37 +2200,25 @@ export function drawHero(view) {
     additive(false);
     ctx.globalAlpha = 1;
   }
-  if (eq.cape) { // 망토: 뒤로 휘날림
-    place(fx - face * 3 * HS, fy - 40 * HS + bob + hop, 0, sx, sy);
-    ctx.transform(1, 0, -0.1 * Math.sin(RT * 3.2) - (walking ? 0.22 : 0.04), 1, 0, 0);
-    put(heroCape(rar('cape')));
+  const buff = RT < warcryUntil;
+  if (buff) { // 전군 강화: 발밑 금빛 룬 + 불꽃
+    additive(true); groundRune(runeCircle('#ffb03a'), fx, fy, 1.5, RT * 2, 0.6); additive(false);
+    if (rnd() < 0.3) part(K_GLOW, fx + (rnd() - 0.5) * 50, fy - rnd() * 20, 0, -150, 0.5, 11, '#ffd23a', 0, 1);
   }
-  // 다리
-  place(fx, fy, lean, sx, pop * HS);
-  for (const k of [-1, 1]) {
-    const sw = walking ? Math.sin(ph + (k > 0 ? 0 : Math.PI)) * 5 : 0, lift = walking ? Math.max(0, Math.sin(ph + (k > 0 ? 0 : Math.PI))) * 3 : 0;
-    rr(k * 5 + sw - 4.5, -17 - lift, 9, 16, 4);
-    ctx.fillStyle = cls === 'cleric' ? '#c8b888' : cls === 'assassin' ? '#1e1a2e' : '#5a3a2a'; ctx.fill();
-    ctx.lineWidth = 2.6; ctx.strokeStyle = '#22163a'; ctx.stroke();
+  // 궁수: 시위에 건 화살(준비 중 당겨짐)
+  figure(cls, tier, eq, fx, fy + hop, face * fscale, {
+    pop, ph, moving, run, wAng, lean: lean * face, bob, sy, recoil, glowTip, hurt: HF.hurt,
+    redA: retreat ? 0.12 + 0.12 * Math.sin(RT * 9) : 0,
+    gold: h.invulnT > 0 ? 0.25 + 0.15 * Math.sin(RT * 12) : 0,
+  });
+  if (cls === 'ranger' && prep > 0.2) {
+    const a = wAng, gx = fx + face * (HERO_GRIP.x + recoil) * HS, gy = fy + hop + bob + HERO_GRIP.y * HS;
+    place(gx, gy, face > 0 ? a : Math.PI - a, 1.1, 1.1);
+    ctx.drawImage(arrowSpr(), -18 - 8 * pe + 6, -5, 36, 10);
+    wt();
   }
-  // 몸
-  place(fx + recoilX * face, fy + bob + hop, lean, sx, sy);
-  put(body);
-  if (HF.hurt > 0) { ctx.globalAlpha = HF.hurt; put(tintOf(body, '#ffffff')); ctx.globalAlpha = 1; }
-  if (h.invulnT > 0) { ctx.globalAlpha = 0.25 + 0.15 * Math.sin(RT * 12); put(tintOf(body, '#ffe07a')); ctx.globalAlpha = 1; }
-  // 무기
-  ctx.translate(HERO_GRIP.x, HERO_GRIP.y);
-  ctx.rotate(wAng);
+  if (retreat && rnd() < dt * 3) part(K_GLOW, fx + face * 12, fy - 92, face * 30, -40, 0.5, 10, '#bfe9ff', 300, 1); // 땀방울
   const wr = rar('weapon') || 'common';
-  if (wr === 'epic' || wr === 'legend' || wr === 'rare') {
-    additive(true);
-    ctx.globalAlpha = 0.35 + 0.2 * Math.sin(RT * 5);
-    spr(gl(RARITY_COL[wr][0]), 0, -26, 30, 62);
-    additive(false);
-    ctx.globalAlpha = 1;
-  }
-  put(heroWeapon(cls, wr));
-  wt();
   if (wr === 'legend' && rnd() < 0.25) part(K_STAR, fx + face * 18 + (rnd() - 0.5) * 26, fy - 66 - rnd() * 40, 0, -40, 0.5, 10, '#ffe45a', 0, 1);
   // 무적 방패 돔
   if (h.invulnT > 0) {
@@ -2161,8 +2243,86 @@ export function drawHero(view) {
     additive(false);
     ctx.globalAlpha = 1;
   }
-  heroBar(h, fx, fy - (cls === 'sorcerer' ? 116 : 104) * HS - 4, cls);
+  heroBar(h, fx, fy - (cls === 'sorcerer' ? 116 : 104) * HS - 4, cls, retreat);
 }
+
+// ── 영웅 소환물 (늑대 · 그림자 분신 · 비전 분신) — game.summons ──
+const SUM = new Map(); // id → { pop, walk, face, lx, ly, atk }
+// 영혼 늑대(옆모습, 발 = 원점, 오른쪽을 봄). 다리는 그릴 때 따로(걸음)
+function wolfSpr() {
+  return bakeO('u:wolf', 40, 30, 12, x => finish(x, q => {
+    q.beginPath(); q.moveTo(-18, -24); q.quadraticCurveTo(-34, -30, -36, -44); q.quadraticCurveTo(-28, -38, -22, -40); q.quadraticCurveTo(-30, -30, -16, -18); q.closePath();
+    fs(q, cel(q, -36, -44, -16, -18, '#bcd8f4'), 3, INK2);
+    ell(q, -2, -22, 21, 12); fs(q, cel(q, -23, -34, 19, -10, '#d8ecff'), 3.2, INK2);
+    q.beginPath(); q.moveTo(8, -30); q.quadraticCurveTo(14, -18, 8, -12); q.quadraticCurveTo(2, -18, 4, -28); q.closePath(); fs(q, '#f4faff', 1.6, INK2);
+    for (const [a, b] of [[10, 22], [17, 28]]) { poly(q, [a, -38, a + 3, -52, b, -38]); fs(q, cel(q, a, -52, b, -38, '#c8e0fa'), 2.6, INK2); poly(q, [a + 2.5, -40, a + 3.5, -48, b - 2.5, -40]); q.fillStyle = '#ffb8d8'; q.fill(); }
+    circ(q, 18, -32, 11.5); fs(q, cel(q, 6.5, -43.5, 29.5, -20.5, '#e4f2ff'), 3.2, INK2);
+    ell(q, 29, -28, 8, 5.5); fs(q, '#f4faff', 2.6, INK2);
+    circ(q, 36, -30, 2.6); q.fillStyle = INK2; q.fill();
+    ell(q, 21, -34, 2.6, 3.2); fs(q, '#5ff0ff', 1.4, INK2);
+    circ(q, 20.5, -35, 1); q.fillStyle = '#fff'; q.fill();
+    rrect(q, 4, -28, 6, 10, 2); fs(q, '#5ff0ff', 1.4, INK2); // 룬 목걸이
+    circ(q, 7, -20, 2.4); fs(q, '#ffe45a', 1.2, INK2);
+  }, 0, HERO_RIM, 1.4, 2.2), S * 1.25);
+}
+export function drawSummons(view) {
+  const ss = view.summons, hero = view.hero;
+  if (!ss || !ss.length || !hero || !hero.cls) { if (SUM.size) SUM.clear(); return; }
+  const dt = frameDt, h = view.heroUnit, tier = clamp((h && h.tier) | 0, 0, 4), eq = hero.equip || {};
+  const seen = new Set();
+  for (const s of ss) {
+    seen.add(s.id);
+    let v = SUM.get(s.id);
+    if (!v) SUM.set(s.id, v = { pop: 0, walk: rnd() * 6, face: s.facing < 0 ? -1 : 1, atk: 9 });
+    v.pop = Math.min(1, v.pop + dt * 2.6);
+    v.face = clamp(v.face + clamp((s.facing < 0 ? -1 : 1) - v.face, -12 * dt, 12 * dt), -1, 1);
+    const moving = s.gait && s.gait !== 'idle', run = s.gait === 'run';
+    if (moving) v.walk += (run ? 16 : 10) * dt;
+    if (s.state === 'attack' && s.windup < 0.15 && v.atk > 0.25) v.atk = 0; // 방금 물었다/베었다
+    v.atk += dt;
+    const face = v.face >= 0 ? 1 : -1, fsc = Math.max(0.15, Math.abs(v.face)), pop = easeBack(v.pop);
+    const x = s.x, fy = warpY(s.x, s.y) + 10;
+    if (s.kind === 'wolf') {
+      const lunge = v.atk < 0.2 ? Math.sin(v.atk / 0.2 * Math.PI) * 12 : s.state === 'attack' ? -3 * clamp(s.windup, 0, 1) : 0;
+      spr(shadow(), x, fy, 56, 15);
+      additive(true); ctx.globalAlpha = 0.35 + 0.1 * Math.sin(RT * 4 + s.id); spr(gl('#8fe8ff'), x, fy - 22, 90, 60); additive(false); ctx.globalAlpha = 1;
+      const bob = moving ? -Math.abs(Math.sin(v.walk)) * (run ? 5 : 3) : Math.sin(RT * 3 + s.id) * 0.8;
+      place(x + face * lunge, fy, 0, face * fsc * pop, pop);
+      for (const [lx, o2] of [[-15, 0], [-8, Math.PI], [9, Math.PI * 0.5], [16, Math.PI * 1.5]]) { // 네 다리 (대각 박자)
+        const q = v.walk + o2, sw = moving ? Math.sin(q) * (run ? 6 : 4) : 0, up = moving ? Math.max(0, Math.sin(q)) * 3 : 0;
+        rr(lx + sw - 3, -14 - up, 6, 14, 3); ctx.fillStyle = '#b8d4f0'; ctx.fill(); ctx.lineWidth = 2.4; ctx.strokeStyle = INK2; ctx.stroke();
+      }
+      place(x + face * lunge, fy + bob, moving ? 0.05 : 0, face * fsc * pop, pop * (1 + 0.02 * Math.sin(RT * 3 + s.id)));
+      put(wolfSpr());
+      wt();
+      if (run && rnd() < dt * 6) part(K_GLOW, x - face * 20, fy - 20, -face * 30, -20, 0.4, 10, '#bff4ff', 0, 1);
+    } else {
+      // 그림자 분신 = 보랏빛 어둠의 영웅 · 비전 분신 = 떠 있는 반투명 보라 영웅(바닥 룬)
+      const arc = s.kind === 'arcane', fl = arc ? -12 + Math.sin(RT * 2.4 + s.id) * 4 : 0;
+      const wu = s.state === 'attack' ? clamp(s.windup, 0, 1) : 0, strike = v.atk < 0.3;
+      const cls = hero.cls, melee = cls === 'knight' || cls === 'cleric' || cls === 'assassin';
+      const wAng = melee ? (strike ? lerp(2.3, 0.45, v.atk / 0.3) : lerp(0.45, -1.2, wu)) : strike ? 0.6 : 0.15 + wu * -0.5;
+      spr(shadow(), x, fy, 56, 16);
+      additive(true);
+      if (arc) groundRune(runeCircle('#c08aff'), x, fy, 1.1, RT * 1.4, 0.55);
+      ctx.globalAlpha = arc ? 0.5 : 0.4; spr(gl(arc ? '#a07aff' : '#7a2ac8'), x, fy - 45, 90, 120);
+      additive(false);
+      ctx.globalAlpha = arc ? 0.62 : 0.82;
+      figure(cls, tier, eq, x, fy + fl, face * fsc, { pop, ph: v.walk, moving: moving && !arc, run, wAng, bob: 0, tint: arc ? '#a88aff' : '#5a2a9a', tintA: arc ? 0.55 : 0.62, alpha: ctx.globalAlpha });
+      ctx.globalAlpha = 1;
+      additive(true); // 눈빛 / 가장자리 빛
+      ctx.globalAlpha = 0.8;
+      spr(gl(arc ? '#e0d0ff' : '#ff5ab0'), x + face * 7 * HS, fy + fl - 54 * HS, 16, 10);
+      additive(false);
+      ctx.globalAlpha = 1;
+      if (!arc && rnd() < dt * 5) part(K_SMOKE, x + (rnd() - 0.5) * 30, fy - rnd() * 60, 0, -30, 0.6, 24, 'rgba(60,20,90,0.45)', 0, 1);
+      if (arc && rnd() < dt * 6) part(K_STAR, x + (rnd() - 0.5) * 40, fy - 20 - rnd() * 80, 0, -40, 0.6, 10, '#d8c0ff', 0, 1);
+    }
+  }
+  for (const id of SUM.keys()) if (!seen.has(id)) SUM.delete(id);
+  wt();
+}
+
 function drawHeroDown(h, body, face, fx, fy) {
   const t = HF.down, e = Math.min(1, t / 0.35);
   place(fx, fy, -face * 1.45 * easeOut(e), face * HS, HS);
@@ -2190,13 +2350,14 @@ function drawHeroDown(h, body, face, fx, fy) {
   ctx.beginPath(); ctx.arc(cx, cy, 17, 0, TAU); ctx.stroke();
   txt(String(Math.ceil(left)), cx, cy + 1, 16, '#ffffff', '#22163a', 4);
 }
-function heroBar(h, x, y, cls) {
+function heroBar(h, x, y, cls, hurt) {
   numZone('hero', x + 6, y + 4, 108, 30); // 영웅 체력바·Lv 위엔 데미지 숫자를 올리지 않는다
   const w = 56, bh = 8, r = h.hp < 0 ? 1 : clamp(h.hp / Math.max(1, h.maxHp), 0, 1); // hp -1 = 방금 생성(가득)
   ctx.fillStyle = 'rgba(20,12,36,0.85)';
   rr(x - w / 2 - 2, y - 2, w + 4, bh + 4, 5); ctx.fill();
   ctx.lineWidth = 2; ctx.strokeStyle = '#22163a'; ctx.stroke();
   const c = r > 0.5 ? ['#9dff9a', '#27ae4a'] : r > 0.25 ? ['#ffe27a', '#e0a010'] : ['#ff8a7a', '#d0201a'];
+  if (hurt) { ctx.lineWidth = 2.5; ctx.strokeStyle = `rgba(255,80,90,${0.5 + 0.5 * Math.sin(RT * 10)})`; rr(x - w / 2 - 3, y - 3, w + 6, bh + 6, 6); ctx.stroke(); }
   const g = ctx.createLinearGradient(0, y, 0, y + bh);
   g.addColorStop(0, c[0]); g.addColorStop(0.5, c[0]); g.addColorStop(0.52, c[1]); g.addColorStop(1, c[1]);
   ctx.fillStyle = g;
@@ -2288,9 +2449,13 @@ export function drawMages(view, opts) {
     const p = view.players[i], c = CANNONS[i], M = MF[i];
     const tier = p ? mageTier(p.lv) : 0, side = i === 0 ? 1 : -1;
     const cst = M.cast * M.cast * (3 - 2 * M.cast), br = Math.sin(RT * 2.2 + i * 1.7);
-    const sy = 1 + 0.018 * br + 0.05 * cst, sx = 1 - 0.012 * br - 0.03 * cst;
-    const gx = c.x + side * MAGE_GRIP.x * sx * MS, gy = MAGE_FEET + MAGE_GRIP.y * sy * MS - 7 * cst;
-    const idle = -side * 0.2 + 0.03 * br, sa = idle + (clamp(M.aim + Math.PI / 2, -1.2, 1.2) - idle) * cst;
+    // 큰 시전(쿨타임 주문): 지팡이를 머리 위로 곧게 치켜들고 몸을 편다
+    const bg = M.big > 0.5 ? 1 : M.big * M.big * (3 - 2 * M.big) * 2;
+    const sy = 1 + 0.018 * br + 0.05 * cst + 0.05 * bg, sx = 1 - 0.012 * br - 0.03 * cst;
+    const gx = c.x + side * MAGE_GRIP.x * sx * MS + side * 8 * bg, gy = MAGE_FEET + MAGE_GRIP.y * sy * MS - 7 * cst - 22 * bg + 30 * (MF.fall || 0);
+    const idle = -side * 0.2 + 0.03 * br, aimA = idle + (clamp(M.aim + Math.PI / 2, -1.2, 1.2) - idle) * cst;
+    const fall = MF.fall || 0; // 도전 종료: 무너진 성벽 위에서 휘청이며 주저앉음
+    const sa = lerp(lerp(aimA, side * 0.06, bg), side * -0.9, fall);
     const ob = STAFF_ORB[tier];
     M.ox = gx - ob.y * MS * Math.sin(sa); M.oy = gy + ob.y * MS * Math.cos(sa);
     M.hx = c.x + side * MAGE_HAND.x * sx * MS; M.hy = MAGE_FEET + MAGE_HAND.y * sy * MS;
@@ -2314,10 +2479,16 @@ export function drawMages(view, opts) {
   for (let i = 0; i < 2; i++) {
     const p = view.players[i], c = CANNONS[i], M = MF[i], P = pose[i], tier = tiers[i];
     if (!p) continue;
-    const orbCol = i === 0 ? (fireP1 ? '#ff6a1f' : MAGE_PAL[0].orb[1]) : MAGE_PAL[1].orb[1];
+    const baseCol = i === 0 ? (fireP1 ? '#ff6a1f' : MAGE_PAL[0].orb[1]) : MAGE_PAL[1].orb[1];
+    const orbCol = M.cast > 0.15 || M.big > 0.1 ? M.col : baseCol; // 시전 중 오브 = 그 주문 색
     const n = clamp(p.lv ? p.lv.multi | 0 : 0, 0, 5);
     // 오라
     additive(true);
+    if (M.ground > 0.02) groundRune(runeCircle(M.col), c.x, MAGE_FEET - 2, 1.5 + 0.5 * (1 - M.ground) + 0.25 * M.big, RT * (1.2 + M.big * 2) * P.side, M.ground * 0.85); // 발밑 룬 (시전 색)
+    if (RT < warcryUntil) { // 전군 강화: 발밑 금빛 룬 + 솟아오르는 불꽃(몸을 빛으로 덮지 않게)
+      groundRune(runeCircle('#ffb03a'), c.x, MAGE_FEET - 2, 1.9, -RT * 2 * P.side, 0.55 + 0.2 * Math.sin(RT * 9 + i));
+      if (rnd() < 0.25) part(K_GLOW, c.x + (rnd() - 0.5) * 70, MAGE_FEET - rnd() * 30, 0, -170, 0.5, 12, rnd() < 0.5 ? '#ffd23a' : '#ff8a2a', 0, 1);
+    }
     if (golden) { place(c.x, MAGE_FEET - 70, RT * 0.8 * (i ? -1 : 1), 1, 1); ctx.globalAlpha = 0.55 + 0.2 * Math.sin(RT * 4); spr(rays('#ffd23a'), 0, 0, 180, 180); wt(); }
     if (frenzy) { ctx.globalAlpha = 0.55 + 0.3 * Math.sin(RT * 14); spr(gl('#ff3a1a'), c.x, MAGE_FEET - 70, 180, 210); }
     if (upGlow[i] > 0) { ctx.globalAlpha = upGlow[i]; spr(gl(OWN[i].c), c.x, MAGE_FEET - 70, 160, 190); }
@@ -2328,16 +2499,16 @@ export function drawMages(view, opts) {
     spr(shadow(), c.x, MAGE_FEET, 96, 25);
     orbit(i, n, c.x, MAGE_FEET - 60, orbCol, false);
     if (tier >= 1) { // 망토 (흔들림)
-      place(c.x, MAGE_FEET - 54 * P.sy * MS, 0, P.side * P.sx * MS, P.sy * MS);
+      place(c.x, MAGE_FEET - 54 * P.sy * MS + 30 * (MF.fall || 0), 0, P.side * P.sx * MS, P.sy * MS);
       ctx.transform(1, 0, 0.07 * Math.sin(RT * 1.6 + i * 2) - 0.14 * P.cst, 1, 0, 0);
       put(mageCape(i, tier));
     }
-    place(c.x, MAGE_FEET, 0, P.side * P.sx * MS, P.sy * MS);
+    place(c.x, MAGE_FEET + 30 * (MF.fall || 0), -P.side * 0.14 * (MF.fall || 0), P.side * P.sx * MS, P.sy * MS * (1 - 0.08 * (MF.fall || 0)));
     put(mageBody(i, tier));
-    if (P.cst > 0.05) { // 빈손 마력
+    if (P.cst > 0.05 || M.big > 0.05) { // 빈손 마력 (큰 시전: 손을 들어 올린 자리까지 빛)
       additive(true);
-      ctx.globalAlpha = P.cst;
-      spr(gl(orbCol), MAGE_HAND.x, MAGE_HAND.y, 28, 28);
+      ctx.globalAlpha = Math.max(P.cst, M.big);
+      spr(gl(orbCol), MAGE_HAND.x, MAGE_HAND.y - 14 * M.big, 28 + 20 * M.big, 28 + 20 * M.big);
       additive(false);
       ctx.globalAlpha = 1;
     }
@@ -2346,7 +2517,7 @@ export function drawMages(view, opts) {
     wt();
     // 오브 빛
     additive(true);
-    const og = (30 + 14 * P.cst + 3 * P.br + tier * 3) * MS;
+    const og = (30 + 14 * P.cst + 10 * M.big + 3 * P.br + tier * 3) * MS;
     ctx.globalAlpha = 0.85;
     spr(gl(orbCol), M.ox, M.oy, og, og);
     if (tier >= 3) { ctx.globalAlpha = 0.35; spr(gl(orbCol), M.ox, M.oy, og * 2.2, og * 2.2); }
@@ -2374,12 +2545,40 @@ export function drawMages(view, opts) {
       ctx.fillStyle = OWN[i].c;
       ctx.fillText(tag, c.x, MAGE_FEET + 17.5);
     }
+    if (i === 1) drawAllyBook(view, c);
+  }
+}
+// AI 동료 주문서: 익힌 주문(game.allySpells)을 마법사 오른쪽에 작은 엠블럼 세로 줄로 + 새로 익힐 때 하늘에서 내려와 박힘
+function drawAllyBook(view, c) {
+  const book = view.allySpells || {}, keys = Object.keys(book);
+  const slot = k => ({ x: c.x + 64, y: MAGE_FEET - 104 + k * 34 });
+  keys.forEach((key, k) => {
+    const learning = key === ALLY.key && ALLY.t < 0.9;
+    if (learning) return;
+    const { x, y } = slot(k), em = emblem(key);
+    ctx.fillStyle = 'rgba(14,20,48,0.88)'; ctx.beginPath(); ctx.arc(x, y, 15, 0, TAU); ctx.fill();
+    ctx.lineWidth = 2.5; ctx.strokeStyle = '#8fe8ff'; ctx.stroke();
+    if (em) ctx.drawImage(em, x - 13, y - 13, 26, 26);
+    txt(String(book[key] | 0), x + 11, y + 10, 11, '#ffffff', '#0a1a3a', 3.5);
+  });
+  if (ALLY.t < 1.6 && ALLY.key) { // 새 주문: 빛나는 엠블럼이 위에서 내려와 자리에 박힌다
+    const k = Math.max(0, keys.indexOf(ALLY.key)), to = slot(k), u = clamp(ALLY.t / 0.9, 0, 1), e = easeOut(u);
+    const x = lerp(c.x, to.x, e), y = lerp(MAGE_FEET - 320, to.y, e), sc = u < 1 ? 1.8 - 0.8 * e : 1 + 0.3 * Math.max(0, 1 - (ALLY.t - 0.9) / 0.3);
+    additive(true);
+    ctx.globalAlpha = Math.min(1, (1.6 - ALLY.t) * 2);
+    place(x, y, RT * 1.5, 1, 1); spr(rays('#8fe8ff'), 0, 0, 120 * sc, 120 * sc); wt();
+    spr(gl('#8fe8ff'), x, y, 70 * sc, 70 * sc);
+    additive(false);
+    ctx.globalAlpha = 1;
+    const em = emblem(ALLY.key);
+    if (em && u < 1) ctx.drawImage(em, x - 16 * sc, y - 16 * sc, 32 * sc, 32 * sc);
+    if (u >= 1 && ALLY.t - frameDt < 0.9) { ring(to.x, to.y, 6, 60, 0.35, '#8fe8ff', 5); burst(K_STAR, to.x, to.y, 10, 60, 200, 0.5, 12, ['#ffffff', '#8fe8ff'], 0, 2); }
   }
 }
 // 다중 시전 레벨만큼 몸 주위를 도는 마력 구슬 (뒤쪽 반/앞쪽 반)
 function orbit(i, n, cx, cy, col, front) {
   if (!n) return;
-  const st = i === 0 ? MSTY.p0 : MSTY.p1;
+  const st = i === 0 ? MSTY.p0fire : MSTY.p1;
   for (let k = 0; k < n; k++) {
     const a = RT * 2.2 + k * TAU / n + i, s = Math.sin(a);
     if ((s >= 0) !== front) continue;
@@ -2395,22 +2594,40 @@ function orbit(i, n, cx, cy, col, front) {
 
 // ═════════════ 이벤트 → 유닛 반응 (render.js 가 매 프레임 한 번 호출) ═════════════
 export function events(view, evs, opts) {
-  const fireP1 = !!(view.spells && view.spells.flameBullet);
   let ups = 0, pops = 0;
   for (const ev of evs) {
     switch (ev.type) {
-      case 'shoot': {
-        const o = ev.o === 1 ? 1 : 0, M = MF[o];
-        M.cast = 1;
-        if (Array.isArray(ev.angles) && ev.angles.length) M.aim = ev.angles[(ev.angles.length / 2) | 0];
-        if (M.runeT <= 0) { // 시전 마법진 (연사 중엔 0.11초마다)
-          M.runeT = 0.11;
-          const col = o === 1 ? MSTY.p1[1] : fireP1 ? MSTY.p0fire[1] : MSTY.p0[1];
-          sprPop(runeCircle(col), ev.x, ev.y, 0.45, 0.85, 0.22, M.aim, 4, 0.38);
-          part(K_GLOW, ev.x, ev.y, 0, 0, 0.12, 56, col);
+      case 'cast': { // 주문 시전: 지팡이를 겨누고(기본 주문) / 머리 위로 치켜들고(쿨타임 주문) + 오브 앞 마법진 + 발밑 룬
+        const o = ev.o === 1 ? 1 : 0, M = MF[o], c = CANNONS[o];
+        // 기본 주문(basic)은 SPELL_BY_KEY를 보지 않는다 — 카드 '파이어볼'과 기본 '화염구'가 같은 키
+        const sp = ev.basic ? null : SPELL_BY_KEY[ev.spell];
+        const col = ev.basic ? (ev.spell === 'frostbolt' ? '#8fe8ff' : '#ff8a2a') : sp && EL[sp.element] ? EL[sp.element][1] : '#ffffff';
+        M.cast = 1; M.col = col;
+        M.aim = Math.atan2((+ev.ty || 0) - c.y, (+ev.tx || c.x) - c.x);
+        if (!ev.basic) {
+          M.big = 1; M.ground = 1;
+          ring(M.ox, M.oy, 8, 70, 0.35, col, 6);
+          burst(K_STAR, M.ox, M.oy, 6, 60, 200, 0.4, 12, ['#ffffff', col], 0, 3);
+        } else {
+          M.ground = Math.max(M.ground, 0.5);
+          if (M.runeT <= 0) { // 오브 앞 마법진 (연사 중엔 0.11초마다)
+            M.runeT = 0.11;
+            sprPop(runeCircle(col), M.ox, M.oy, 0.45, 0.85, 0.22, M.aim, 4, 0.38);
+            part(K_GLOW, M.ox, M.oy, 0, 0, 0.12, 56, col);
+          }
         }
         break;
       }
+      case 'shoot': { // 다중 시전: 오브에서 부채꼴로 갈라지는 빛 (0.15초마다)
+        const o = ev.o === 1 ? 1 : 0, M = MF[o];
+        if (!Array.isArray(ev.angles) || ev.angles.length < 3 || M.fanT > 0) break;
+        M.fanT = 0.15;
+        for (const a of ev.angles) part(K_GLOW, M.ox + Math.cos(a) * 18, M.oy + Math.sin(a) * 18, Math.cos(a) * 260, Math.sin(a) * 260, 0.1, 20, M.col, 0, 4);
+        break;
+      }
+      case 'allySpell':
+        ALLY.t = 0; ALLY.key = String(ev.spell || ''); ALLY.level = ev.level | 0;
+        break;
       case 'upgrade': {
         const o = ev.o === 1 ? 1 : 0, c = { x: CANNONS[o].x, y: MAGE_FEET - 62 };
         upGlow[o] = 1;
@@ -2434,9 +2651,9 @@ export function events(view, evs, opts) {
         break;
       case 'heroRespawn':
         HF.pop = 0;
-        lightBeam(ev.x, 36, -40, ev.y + 16, 0.7, '#ffffff', '#ffd23a'); // 가는 빛줄기(짧게)
-        ring(ev.x, ev.y, 10, 110, 0.5, '#ffe07a', 8);
-        sprPop(runeCircle('#ffd23a'), ev.x, ev.y + 14, 0.6, 1.6, 0.8, Math.PI / 2, 2, 0.38);
+        // 성문 부활: 빛기둥 대신 바닥에 펼쳐지는 은은한 룬 고리(+ 작은 반짝) — 전장을 가르는 기둥 없음
+        ring(ev.x, ev.y + 10, 10, 90, 0.5, '#ffe07a', 6);
+        sprPop(runeCircle('#ffd23a'), ev.x, ev.y + 14, 0.6, 1.8, 0.9, Math.PI / 2, 1.5, 0.36);
         burst(K_STAR, ev.x, ev.y - 30, 14, 80, 260, 0.8, 16, ['#ffffff', '#ffe07a'], -60, 2);
         flash(0.12, '#fff0a8');
         break;
@@ -2470,6 +2687,8 @@ export function update(view, da, dt) {
     v.lastH = hT;
     v.fl = Math.max(0, v.fl - da * 16);
     // 불타는 적: 불씨
+    if (e.slowT > 0 && !e.dead && rnd() < da * 4) part(K_SHARD, e.x + (rnd() - 0.5) * e.r * 1.4, e.y - e.r * rnd(), (rnd() - 0.5) * 20, 30, 0.5, 3.5, rnd() < 0.5 ? '#ffffff' : '#bff4ff', 200, 1);
+    if (e.poisonT > 0 && !e.dead && rnd() < da * 5) part(K_GLOW, e.x + (rnd() - 0.5) * e.r, e.y - e.r * 0.5, 0, -50, 0.6, 10, rnd() < 0.5 ? '#9dff5a' : '#4fd02a', 0, 1);
     if (e.burnT > 0 && !e.dead && rnd() < da * 10) part(K_GLOW, e.x + (rnd() - 0.5) * e.r, e.y - e.r * 0.3, (rnd() - 0.5) * 30, -60 - rnd() * 60, 0.5, 9, rnd() < 0.5 ? '#ffb030' : '#ff5a1a', 0, 1);
     if (e.state === 'fuse' && rnd() < da * 20) part(K_SPARK, e.x + e.r * 0.35, e.y - e.r * 1.3, (rnd() - 0.5) * 300, -rnd() * 300, 0.15, 2.5, '#ffe45a', 400, 2);
     if (e.state === 'charge' && rnd() < da * 20) part(K_SMOKE, e.x + (rnd() - 0.5) * e.r * 1.6, e.y - e.r * 0.6, 0, -40, 0.6, 30, 'rgba(160,130,100,0.5)', 0, 1);
@@ -2478,7 +2697,9 @@ export function update(view, da, dt) {
   for (let i = 0; i < 2; i++) upGlow[i] = Math.max(0, upGlow[i] - dt * 3);
   for (const a of AFTER) if (a.life > 0) a.life -= da;
   for (const p of POPS) if (p.life > 0) p.life -= dt;
-  for (let i = 0; i < 2; i++) { MF[i].cast = Math.max(0, MF[i].cast - dt * 5); MF[i].runeT -= dt; }
+  MF.fall = view.phase === 'defeat' ? Math.min(1, (MF.fall || 0) + dt * 2.5) : 0;
+  for (let i = 0; i < 2; i++) { const M = MF[i]; M.cast = Math.max(0, M.cast - dt * 5); M.runeT -= dt; M.fanT -= dt; M.big = Math.max(0, M.big - dt * 2.2); M.ground = Math.max(0, M.ground - dt * 1.8); }
+  ALLY.t += dt;
   HF.atk += da;
   if (HF.cmd > 0) HF.cmd = HF.cmd >= 1 ? 0 : HF.cmd + dt * 3.2;
   HF.hurt = Math.max(0, HF.hurt - dt * 6);

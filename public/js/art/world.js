@@ -794,10 +794,13 @@ export function drawWall(view) {
   const w = wall(theme);
   const ws = wallShake > 0 ? Math.sin(RT * 70) * wallShake * 5 : 0;
   const x = 360 + ws - w.hw, y = WALL_CY - w.hh;
-  ctx.drawImage(w, x, y, w.hw * 2, w.hh * 2);
   const ratio = view.wall && view.wall.max > 0 ? clamp(view.wall.hp / view.wall.max, 0, 1) : 1;
   const lvl = ratio < 0.25 ? 3 : ratio < 0.5 ? 2 : ratio < 0.75 ? 1 : 0;
-  if (lvl) ctx.drawImage(cracks(lvl), x, y, w.hw * 2, w.hh * 2);
+  if (COLLAPSE.t >= 0) drawCollapse(w, x, y);
+  else {
+    ctx.drawImage(w, x, y, w.hw * 2, w.hh * 2);
+    if (lvl) ctx.drawImage(cracks(lvl), x, y, w.hw * 2, w.hh * 2);
+  }
   const red = Math.max(wallFlash * 0.85, ratio < 0.3 && view.phase === 'play' ? 0.25 + 0.2 * Math.sin(RT * 8) : 0);
   if (red > 0) {
     ctx.globalAlpha = red;
@@ -809,8 +812,8 @@ export function drawWall(view) {
   ctx.drawImage(platform(theme, -1), CANNONS[0].x - 62, MAGE_FEET - 62, 124, 124);
   ctx.drawImage(platform(theme, 1), CANNONS[1].x - 62, MAGE_FEET - 62, 124, 124);
   ctx.drawImage(heroGatePlatform(theme), heroGateX - 74, heroGateY - 74, 148, 148);
-  // 성벽 결계: 성벽 강화(두 마법사 합)가 오를수록 진해지는 룬 방어막
-  const ls = ((view.players[0] && view.players[0].lv ? view.players[0].lv.wall : 0) | 0) + ((view.players[1] && view.players[1].lv ? view.players[1].lv.wall : 0) | 0);
+  // 성벽 결계: 성벽 강화(두 마법사 합)가 오를수록 진해지는 룬 방어막 (무너진 뒤엔 꺼짐)
+  const ls = COLLAPSE.t >= 0 ? 0 : ((view.players[0] && view.players[0].lv ? view.players[0].lv.wall : 0) | 0) + ((view.players[1] && view.players[1].lv ? view.players[1].lv.wall : 0) | 0);
   const ba = clamp(0.16 + 0.11 * Math.log2(1 + ls), 0.16, 0.8);
   additive(true);
   ctx.globalAlpha = ba * 0.5;
@@ -879,6 +882,31 @@ export function drawWall(view) {
   ctx.textBaseline = 'middle';
   txt(`성벽 결계  ${fmt(view.wall ? view.wall.hp : 0)} / ${fmt(view.wall ? view.wall.max : 0)}`, 372, by + bh / 2 + 1, 15, '#ffffff', '#1a0a14', 4);
 }
+// 도전 종료(성벽 붕괴): 성벽이 8토막으로 갈라져 차례로 주저앉는다 — 금 간 돌 + 기울어짐 + 흙먼지
+const COLLAPSE = { t: -1 };
+function drawCollapse(w, x, y) {
+  const t = COLLAPSE.t, n = 8, cw = w.width / n, pw = w.hw * 2 / n;
+  const top = WALL_Y - 90, bot = 1046; // 체력 명판 위까지만 가라앉는다
+  ctx.save(); ctx.beginPath(); ctx.rect(-40, top, WORLD_W + 80, bot - top); ctx.clip();
+  const cr = cracks(3);
+  // 무너진 틈 뒤로 보이는 어두운 잔해 구덩이
+  ctx.globalAlpha = Math.min(1, t * 3) * 0.92; ctx.fillStyle = '#1a1016';
+  ctx.fillRect(-40, y + w.hh * 0.35, WORLD_W + 80, bot - (y + w.hh * 0.35)); ctx.globalAlpha = 1;
+  for (let k = 0; k < n; k++) {
+    const d = clamp(t - (k * 0.37 % 1) * 0.35, 0, 1.2), e = easeIn(Math.min(1, d / 0.7));
+    const dy = e * (38 + (k % 3) * 16), rot = (k % 2 ? 1 : -1) * e * (0.07 + (k % 3) * 0.03);
+    const cx = x + pw * (k + 0.5), cy = y + w.hh * 2;
+    ctx.save();
+    ctx.translate(cx, cy + dy); ctx.rotate(rot);
+    const g2 = 3 * e; // 토막 사이 틈
+    ctx.drawImage(w, k * cw, 0, cw, w.height, -pw / 2 + g2, -w.hh * 2, pw - g2 * 2, w.hh * 2);
+    ctx.drawImage(cr, k * cr.width / n, 0, cr.width / n, cr.height, -pw / 2 + g2, -w.hh * 2, pw - g2 * 2, w.hh * 2);
+    ctx.globalAlpha = 0.35 * e; ctx.fillStyle = '#1a0f14'; ctx.fillRect(-pw / 2, -w.hh * 2, pw, w.hh * 2); ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+  ctx.restore();
+}
+const easeIn = u => u * u;
 // 성벽 체력바 왼쪽 방패 문장 (금 테 + 푸른 방패 + 룬)
 function wardCap() {
   return bake('w:wardcap', 26, 26, x => {
@@ -1007,6 +1035,16 @@ export function events(view, evs, opts) {
         part(K_SMOKE, x, WALL_Y, 0, -30, 0.6, 40, 'rgba(200,190,170,0.5)', 0, 1);
         break;
       }
+      case 'runOver':
+        if (ev.victory) break;
+        COLLAPSE.t = 0;
+        shake(0.9);
+        for (let k = 0; k < 8; k++) { // 토막마다 흙먼지·돌 조각
+          const bx = 45 + k * 90;
+          burst(K_DEBRIS, bx, WALL_Y, 5, 120, 380, 1.2, 8, ['#a8a08e', '#6a6254', '#d8d2c4', '#4a4238'], 900, 0.4, 260);
+          part(K_SMOKE, bx, WALL_Y - 10, (rnd() - 0.5) * 60, -50 - rnd() * 40, 1.8, 110, 'rgba(150,135,120,0.6)', 0, 0.6);
+        }
+        break;
       case 'thorns': {
         const s = take(SPIKES);
         s.x = ev.x; s.life = 0.4;
@@ -1051,6 +1089,13 @@ export function update(view, da, dt) {
       burst(K_STAR, BAG_POS.x, BAG_POS.y, 8, 60, 200, 0.5, 14, ['#ffffff', RARITY_COL[L.item.rarity][0]], 0, 2);
       ring(BAG_POS.x, BAG_POS.y, 6, 44, 0.3, RARITY_COL[L.item.rarity][0], 4);
     }
+  }
+  if (COLLAPSE.t >= 0) {
+    const t0 = COLLAPSE.t;
+    COLLAPSE.t += dt;
+    if (t0 < 0.9 && rnd() < dt * 20) burst(K_DEBRIS, 40 + rnd() * 640, WALL_Y - 20, 2, 60, 200, 0.9, 6, ['#a8a08e', '#6a6254'], 900, 0.4, 80);
+    if (t0 < 2.5 && rnd() < dt * 6) part(K_SMOKE, 40 + rnd() * 640, WALL_Y + 10, (rnd() - 0.5) * 30, -30, 2, 90, 'rgba(160,145,130,0.45)', 0, 0.5); // 흙먼지가 한동안 피어오른다
+    if (view.phase === 'play' && view.wall && view.wall.hp > 0) COLLAPSE.t = -1; // 새 도전
   }
   wallFlash = Math.max(0, wallFlash - dt * 5);
   wallShake = Math.max(0, wallShake - dt * 4);

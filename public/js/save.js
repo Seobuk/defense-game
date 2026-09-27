@@ -133,6 +133,44 @@ if (typeof addEventListener === 'function' && typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => { if (document.hidden) flush(); });
 }
 
+// ── 저장 백업 코드 (기기 이동: APK ↔ iPhone PWA) ──
+// 형식: 'WD' + 저장 버전 + '-' + base64url(UTF-8 JSON) + '-' + 체크섬(FNV-1a 32비트, 16진 8자리)
+// 옛 버전 코드도 받는다(normalize가 마이그레이션). 공백·줄바꿈은 무시(메신저가 끊어 붙여도 됨)
+const CODE_RE = /^WD(\d{1,3})-([A-Za-z0-9_-]+)-([0-9a-f]{8})$/;
+const CODE_MAX = 400_000;
+function fnv(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+const b64url = bytes => { let s = ''; for (const b of bytes) s += String.fromCharCode(b); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); };
+const unb64url = s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+
+export function exportSave(data) {
+  try {
+    const body = b64url(new TextEncoder().encode(JSON.stringify(normalize(data))));
+    return `WD${SAVE_VERSION}-${body}-${fnv(body)}`;
+  } catch {
+    return '';
+  }
+}
+
+// → { ok: true, data } | { ok: false, error: 한국어 문구 }. 절대 throw 없음
+export function importSave(code) {
+  const bad = error => ({ ok: false, error });
+  const s = String(code ?? '').replace(/\s+/g, '');
+  if (!s) return bad('백업 코드를 붙여 넣어 주세요.');
+  if (s.length > CODE_MAX) return bad('코드가 너무 길어요. 백업 코드만 붙여 넣어 주세요.');
+  const m = CODE_RE.exec(s);
+  if (!m) return bad(/^WD\d/.test(s) ? '코드가 잘렸거나 바뀌었어요. 빠진 글자 없이 전체를 붙여 넣어 주세요.' : '벽 지키기 백업 코드가 아니에요.');
+  if (+m[1] > SAVE_VERSION) return bad('더 새로운 버전에서 만든 코드예요. 게임을 업데이트한 뒤 복원해 주세요.');
+  if (fnv(m[2]) !== m[3]) return bad('코드가 잘렸거나 바뀌었어요. 빠진 글자 없이 전체를 붙여 넣어 주세요.');
+  let raw;
+  try { raw = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(unb64url(m[2]))); } catch { return bad('코드를 읽을 수 없어요. 다시 복사해 주세요.'); }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || !('hero' in raw || 'best' in raw)) return bad('벽 지키기 백업 코드가 아니에요.');
+  return { ok: true, data: normalize(raw) };
+}
+
 // 방치 보상: 보석(소량) + 영웅 경험치. 1분 미만 무시, 최대 8시간, 시계가 거꾸로 가면 0
 export function computeOffline(data, nowMs = Date.now()) {
   const none = { gems: 0, xp: 0, minutes: 0 };

@@ -1,0 +1,17 @@
+<!--
+  iPhone/웹 PWA 스니펫 — index.html <head> 안, css/kit.css <link> 아래·js/main.js <script> 위쯤에 그대로 붙여넣기.
+  (기존 <meta name="theme-color"> 한 줄과 겹치지만 그대로 둬도 무해함 — 뒤 값이 적용됨.)
+  바운스 스크롤·더블탭 확대 방지는 이미 index.html의 viewport(user-scalable=no, viewport-fit=cover) +
+  style.css(overscroll-behavior:none, touch-action:manipulation)로 처리되어 있어 추가 태그가 필요 없다.
+  Capacitor APK는 이 파일을 쓰지 않는다(js/pwa.js가 네이티브에서 전부 비활성).
+-->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#10131c">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="벽 지키기">
+<link rel="apple-touch-icon" href="assets/pwa/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="assets/pwa/icon-192.png">
+<link rel="icon" type="image/png" sizes="512x512" href="assets/pwa/icon-512.png">
+<script type="module" src="js/pwa.js"></script>

@@ -109,6 +109,7 @@ export function createRenderer(canvas) {
     world.drawWall(view);
     fx.drawLBeams();
     units.drawAfter();
+    units.drawSummons(view);
     units.drawHero(view);
     units.drawMages(view, opts);
     units.drawDragon(view);

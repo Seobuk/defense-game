@@ -1,7 +1,9 @@
-// 부팅 · 게임 루프 · 저장/업데이트 배선 (1차: 싱글 플레이, 슬롯 1 = AI 동료)
-import { createGame, startStage, step, act, drainEvents, tickPick, refreshFusion } from './sim.js';
-import { DT, MAX_STAGE, SPEED3_UNLOCK, PERK_KEYS, perkCost, perkMax, cannonStats, UPGRADE_KEYS, SPELL_KEYS, SYNERGIES, WALL_Y, WORLD_W } from './config.js';
+// 부팅 · 게임 루프 · 저장/업데이트 배선 — 로그라이트: 타이틀 → (이어하기 | 정비) → 도전 → 결과 → 정비 (docs/DESIGN.md '로그라이트 구현 계약')
+// 1차: 싱글 플레이, 슬롯 1 = AI 동료
+import { startStage, step, act, drainEvents, tickPick, refreshFusion } from './sim.js';
+import { DT, SPEED3_UNLOCK, SPELL_KEYS, SPELL_MAX_LV, SYNERGIES, WALL_Y, WORLD_W, MAX_STAGE } from './config.js';
 import { MAX_HERO_LV, RARITY_KEYS, rollItem, addToBag } from './hero.js';
+import { newRun, restoreRun, endRun, applyOffline, campAct, buyMeta } from './run.js';
 import { createRenderer, fontsReady } from './render.js';
 import { simSlow } from './art/hud.js';
 import { createUI } from './ui.js';
@@ -9,13 +11,16 @@ import { createHeroUI } from './heroui.js';
 import { createAudio } from './audio.js';
 import * as store from './save.js';
 import * as updater from './updater.js';
+import * as pwa from './pwa.js';
 
 const HITSTOP_CAP = 500;          // ms
 const HITSTOP_SCALE = [1, 0.75, 0.5]; // 배속별 히트스톱 축소
-const NEXT_DELAY = 3900;          // 클리어 후 자동 진행까지(ms) — 보상 패널을 볼 최소 시간(보스 판은 1.2초 늦게 뜬다)
+const NEXT_DELAY = 3900;          // 클리어 후 자동 진행까지(ms) — 보상 패널을 볼 최소 시간
 const SAVE_EVERY = 3000;
 const MAX_STEPS = 20;             // 한 프레임 최대 시뮬 스텝(큰 공백은 버림)
 const HUD_H = 90;                 // 전장 탭 무시: 월드 y < 90 은 상단 HUD
+// 카드가 네임드 보스 등장 배너·운석 착탄을 덮지 않게: 그동안 전투는 계속 돌고 카드는 뒤에 뜬다
+const PICK_HOLD_BOSS = 1800, PICK_HOLD_METEOR = 800;
 const FUSION_KEYS = new Set(SYNERGIES.filter(s => s.kind === 'fusion').map(s => s.key));
 
 const native = updater.isNative();
@@ -23,8 +28,11 @@ const App = window.Capacitor?.Plugins?.App;
 
 let data = store.load();
 let game = null;
-let onTitle = true;
+let mode = 'title';               // 'title' | 'camp' | 'run' | 'result'
 let acc = 0, lastT = performance.now(), stopUntil = 0, nextAt = 0, saveAt = 0, backAt = 0;
+let pickHoldUntil = 0;
+const heldPicks = [];             // 미뤄 둔 카드(보스 배너·운석 뒤에 띄움)
+let pendingResult = null;         // runOver → 이번 프레임 UI 이벤트(패배 도장) 뒤에 결과 화면
 let pendingUpdate = null, updSnooze = false;
 let dbgSpells = null, dbgLoot = null; // 디버그(브라우저 전용): ?spells ?loot
 
@@ -32,108 +40,136 @@ const audio = createAudio();
 audio.setEnabled(data.settings.sound);
 const renderer = createRenderer(document.getElementById('game'));
 const meta = {};
+const inRun = () => mode === 'run' && !!game;
+const persistOk = ok => { if (ok) persist(true); return !!ok; };
+
 const ui = createUI(document.getElementById('app'), {
-  onStart,
-  onUpgrade: stat => game && act(game, 0, { type: 'upgrade', stat }),
-  onToggleAuto: on => { if (game && !act(game, 0, { type: 'auto', on })) return; data.auto = !!on; },
-  onSkill: skill => game && act(game, 0, { type: 'skill', skill }),
+  onStart: () => { audio.unlock(); showCamp(); },
+  onContinueRun: () => startRun(restoreRun(data)),
+  onAbandonRun,
+  onResultDone: () => { if (mode === 'result') showCamp(); },
+  onCampAct: a => persistOk(campAct(data, a)),
+  onBuyMeta: k => { const ok = buyMeta(data, k); if (ok) audio.play('upgrade'); return persistOk(ok); },
+  onStartRun: lo => startRun(newRun(data, lo)),
+  onOpenHero: ({ tab } = {}) => (inRun() ? heroUI.open(game.hero, runCtx(), { tab }) : heroUI.open(data.hero, campCtx(), { tab })),
+  onUpgrade: stat => inRun() && act(game, 0, { type: 'upgrade', stat }),
+  onToggleAuto: on => { if (inRun() && act(game, 0, { type: 'auto', on })) data.auto = !!on; },
+  onSkill: skill => inRun() && act(game, 0, { type: 'skill', skill }),
   onSpeed,
   onToggleAutoNext: on => { data.settings.autoNext = !!on; nextAt = performance.now() + NEXT_DELAY; persist(); },
   onNext: () => nextStage(),
-  onRetry: () => { if (game) beginStage(game.stage); },
-  onPrevStage: () => { if (game) { data.stage = Math.max(1, game.stage - 1); beginStage(data.stage); persist(); } },
-  onBuyPerk,
+  onPick: index => inRun() && act(game, 0, { type: 'pick', index }),
+  onReroll: () => inRun() && act(game, 0, { type: 'reroll' }),
+  onHeroUlt: () => inRun() && act(game, 0, { type: 'heroUlt' }),
   onSettings: s => {
     data.settings = { ...data.settings, ...s };
     audio.setEnabled(data.settings.sound);
     persist();
   },
   onResetSave,
+  onBackupSave: () => { persist(true); return store.exportSave(data); },
+  onRestoreSave,
   onCheckUpdate,
   onUpdateNow,
   onUpdateLater: () => { updSnooze = true; },
   onOpenInstallSettings,
-  onPick: index => game && act(game, 0, { type: 'pick', index }),
-  onReroll: () => game && act(game, 0, { type: 'reroll' }),
-  onHeroUlt: () => game && act(game, 0, { type: 'heroUlt' }),
-  onOpenHero: () => { if (game) heroUI.open(game.hero, heroCtx()); },
 });
 
-// 영웅 · 장비 화면. 클래스/장비/판매는 sim act 로만 바꾸고 바로 저장
-const heroAct = action => { if (game && act(game, 0, action)) persist(true); };
+// 영웅 · 장비 · 특성 화면. 도전 중엔 sim act, 정비 화면에선 run.js campAct(판매는 도전 중만 — 골드가 런 한정)
+const heroDo = (runAction, campAction = runAction) => persistOk(inRun() ? act(game, 0, runAction) : !!campAction && campAct(data, campAction));
 const heroUI = createHeroUI(document.getElementById('app'), {
-  onSelectClass: cls => heroAct({ type: 'heroClass', cls }),
-  onEquip: itemId => heroAct({ type: 'equip', itemId }),
-  onSell: itemId => heroAct({ type: 'sell', itemId }),
-  onSellRarity: rarity => heroAct({ type: 'sellRarity', rarity }),
-  onToggleAutoEquip: on => heroAct({ type: 'autoEquip', on }),
+  onSelectClass: cls => heroDo({ type: 'heroClass', cls }),
+  onEquip: itemId => heroDo({ type: 'equip', itemId }),
+  onSell: itemId => heroDo({ type: 'sell', itemId }, null),
+  onSellRarity: rarity => heroDo({ type: 'sellRarity', rarity }, null),
+  onToggleAutoEquip: on => heroDo({ type: 'autoEquip', on }),
+  onTalent: key => heroDo({ type: 'talent', key }, { type: 'talent', cls: data.hero.cls, key }),
+  onTalentReset: () => !inRun() && persistOk(campAct(data, { type: 'talentReset', cls: data.hero.cls })),
+  onToggleAutoTalent: on => persistOk(campAct(data, { type: 'autoTalent', on })),
   onClose: () => {},
 });
 // 클래스 해금은 최고 기록(best) 기준
-const heroCtx = () => ({ stage: data.best, gold: game ? game.players[0].gold : data.gold });
+const runCtx = () => ({ stage: data.best, gold: game.players[0].gold });
+const campCtx = () => ({ stage: data.best, camp: true });
 
-// ── 디버그 파라미터 (브라우저 전용): ?stage=N ?gold=N ?lv=N | ?lv=atk:25,multi:0 ──
+// ── 디버그 파라미터 (브라우저 전용): ?spells=fireball:3,tornado ?herolv=N ?loot=rarity|all ?gems=N ?best=N ──
 if (!native) {
   const q = new URLSearchParams(location.search);
-  if (q.has('stage')) data.stage = Math.min(MAX_STAGE, Math.max(1, Math.floor(Number(q.get('stage'))) || 1));
-  if (q.has('gold')) data.gold = Math.max(0, Number(q.get('gold')) || 0);
-  if (q.has('lv')) {
-    const v = q.get('lv');
-    for (const part of v.split(',')) {
-      const [k, n] = part.includes(':') ? part.split(':') : [null, part];
-      for (const key of k ? [k] : UPGRADE_KEYS) if (UPGRADE_KEYS.includes(key)) data.lv[key] = Math.max(0, Math.floor(Number(n)) || 0);
-    }
-  }
-  // ?spells=fireball:3,tornado → 스테이지 시작마다 스킬 지급(레벨 생략 = 1) · ?herolv=N · ?loot=rarity|all
+  const int = (k, lo, hi) => Math.min(hi, Math.max(lo, Math.floor(Number(q.get(k))) || lo));
   if (q.has('spells')) {
     dbgSpells = {};
     for (const part of q.get('spells').split(',')) {
       const [k, n] = part.split(':');
-      if (SPELL_KEYS.includes(k)) dbgSpells[k] = Math.min(3, Math.max(1, Math.floor(Number(n)) || 1));
+      if (SPELL_KEYS.includes(k)) dbgSpells[k] = Math.min(SPELL_MAX_LV, Math.max(1, Math.floor(Number(n)) || 1));
     }
   }
-  if (q.has('herolv')) { data.hero.level = Math.min(MAX_HERO_LV, Math.max(1, Math.floor(Number(q.get('herolv'))) || 1)); data.hero.xp = 0; }
+  if (q.has('herolv')) { data.hero.level = int('herolv', 1, MAX_HERO_LV); data.hero.xp = 0; }
+  if (q.has('gems')) data.gems = int('gems', 0, 1e9);
+  if (q.has('best')) data.best = int('best', 0, MAX_STAGE);
   if (q.has('loot')) dbgLoot = q.get('loot');
   // 콘솔 테스트용: __wd.frame(ms) 로 창이 가려져 있어도 프레임을 직접 돌릴 수 있다
   window.__wd = {
-    get game() { return game; }, get data() { return data; }, frame: t => frame(t), ui, heroUI,
-    loot: r => dropLoot(r),
+    get game() { return game; }, get data() { return data; }, get mode() { return mode; },
+    frame: t => frame(t), ui, heroUI, loot: r => dropLoot(r), pwa, store,
   };
 }
 
-// ── 게임 생성 · 진행 ──
-function playerInits() {
-  return [
-    { name: data.name, kind: 'human', gold: data.gold, lv: data.lv, perks: { ...data.perks }, auto: data.auto },
-    // ponytail: 동료는 내 퍼크를 같이 씀(밸런스 테스트와 같은 조건). 협동 때 이 슬롯을 원격 플레이어로 교체
-    { name: 'AI 동료', kind: 'bot', gold: data.partner.gold, lv: data.partner.lv, perks: { ...data.perks }, auto: true },
-  ];
+// ── 화면 전환 ──
+function showCamp() {
+  mode = 'camp';
+  game = null;
+  heldPicks.length = 0;
+  pendingResult = null;
+  heroUI.close();
+  ui.showCamp(data);
 }
 
-function onStart() {
-  audio.unlock();
-  ui.hideTitle();
-  onTitle = false;
-  // 영웅은 data.hero 를 그대로 넘긴다: sim이 제자리에서 바꾸므로 저장 객체와 늘 같다
-  game = createGame({ stage: data.stage, best: data.best, players: playerInits(), discovered: data.discovered, hero: data.hero });
+function startRun(g) {
+  if (!g) { data.run = null; persist(true); showCamp(); return; }
+  game = g;
+  mode = 'run';
   game.speed = allowedSpeed(data.settings.speed);
-  acc = 0;
-  stopUntil = 0;
+  acc = 0; stopUntil = 0; nextAt = 0; pickHoldUntil = 0;
+  heldPicks.length = 0;
   grantDebugSpells();
-  if (!game.hero.cls) heroUI.open(game.hero, heroCtx()); // 처음 시작: 클래스 선택(필수) 뒤 1층
+  ui.hideTitle();
+  ui.hideCamp();
+  heroUI.close();
+  audio.unlock();
+  persist(true); // 체크포인트(이어하기)
 }
 
-function beginStage(stage) {
-  startStage(game, stage);
-  acc = 0;
-  grantDebugSpells();
+// 도전 포기(이어하기 창 · 일시정지 메뉴): 체크포인트까지 적립한 보석·기록으로 정산
+function onAbandonRun() {
+  const g = inRun() ? game : restoreRun(data);
+  const sum = g && finishRun(g);
+  if (sum) ui.showResult(sum, g);
+  else { data.run = null; persist(true); showCamp(); }
 }
 
+// 정산은 도전이 끝난 '즉시' + 바로 기록: 결과 화면 중에 앱을 꺼도 죽은 층이 이어하기로 살아나지 않게.
+// endRun 뒤엔 game.run.checkpoint 를 data.run 에 다시 쓰지 않는다(syncData 가 run.ended 를 본다)
+function finishRun(g) {
+  data.auto = g.players[0].auto;
+  const sum = endRun(g, data);
+  if (!sum) return null;
+  mode = 'result';
+  if (g !== game) game = null; // 이어하기 창에서 포기: 뒤에 그릴 전장 없음
+  heldPicks.length = 0;
+  store.save(data);
+  store.flush();
+  updSnooze = false;
+  return sum;
+}
+
+// 층 시작마다 체크포인트 저장(startStage 가 game.run.checkpoint 를 새로 만든다)
 function nextStage() {
-  if (!game) return;
-  data.stage = Math.min(MAX_STAGE, game.stage + 1);
-  beginStage(data.stage);
-  persist();
+  if (!inRun() || game.run.over || game.phase !== 'clear') return;
+  startStage(game, game.stage + 1);
+  acc = 0;
+  heldPicks.length = 0;
+  grantDebugSpells();
+  persist(true);
 }
 
 // ── 디버그 (브라우저 전용) ──
@@ -144,13 +180,13 @@ function grantDebugSpells() {
 }
 // 지정 등급 장비를 전장에 떨어뜨린다(빛기둥 연출 확인용). 'all' = 등급별 1개씩
 function dropLoot(r) {
-  if (!game?.hero?.cls) return false;
+  if (!inRun() || !game.hero?.cls) return false;
   const list = r === 'all' ? RARITY_KEYS : RARITY_KEYS.includes(r) ? [r] : [];
   list.forEach((rarity, i) => {
     let item = null;
     for (let n = 0; n < 500 && item?.rarity !== rarity; n++) item = rollItem(game.stage, rarity === 'common' ? 'normal' : 'chest', Math.random, game.hero.cls);
     if (item.rarity !== rarity) return;
-    addToBag(game.hero, item); // 가방이 가득 차면 최하위 자동 판매(디버그라 골드 생략)
+    addToBag(game.hero, item);
     game.events.push({ type: 'loot', item, x: 120 + i * 120, y: 640 });
   });
   return list.length > 0;
@@ -158,52 +194,55 @@ function dropLoot(r) {
 
 const allowedSpeed = s => (s >= 3 && data.best < SPEED3_UNLOCK ? 1 : s);
 function onSpeed() {
-  const cur = game ? game.speed : data.settings.speed;
+  const cur = inRun() ? game.speed : data.settings.speed;
   const s = allowedSpeed(cur >= 3 ? 1 : cur + 1);
   data.settings.speed = s;
-  if (game) game.speed = s;
+  if (inRun()) game.speed = s;
   persist();
 }
 
-function onBuyPerk(key) {
-  if (!PERK_KEYS.includes(key)) return;
-  const lv = data.perks[key];
-  if (lv >= perkMax(key)) return;
-  const cost = perkCost(key, lv);
-  if (data.gems < cost) { ui.toast('보석이 부족해요'); return; }
-  data.gems -= cost;
-  data.perks[key] = lv + 1;
-  if (game) {
-    for (const p of game.players) {
-      p.perks[key] = lv + 1;
-      p.stats = cannonStats(p.lv, p.perks);
-    }
-  }
-  audio.play('upgrade');
-  persist(true);
+function resetState() {
+  game = null;
+  heldPicks.length = 0;
+  pendingResult = null;
+  heroUI.close();
+  audio.setEnabled(data.settings.sound);
+}
+function showHome() { // 저장이 바뀐 뒤: 도전 중이면 타이틀(이어하기), 아니면 정비 화면
+  if (data.run) { mode = 'title'; ui.showTitle({ best: data.best, run: data.run, hero: data.hero }); } else showCamp();
 }
 
 function onResetSave() {
   store.clear();
   data = store.defaults();
-  game = null;
-  heroUI.close();
-  onTitle = true;
-  audio.setEnabled(data.settings.sound);
-  ui.showTitle({ best: 0, stage: 1 });
+  resetState();
+  mode = 'title';
+  ui.showTitle({ best: 0, run: null, hero: data.hero });
   ui.toast('저장을 초기화했어요');
+}
+
+// 백업 코드 복원: preview → 요약 객체 또는 { error }(ui가 문구를 보여 줌), 아니면 덮어쓰고 true/false
+function onRestoreSave(code, preview) {
+  const r = store.importSave(code);
+  if (preview === true) return r.ok ? r.data : { error: r.error };
+  if (!r.ok) return false;
+  store.clear();
+  data = r.data;
+  store.save(data);
+  if (!store.flush()) return false;
+  resetState();
+  showHome();
+  return true;
 }
 
 // ── 저장 ──
 function syncData() {
-  if (!game) return;
-  const [me, pa] = game.players;
-  data.gold = me.gold;
-  data.lv = { ...me.lv };
-  data.auto = me.auto;
-  data.partner = { gold: pa.gold, lv: { ...pa.lv } };
-  data.discovered = [...game.discovered];
-  if (game.hero) data.hero = game.hero; // 같은 객체(sim이 제자리 변경) — 방어적으로 다시 연결
+  if (!game || game.run.ended || game.run.over) return; // 끝난 도전은 이어하기로 되살리지 않는다
+  data.run = game.run.checkpoint;
+  data.auto = game.players[0].auto;
+  data.discovered = [...new Set([...data.discovered, ...game.discovered])];
+  data.seenSpells = SPELL_KEYS.filter(k => data.seenSpells.includes(k) || game.seenSpells.has(k));
+  if (game.hero) data.hero = game.hero; // 같은 객체(sim이 제자리 변경)
 }
 function persist(now = false) {
   syncData();
@@ -211,22 +250,20 @@ function persist(now = false) {
   if (now) store.flush();
 }
 
-// ── 오프라인 보상 (부팅 · 앱 복귀) ──
+// ── 오프라인 보상 (부팅 · 앱 복귀): 보석 + 영웅 경험치 ──
 function checkOffline() {
   const r = store.computeOffline(data);
   data.lastSeen = Date.now(); // 복귀 이벤트가 두 번 와도 한 번만 지급
-  if (!(r.gold > 0)) return;
+  if (!(r.gems > 0 || r.xp > 0)) return;
   ui.showOfflineReward(r, () => {
-    if (game) game.players[0].gold += r.gold;
-    else data.gold += r.gold;
+    applyOffline(data, r);
     audio.play('coin');
     persist(true);
+    if (mode === 'title' && data.run) ui.showContinue(data.run, data.hero);
   });
 }
 
-function onHide() {
-  persist(true);
-}
+function onHide() { persist(true); }
 function onShow() {
   lastT = performance.now();
   acc = 0;
@@ -236,19 +273,20 @@ document.addEventListener('visibilitychange', () => (document.hidden ? onHide() 
 addEventListener('pagehide', onHide);
 App?.addListener('appStateChange', s => (s.isActive ? onShow() : onHide()));
 
-// ── 이벤트 → 효과음 · 저장 ──
+// ── 이벤트 → 효과음 · 저장 · 도전 흐름 ──
 function handleEvents(events, now) {
   let stop = 0;
   for (const ev of events) {
     switch (ev.type) {
       case 'hitstop': stop = Math.max(stop, +ev.ms || 0); break;
+      case 'cast': if (ev.o === 0 && !ev.basic) audio.play('spell', ev.spell); break;
       case 'shoot': if (ev.o === 0) audio.play('shoot'); break;
       case 'hit': audio.play(ev.crit ? 'crit' : 'hit'); break;
       case 'kill': audio.play(ev.isBoss ? 'big' : 'kill'); break;
       case 'boom': if (ev.kind !== 'meteor') audio.play(ev.kind === 'crit' ? 'crit' : 'big'); break;
       case 'wall': case 'thorns': audio.play('hit'); break;
       case 'skill': audio.play(ev.skill); break;
-      case 'bossSpawn': case 'warn': case 'enrage': audio.play('boss'); break;
+      case 'bossSpawn': case 'warn': case 'enrage': case 'berserk': audio.play('boss'); break;
       case 'upgrade': if (ev.o === 0) audio.play('upgrade'); break;
       case 'combo': audio.play('combo', ev.tier); break;
       case 'frenzy': audio.play('frenzy'); break;
@@ -260,20 +298,20 @@ function handleEvents(events, now) {
         else if (ev.first) audio.play('synergy');
         if (ev.first) persist(true); // 발견은 즉시 저장
         break;
-      // 판타지 스킬 카드
       case 'pickOffer':
         audio.play('pickShow');
         for (let i = 0; i < (game.pick?.cards.length || 3); i++) setTimeout(() => audio.play('cardFlip'), 90 * i + 60);
         break;
       case 'spellPick': audio.play('pickConfirm', ev.rarity); break;
       case 'spell': audio.play('spell', ev.key); break;
+      case 'allySpell': case 'revive': audio.play('synergy'); break;
+      case 'talent': audio.play('upgrade'); persist(true); break;
       // 영웅
       case 'heroUlt': audio.play('big'); break;
       case 'heroDown': audio.play('defeat'); break;
       case 'heroRespawn': audio.play('upgrade'); break;
       case 'heroLevelUp':
         audio.play('clear');
-        // 전장에선 캔버스 LEVEL UP 연출 + 마일스톤 토스트(ui.js)로 충분 — 영웅 화면이 전장을 가릴 때만 배너
         if (heroUI.isOpen()) heroUI.notifyLevelUp(ev.level, ev.tier, ev.milestone);
         persist(true);
         break;
@@ -284,20 +322,20 @@ function handleEvents(events, now) {
         break;
       case 'clear': {
         audio.play('clear');
-        const r = game.result;
-        data.best = Math.max(data.best, game.stage);
-        data.gems += r?.gems?.[0] ?? 0;
-        data.stage = Math.min(MAX_STAGE, game.stage + 1);
+        const prev = data.best;
+        data.best = Math.max(data.best, game.stage); // 3배속 해금용(신기록 보석은 endRun이 도전 시작 기록 기준으로 계산)
+        if (prev < SPEED3_UNLOCK && data.best >= SPEED3_UNLOCK) setTimeout(() => ui.toast('3배속 해금!', 'speed'), 1600);
         nextAt = now + NEXT_DELAY;
         updSnooze = false;
         persist(true);
         break;
       }
-      case 'defeat':
-        audio.play('defeat');
-        updSnooze = false;
-        persist(true);
+      case 'defeat': audio.play('defeat'); break;
+      case 'runOver': {
+        const sum = finishRun(game);
+        if (sum) pendingResult = { sum, g: game };
         break;
+      }
     }
   }
   if (stop > 0) {
@@ -306,19 +344,47 @@ function handleEvents(events, now) {
   }
 }
 
-// ── 업데이트 (네이티브 전용) ──
+// 새 카드가 보스 배너·운석 착탄 시간 안에 뜨면 잠시 빼 두고(전투 계속) 뒤에 다시 올린다
+function holdPicks(events, now) {
+  let offered = false;
+  for (const e of events) {
+    if (e.type === 'pickOffer') offered = true;
+    else if (e.type === 'bossSpawn' && e.named) pickHoldUntil = Math.max(pickHoldUntil, now + PICK_HOLD_BOSS);
+    else if (e.type === 'boom' && e.kind === 'meteor') pickHoldUntil = Math.max(pickHoldUntil, now + PICK_HOLD_METEOR);
+  }
+  if (game.pick && offered && now < pickHoldUntil) {
+    heldPicks.push(game.pick);
+    game.pick = null;
+    return events.filter(e => e.type !== 'pickOffer');
+  }
+  if (game.phase !== 'play') heldPicks.length = 0; // 클리어·패배 순간 떠 있던 카드는 sim도 버린다
+  else if (!game.pick && heldPicks.length && now >= pickHoldUntil) {
+    game.pick = heldPicks.shift();
+    events.push({ type: 'pickOffer' });
+  }
+  return events;
+}
+
+// ── 업데이트: APK(네이티브) = updater.js, 웹·PWA = pwa.js. 둘 다 전투 중이 아닌 안전한 순간에만 ──
 const modalOpen = id => !document.getElementById(id).hidden;
+const anyModal = () => document.querySelector('#layer .modal:not([hidden])');
 function maybeShowUpdate() {
-  if (!pendingUpdate || updSnooze || modalOpen('m-update') || modalOpen('m-offline') || modalOpen('m-ending')) return;
-  if (game?.pick || heroUI.isOpen()) return; // 카드 선택 · 영웅 화면(클래스 선택 포함) 중엔 띄우지 않음
-  if (!(onTitle || (game && game.phase !== 'play') || modalOpen('m-menu'))) return;
-  updSnooze = true; // [나중에] 뒤엔 다음 클리어/패배 때 다시
+  if (!pendingUpdate || updSnooze || heroUI.isOpen() || game?.pick) return;
+  const m = anyModal();
+  if (m && m.id !== 'm-menu') return;
+  if (!(mode === 'title' || mode === 'camp' || (inRun() && game.phase !== 'play') || m)) return;
+  updSnooze = true; // [나중에] 뒤엔 다음 클리어/정비 때 다시
   ui.showUpdateReady(pendingUpdate);
+}
+function maybeApplyPwa() {
+  if (!pwa.isUpdateReady() || !(mode === 'camp' || mode === 'title') || anyModal() || heroUI.isOpen()) return;
+  persist(true);
+  pwa.applyUpdate();
 }
 
 async function onUpdateNow() {
   persist(true);
-  let r = await updater.install();
+  const r = await updater.install();
   if (r.needsPermission) { ui.showInstallPermissionHelp(); return; }
   if (r.ok === false) ui.toast(r.message || '업데이트를 시작하지 못했어요');
 }
@@ -331,7 +397,10 @@ async function onOpenInstallSettings() {
 }
 
 async function onCheckUpdate() {
-  if (!native) { ui.toast('웹 버전은 항상 최신이에요'); return; }
+  if (!native) {
+    ui.toast(pwa.isUpdateReady() ? '새 버전이 있어요. 정비 화면에서 자동으로 적용돼요' : '웹 버전은 항상 최신이에요');
+    return;
+  }
   const info = await updater.check({ force: true });
   if (!info.available) {
     ui.toast(info.error === 'offline' ? '인터넷 연결을 확인해 주세요'
@@ -360,17 +429,19 @@ if (native) {
   });
   updater.getCurrentVersion().then(v => ui.setVersion(v ? 'v' + v.versionName : '')).catch(() => {});
 } else {
-  ui.setVersion('웹 버전');
+  fetch(new URL('../version.json', import.meta.url), { cache: 'no-store' }).then(r => r.json())
+    .then(v => ui.setVersion(`웹 v${v.version}${v.build && v.build !== 'dev' ? ' · ' + String(v.build).slice(0, 7) : ''}`))
+    .catch(() => ui.setVersion('웹 버전'));
+  navigator.storage?.persist?.().catch(() => {}); // 브라우저가 저장소를 임의로 비우지 않게(iPhone PWA)
 }
 
-// ── 안드로이드 뒤로가기: 모달 닫기 → 메뉴 열기, 타이틀에선 두 번 눌러 종료 ──
+// ── 안드로이드 뒤로가기: 시트·모달 닫기 → 도전 중이면 일시정지 메뉴, 정비·타이틀에선 두 번 눌러 종료 ──
 App?.addListener('backButton', () => {
   if (heroUI.handleBack()) return;
   if (ui.handleBack()) return;
-  if (!onTitle) { document.getElementById('btn-menu').click(); return; }
+  if (inRun()) { document.getElementById('btn-menu').click(); return; }
   const now = performance.now();
-  if (now - backAt < 2000) App.exitApp();
-  else { backAt = now; ui.toast('한 번 더 누르면 종료돼요'); }
+  if (now - backAt < 2000) { persist(true); App.exitApp(); } else { backAt = now; ui.toast('한 번 더 누르면 게임을 종료해요'); }
 });
 
 addEventListener('keydown', e => { if (e.key === 'Escape' && heroUI.handleBack()) e.preventDefault(); });
@@ -380,7 +451,7 @@ addEventListener('pointerdown', () => audio.unlock(), { capture: true });
 
 // 전장 탭 → 영웅 이동 (상단 HUD 띠·성벽 아래는 무시, sim이 좌표를 한 번 더 검증)
 document.getElementById('game').addEventListener('pointerdown', e => {
-  if (!game || game.phase !== 'play' || !game.heroUnit || game.pick || ui.isBusy() || heroUI.isOpen()) return;
+  if (!inRun() || game.phase !== 'play' || !game.heroUnit || game.pick || ui.isBusy() || heroUI.isOpen()) return;
   const p = renderer.toWorld(e.clientX, e.clientY);
   if (p.y < HUD_H - renderer.topExtra || p.y > WALL_Y || p.x < 0 || p.x > WORLD_W) return;
   act(game, 0, { type: 'heroMove', x: p.x, y: p.y });
@@ -397,24 +468,26 @@ function frame(now) {
   lastT = now;
   meta.gems = data.gems;
   meta.best = data.best;
-  meta.speed = game ? game.speed : data.settings.speed;
+  meta.speed = inRun() ? game.speed : data.settings.speed;
   meta.autoNext = data.settings.autoNext;
   meta.unlocked3x = data.best >= SPEED3_UNLOCK;
   meta.settings = data.settings;
-  meta.perks = data.perks;
   meta.discovered = game ? game.discovered : data.discovered;
 
-  if (onTitle || !game) {
+  if (!game) { // 타이틀 · 정비 화면 · (전장 없는) 결과 화면
     ui.update(null, meta);
+    heroUI.update(data.hero, campCtx());
     maybeShowUpdate();
+    maybeApplyPwa();
+    if (now >= saveAt) { saveAt = now + SAVE_EVERY; persist(); }
     return;
   }
 
   // 카드 선택 중: 전투 정지(sim도 스스로 멈춤), 자동 강화면 실시간 카운트다운
   const picking = !!game.pick;
   if (picking && game.players[0].auto && !heroUI.isOpen()) tickPick(game, dt);
-  // 전투 중 모달(메뉴·상점·영웅 화면 등)이 열리면 일시정지
-  const paused = picking || (game.phase === 'play' && (ui.isBusy() || heroUI.isOpen()));
+  // 모달(메뉴·영웅 화면·결과 등)이 열리면 일시정지
+  const paused = picking || ui.isBusy() || heroUI.isOpen();
   const holding = now < stopUntil;
   if (dbgLoot && game.hero?.cls && game.phase === 'play' && !paused) { dropLoot(dbgLoot); dbgLoot = null; }
   if (!paused && !holding) {
@@ -424,17 +497,23 @@ function frame(now) {
     if (n >= MAX_STEPS) acc = 0;
   } else acc = 0;
 
-  const events = drainEvents(game);
+  const g = game;
+  let events = drainEvents(g);
+  if (mode === 'run') events = holdPicks(events, now);
   handleEvents(events, now);
-  const out = renderer.frame(game, events, dt, {
+  const out = renderer.frame(g, events, dt, {
     dmgNumbers: data.settings.dmgNumbers, shake: data.settings.shake, hitstop: holding || paused, myIndex: 0,
   });
   if (out.coins > 0) audio.play('coin');
-  ui.onEvents(events, game);
-  ui.update(game, meta);
-  heroUI.update(game.hero, heroCtx());
+  ui.onEvents(events, g);
+  ui.update(g, meta);
+  heroUI.update(g.hero, mode === 'run' ? runCtx() : campCtx());
+  if (pendingResult) { // 패배 도장(ui.onEvents)이 뜬 다음에: 결과 화면은 도장을 보여 준 뒤 스스로 이어서 뜬다
+    ui.showResult(pendingResult.sum, pendingResult.g);
+    pendingResult = null;
+  }
 
-  if (game.phase === 'clear' && data.settings.autoNext && now >= nextAt && !ui.isBusy() && !heroUI.isOpen()) {
+  if (inRun() && game.phase === 'clear' && !game.run.over && data.settings.autoNext && now >= nextAt && !ui.isBusy() && !heroUI.isOpen()) {
     if (pendingUpdate && !updSnooze) maybeShowUpdate();
     else nextStage();
   } else maybeShowUpdate();
@@ -443,7 +522,8 @@ function frame(now) {
 }
 
 // ── 부팅 ──
-fontsReady(); // 번들 글꼴 로드 시작(캔버스 글자용). 전투는 타이틀 뒤라 보통 그 전에 끝난다
-ui.showTitle({ best: data.best, stage: data.stage });
+fontsReady(); // 번들 글꼴 로드 시작(캔버스 글자용)
+ui.showTitle({ best: data.best, run: data.run, hero: data.hero });
 checkOffline();
-loop(lastT = performance.now()); // 첫 프레임은 바로: 루프 전에 열린 도감·상점도 값이 채워지게
+if (pwa.justUpdated()) setTimeout(() => ui.toast('업데이트 완료! 최신 버전이에요', 'check'), 400);
+loop(lastT = performance.now()); // 첫 프레임은 바로

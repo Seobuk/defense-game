@@ -1,0 +1,51 @@
+name: Deploy Pages
+
+# landing/ → 사이트 루트(https://<user>.github.io/defense-game/), public/ → /play/(iPhone/웹 PWA).
+# 배포 시 site/play/version.json의 build를 커밋 SHA로 찍어서 js/pwa.js가 새 배포를 감지하게 한다.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stage site (landing/ → root, public/ → /play/)
+        run: |
+          set -e
+          mkdir -p site/play
+          cp -r landing/. site/
+          cp -r public/. site/play/
+          node -e "
+            const fs = require('fs');
+            const p = 'site/play/version.json';
+            const v = JSON.parse(fs.readFileSync(p, 'utf8'));
+            v.build = '${{ github.sha }}'.slice(0, 12);
+            fs.writeFileSync(p, JSON.stringify(v));
+          "
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

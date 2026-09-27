@@ -2,7 +2,7 @@
 // DOM HUD(골드·층·웨이브·마나·메뉴·영웅 버튼)는 ui.js/style.css 몫이고, 여기는 전장 위에 캔버스로 그리는 층만.
 // docs/ART.md §4.5, §10.2, §10.8~10.11
 // 소유: UI 에이전트(kit.css · 아이콘 · ui.js/heroui.js 와 함께). 계약은 docs/ART.md §14 참고.
-import { WORLD_W, WORLD_H, WALL_Y, SYNERGIES, COMBO_TIERS, COMBO_WINDOW, FRENZY, LEGEND_T } from '../config.js';
+import { WORLD_W, WORLD_H, WALL_Y, SYNERGIES, COMBO_TIERS, COMBO_WINDOW, FRENZY, LEGEND_T, THEMES, SPELL_BY_KEY } from '../config.js';
 import { clamp } from '../util.js';
 import { MILESTONES } from '../hero.js';
 const MS_DESC = Object.fromEntries(MILESTONES.map(m => [m.key, m.desc]));
@@ -105,9 +105,43 @@ function domBusy() {
   return !!document.querySelector('#layer .modal:not([hidden]), #clear:not([hidden]), #defeat:not([hidden]), #pick:not([hidden]), .hu-cp:not([hidden]), .hu-main:not([hidden])');
 }
 
+// 새 층: 층 숫자가 쿵 찍히고 룬 띠가 양옆으로 펼쳐진다. 테마가 바뀌는 층(21·41…)은 테마 이름 리본이 크게
+const FLOOR = { t: 9, stage: 0, theme: 0, newTheme: false };
+let lastFloor = 0;
+function drawFloor() {
+  const t = FLOOR.t;
+  if (t > 1.6 || moment) return;
+  const a = t < 0.12 ? t / 0.12 : t > 1.25 ? Math.max(0, (1.6 - t) / 0.35) : 1, y = midY() - 40;
+  const k = t < 0.28 ? easeBack(t / 0.28) : 1, open = easeOut(Math.min(1, t / 0.45));
+  numZone('floor', 360, y + 20, 480, 170);
+  additive(true);
+  ctx.globalAlpha = a * 0.9;
+  const rb = runeBand(FLOOR.newTheme ? '#ffd86a' : '#bfe0ff'), half = 330 * open;
+  ctx.save(); ctx.beginPath(); ctx.rect(360 - half, y - 70, half * 2, 150); ctx.clip();
+  ctx.drawImage(rb, -50 + (RT * 50) % 48, y - 52, 820, 18);
+  ctx.drawImage(rb, -(RT * 50) % 48, y + 58, 820, 18);
+  ctx.restore();
+  ctx.globalAlpha = a * 0.5;
+  spr(rays(FLOOR.newTheme ? '#ffd23a' : '#8fd8ff'), 360, y, 300 * k, 300 * k);
+  additive(false);
+  ctx.globalAlpha = a;
+  placeH(360, y, k);
+  numText(FLOOR.stage + '층', 0, 0, 72, '#fffbe0', '#ffc92e', '#4a2000');
+  ht();
+  if (FLOOR.newTheme || FLOOR.stage === 1) {
+    const rk = t < 0.4 ? easeBack(clamp((t - 0.12) / 0.28, 0, 1)) : 1;
+    placeH(360, y + 64, rk);
+    ribbon(0, 0, 260, 44, '#8fd0ff', '#2a78e0', '#123a8a');
+    txt(THEMES[FLOOR.theme] ? THEMES[FLOOR.theme].name : '', 0, 2, 22, '#ffffff', '#0a2050', 6);
+    ht();
+  }
+  ctx.globalAlpha = 1;
+}
+
 export function drawHud(view) {
   ht();
   ctx.textBaseline = 'middle';
+  drawFloor();
   drawBossBar(view);
   const hideA = Math.max(quietA, moment ? 1 : 0);
   if (hideA < 1) drawCombo(view, 1 - hideA);
@@ -132,6 +166,27 @@ export function drawHud(view) {
     numZone('stamp', 360, s.y, s.size * s.txt.length * 0.9 + 40, s.size * 1.2);
   }
   ht();
+  // 알림 알약(카드 축복·AI 동료 새 주문 등): 톡 튀어나와 살짝 떠오르고 사라짐
+  if (!moment) for (const p of POPS) {
+    if (p.life <= 0) continue;
+    const t = p.max - p.life, k = t < 0.2 ? easeBack(t / 0.2) : 1, a = Math.min(1, p.life / 0.3) * (1 - quietA);
+    if (a <= 0) continue;
+    ctx.font = `20px ${FONT}`;
+    const w1 = ctx.measureText(p.txt).width;
+    ctx.font = `15px ${FONT}`;
+    const w = Math.max(w1, ctx.measureText(p.sub).width) + 40, y = p.y - t * 18;
+    ctx.globalAlpha = a;
+    placeH(p.x, y, k);
+    rr(-w / 2, -26, w, p.sub ? 52 : 36, 18);
+    ctx.fillStyle = 'rgba(16,12,40,0.92)'; ctx.fill();
+    ctx.lineWidth = 3; ctx.strokeStyle = '#22163a'; ctx.stroke();
+    ctx.lineWidth = 2; ctx.strokeStyle = p.col; rr(-w / 2 + 3, -23, w - 6, (p.sub ? 52 : 36) - 6, 15); ctx.stroke();
+    txt(p.txt, 0, p.sub ? -9 : -8, 20, p.col, '#1a0612', 5);
+    if (p.sub) txt(p.sub, 0, 13, 15, '#ffffff', '#1a0612', 4);
+    numZone('pop', p.x, y, w, 56);
+    ht();
+  }
+  ctx.globalAlpha = 1;
   drawChips(view, 1 - Math.max(quietA, moment ? 0.6 : 0));
   ht();
   ctx.globalAlpha = 1;
@@ -307,7 +362,7 @@ function drawBossBar(view) {
 let frMax = FRENZY.dur, lgMax = LEGEND_T;
 // 보스 체력 겹 색 [밝음, 메인, 어둠] — 마지막 겹(x1)은 붉은색
 const LAYER_COL = [['#ff9ab4', '#ff5a80', '#c0103a'], ['#ffd89a', '#ffa040', '#c05a00'], ['#fff3a0', '#ffd23a', '#c08a00'], ['#c8ff9a', '#6ad84a', '#2a8a1a'], ['#b8f4ff', '#4fc8ff', '#1a70c0'], ['#e0c8ff', '#b07aff', '#6a2ac0']];
-const CX = 670; // 콤보·상태 알약 오른쪽 끝(월드 폭 720 — 가장자리에서 50 안쪽)
+const CX = 662; // 콤보·상태 알약 오른쪽 끝(월드 폭 720 — 가장자리에서 58 안쪽, 테두리·기울임 포함 여백)
 function drawCombo(view, vis) {
   if (combo.a > 0) {
     const x = CX, y = 580, tier = clamp(combo.tier, 0, 4);
@@ -358,8 +413,12 @@ function drawCombo(view, vis) {
   let ly = 472;
   if (view.frenzyT > 0) { frMax = Math.max(frMax, view.frenzyT); statusPill(ly, '광란 시전 x2', 'el-fire', '#ff6a3a', view.frenzyT / frMax, vis, 14); ly -= 46; }
   else frMax = FRENZY.dur;
-  if (view.legendT > 0) { lgMax = Math.max(lgMax, view.legendT); statusPill(ly, '전설의 학살 골드 x2', 'coin', '#ffd23a', view.legendT / lgMax, vis, 8); }
+  if (view.legendT > 0) { lgMax = Math.max(lgMax, view.legendT); statusPill(ly, '전설의 학살 골드 x2', 'coin', '#ffd23a', view.legendT / lgMax, vis, 8); ly -= 46; }
   else lgMax = LEGEND_T;
+  if (view.berserk > 1 && view.phase === 'play') { // 광폭화: 적 피해 배율 + 다음 2배까지 남은 시간
+    const m = view.berserk, lab = '광폭화 적 피해 x' + (m < 10 ? m.toFixed(1) : Math.round(m));
+    statusPill(ly, lab, 'el-fire', '#ff3a3a', 1 - (((view.phaseT || 0) - 80) % 10) / 10, vis, 6);
+  }
   ctx.globalAlpha = 1;
 }
 function statusPill(y, label, ico, col, u, vis, hz) {
@@ -655,6 +714,11 @@ export function events(view, evs, opts) {
         break;
       }
       case 'boom': if (ev.kind === 'meteor') meteorRT = RT; break;
+      case 'allySpell': { // AI 동료가 네임드 보스를 잡고 새 주문을 익혔다
+        const sp = SPELL_BY_KEY[ev.spell];
+        pop('AI 동료 새 주문!', (sp ? sp.name : '') + ' Lv' + (ev.level | 0), '#8fe8ff', 480, 780);
+        break;
+      }
       case 'combo': {
         combo.tierPunch = 1;
         if (quiet || moment) break;
@@ -693,6 +757,12 @@ export function events(view, evs, opts) {
 
 // ═════════════ 갱신 ═════════════
 export function update(view, da, dt) {
+  FLOOR.t += dt;
+  if (view.stage !== lastFloor) { // 새 층(도전 시작 포함)
+    const th = clamp(view.theme | 0, 0, 4);
+    if (view.phase === 'play') { FLOOR.t = 0; FLOOR.stage = view.stage | 0; FLOOR.newTheme = th !== FLOOR.theme && lastFloor > 0; FLOOR.theme = th; }
+    lastFloor = view.stage;
+  }
   if (!moment) for (const s of STAMPS) if (s.life > 0) { if (s.delay > 0) s.delay -= dt; else s.life -= dt; } // 연출 중엔 멈춤 → 끝나면 보인다
   for (const p of POPS) if (p.life > 0) p.life -= dt;
   for (const c of CHIPS.values()) { c.punch = Math.max(0, c.punch - dt * 3.2); c.label = Math.max(0, c.label - dt); }

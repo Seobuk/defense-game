@@ -1,6 +1,6 @@
 // 저장 검증 · v1 → v2 마이그레이션 · 오프라인 보상 셀프 체크: node test/save.test.js
 import assert from 'node:assert/strict';
-import { normalize, computeOffline, load, defaults, STORAGE_KEY, SAVE_VERSION, MIGRATE_GEMS_PER_BEST } from '../public/js/save.js';
+import { normalize, computeOffline, load, defaults, exportSave, importSave, STORAGE_KEY, SAVE_VERSION, MIGRATE_GEMS_PER_BEST } from '../public/js/save.js';
 import { offlineGemsPerHour, offlineXpPerMin, OFFLINE_CAP_HOURS, META_KEYS } from '../public/js/config.js';
 import { newRun } from '../public/js/run.js';
 
@@ -108,4 +108,31 @@ assert.equal(full.gems, Math.floor(offlineGemsPerHour(10, 2) * OFFLINE_CAP_HOURS
 assert.ok(full.gems > 0 && full.gems < 100, `방치 보석은 소량(${full.gems})`);
 assert.ok(!('gold' in full));
 assert.ok(computeOffline({ ...base, metaLv: { pickaxe: 10 } }, 1_000_000 + 3 * 86_400_000).gems > full.gems, '황금 곡괭이');
+
+// 백업 코드: 왕복 = 동일, 손상·남의 코드·미래 버전은 한국어 오류, 옛 버전(v1) 내용은 마이그레이션
+{
+  const src = normalize({ v: 2, best: 33, gems: 1234, runs: 7, name: '용사', discovered: ['flame', 'twin'], seenSpells: ['fireball'],
+    metaLv: { power: 5, revive: 1 }, hero: { cls: 'cleric', level: 42, talents: { cleric: { heal1: 1 } } } });
+  src.run = newRun(src, { cls: 'cleric', startSpells: [] }).run.checkpoint;
+  const code = exportSave(src);
+  assert.match(code, /^WD2-[A-Za-z0-9_-]+-[0-9a-f]{8}$/);
+  const back = importSave(' \n' + code.slice(0, 20) + '\n ' + code.slice(20) + '\n'); // 메신저가 끊어 붙인 코드
+  assert.ok(back.ok);
+  assert.deepEqual(back.data, normalize(JSON.parse(JSON.stringify(src))));
+  assert.equal(exportSave(back.data), code, '다시 백업해도 같은 코드');
+  const flip = code.slice(0, 10) + (code[10] === 'A' ? 'B' : 'A') + code.slice(11);
+  for (const bad of [null, '', 'hello', code.slice(0, -3), flip, 'WD9-' + code.slice(4), '{"best":3}']) {
+    const r = importSave(bad);
+    assert.equal(r.ok, false, String(bad).slice(0, 20));
+    assert.ok(/[가-힣]/.test(r.error), r.error);
+  }
+  const foreign = Buffer.from(JSON.stringify([1, 2])).toString('base64url');
+  assert.equal(importSave(`WD2-${foreign}-${code.slice(-8)}`).ok, false);
+  const oldBody = Buffer.from(JSON.stringify({ v: 1, best: 12, gems: 5, perks: { pickaxe: 2 }, hero: { cls: 'ranger', level: 9 } })).toString('base64url');
+  let h = 0x811c9dc5; for (const c of oldBody) h = Math.imul(h ^ c.charCodeAt(0), 0x01000193);
+  const old = importSave(`WD1-${oldBody}-${(h >>> 0).toString(16).padStart(8, '0')}`);
+  assert.ok(old.ok);
+  assert.equal(old.data.gems, 5 + 12 * MIGRATE_GEMS_PER_BEST);
+  assert.equal(old.data.metaLv.pickaxe, 2);
+}
 console.log('save.test OK');
