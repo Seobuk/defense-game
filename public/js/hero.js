@@ -342,6 +342,7 @@ function moveToward(h, x, y, spd, dt) {
   return step >= d;
 }
 
+const HERO_POST_Y = WALL_Y - 120; // 초반(15층까지) 적이 없을 때 서 있는 곳: 성문 앞 전장 — 첫 화면부터 "필드에 나가 싸우는" 영웅. 이후는 밸런스상 성문
 const HERO_LEASH = 520; // 성문에서 이 거리 안의 적만 쫓아간다(먼 스폰까지 몰려가 고립되지 않도록)
 
 function nearestInRange(g, h, range) {
@@ -393,7 +394,9 @@ export function updateHeroUnit(g, dt, api) {
   if (!hero || !hero.cls || !h) return;
   const cls = HERO_CLASSES[hero.cls];
   const stats = heroCombatStats(g, hero);
+  const prevMax = h.maxHp;
   h.maxHp = stats.maxHp;
+  if (h.hp > 0 && prevMax > 1 && h.maxHp > prevMax) h.hp *= h.maxHp / prevMax; // 성벽 결계 강화로 최대치가 오르면 비율 유지(바가 줄어 보이던 버그)
   h.hp = h.hp < 0 ? h.maxHp : Math.min(h.hp, h.maxHp);
   h.level = hero.level;
   h.tier = heroTier(hero.level);
@@ -432,7 +435,7 @@ export function updateHeroUnit(g, dt, api) {
       h.state = 'walk';
       api.emit(g, { type: 'heroBlink', x0, y0, x: h.x, y: h.y });
     } else if (target && !inRange) { moveToward(h, target.x, target.y, stats.moveSpd, dt); h.state = 'walk'; }
-    else if (!target) { const arrived = moveToward(h, HERO_GATE.x, HERO_GATE.y, stats.moveSpd, dt); h.state = arrived ? 'idle' : 'walk'; }
+    else if (!target) { const arrived = moveToward(h, HERO_GATE.x, g.stage <= 15 ? HERO_POST_Y : HERO_GATE.y, stats.moveSpd, dt); h.state = arrived ? 'idle' : 'walk'; }
   }
   if (target && inRange) {
     h.state = 'attack';

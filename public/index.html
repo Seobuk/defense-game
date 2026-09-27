@@ -37,7 +37,7 @@
         </div>
       </div>
 
-      <!-- 영웅 버튼 (중심 = 월드 BAG_POS(664,170): 장비 드롭이 날아와 꽂히는 곳) -->
+      <!-- 영웅 버튼 (중심 = 월드 BAG_POS(652,170): 장비 드롭이 날아와 꽂히는 곳) -->
       <button id="btn-hero" class="hero-btn" hidden aria-label="영웅 · 장비">
         <span id="hb-portrait" class="hb-portrait" aria-hidden="true"></span>
         <span class="hb-lv num">Lv<b id="hb-lv">1</b></span>
@@ -47,10 +47,17 @@
 
       <div id="clear" class="ov" hidden>
         <div class="clear-box">
-          <div class="clear-title">STAGE CLEAR!</div>
+          <div class="clear-title">승리!</div>
           <div class="clear-stage num" id="clear-stage"></div>
           <div class="stars"><i class="star"></i><i class="star"></i><i class="star"></i></div>
-          <div class="clear-gems num"><span class="gem"></span>+<b id="clear-gems">0</b></div>
+          <div class="clear-rewards" aria-label="보상">
+            <div class="cr-stats">
+              <span class="cr-cell"><img class="k-ico" src="assets/icons/coin.svg" alt=""><i>골드</i><b class="num" id="clear-gold">+0</b></span>
+              <span class="cr-cell"><img class="k-ico" src="assets/icons/hero.svg" alt=""><i>영웅 경험치</i><b class="num" id="clear-xp">+0</b></span>
+              <span class="cr-cell cr-gem"><img class="k-ico" src="assets/icons/gem.svg" alt=""><i>보석</i><b class="num">+<span id="clear-gems">0</span></b></span>
+            </div>
+            <div class="cr-drops" id="clear-drops"></div>
+          </div>
           <div class="badges">
             <span class="k-badge flawless" id="badge-flawless" hidden><img class="k-ico" style="--ico:16px" src="assets/icons/gem.svg" alt="">무결점! 보석 +50%</span>
             <span class="k-badge first" id="badge-first" hidden><img class="k-ico" style="--ico:16px" src="assets/icons/new.svg" alt="">첫 클리어!</span>
@@ -63,11 +70,12 @@
         <div class="k-modal dark defeat-card">
           <div class="k-ribbon red"><h2 id="defeat-title">성벽 붕괴!</h2></div>
           <div class="k-sheet center">
-            <div class="defeat-icon" aria-hidden="true"><img class="k-ico" style="--ico:84px" src="assets/icons/wall-broken.svg" alt=""></div>
+            <div class="defeat-icon" id="defeat-icon" aria-hidden="true"><img class="k-ico" style="--ico:84px" src="assets/icons/wall-broken.svg" alt=""></div>
             <p id="defeat-stage" class="k-num bad"></p>
             <div class="defeat-stats"><span>처치 <b id="defeat-kills" class="k-num">0</b></span><span>진행 <b id="defeat-prog" class="k-num">0%</b></span></div>
             <p class="defeat-rec" id="defeat-rec" hidden></p>
             <p class="tip" id="defeat-tip"></p>
+            <button id="btn-rec-retry" class="k-btn success wide is-ready" hidden></button>
             <button id="btn-retry" class="k-btn wide">재도전</button>
             <button id="btn-prev" class="k-btn secondary wide">이전 스테이지로</button>
           </div>
@@ -84,7 +92,7 @@
           </div>
         </div>
         <div id="pick-cards" class="pick-cards"></div>
-        <button id="pick-reroll" class="pick-reroll" type="button" hidden>
+        <button id="pick-reroll" class="k-btn secondary pick-reroll" type="button" hidden>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><path d="M21 3v6h-6z" fill="currentColor"/></svg>
           새로고침 <b id="pick-reroll-n" class="num">1</b>
         </button>
@@ -98,7 +106,7 @@
       <span id="hero-icon" class="hero-icon" aria-hidden="true"></span>
       <span id="hero-title"></span>
       <span class="hero-lv">Lv <b id="hero-lv" class="num">1</b></span>
-      <div class="hero-hp" role="progressbar" aria-label="영웅 체력" aria-valuemin="0" aria-valuemax="100"><i id="hero-hp-fill"></i></div>
+      <span class="hero-hp-lbl" aria-hidden="true">HP</span><div class="hero-hp" role="progressbar" aria-label="영웅 체력" aria-valuemin="0" aria-valuemax="100"><i id="hero-hp-fill"></i></div>
       <span id="hero-down" hidden></span>
     </div>
     <div id="partner" aria-label="AI 동료 마법사 상태">
@@ -151,7 +159,6 @@
           <button class="k-btn round neutral" data-open="codex" aria-label="도감"><img class="k-ico" style="--ico:28px" src="assets/icons/codex.svg" alt=""><span class="dot" hidden></span></button>
           <button class="k-btn round neutral" data-open="shop" aria-label="상점"><img class="k-ico" style="--ico:28px" src="assets/icons/shop.svg" alt=""></button>
           <button class="k-btn round neutral" data-open="settings" aria-label="설정"><img class="k-ico" style="--ico:28px" src="assets/icons/settings.svg" alt=""></button>
-          <span class="t-coop" aria-label="협동 모드 준비 중"><img class="k-ico" style="--ico:16px" src="assets/icons/lock.svg" alt="">협동 준비 중</span>
         </div>
       </div>
     </div>
@@ -161,15 +168,17 @@
   <!-- 모달 -->
   <div id="layer">
     <div class="modal" id="m-menu" hidden role="dialog" aria-modal="true" aria-labelledby="menu-h">
-      <div class="k-modal narrow">
-        <div class="k-ribbon"><h2 id="menu-h">메뉴</h2></div>
+      <div class="k-modal narrow dark">
+        <div class="k-ribbon gold"><h2 id="menu-h">일시정지</h2></div>
         <button class="k-close" data-close aria-label="닫기"><img class="k-ico" src="assets/icons/close.svg" alt=""></button>
         <div class="k-sheet">
-          <div class="menu-list">
-            <button class="menu-item" data-open="codex"><img class="k-ico" style="--ico:26px" src="assets/icons/codex.svg" alt="">히든 조합 도감<span class="new-tag" hidden>NEW</span></button>
-            <button class="menu-item" data-open="shop"><img class="k-ico" style="--ico:26px" src="assets/icons/shop.svg" alt="">보석 상점</button>
-            <button class="menu-item" data-open="settings"><img class="k-ico" style="--ico:26px" src="assets/icons/settings.svg" alt="">설정</button>
+          <div class="menu-grid">
+            <button class="menu-tile t-codex" data-open="codex"><img class="k-ico" src="assets/icons/codex.svg" alt=""><b>히든 조합 도감</b><span class="new-tag" hidden>NEW</span></button>
+            <button class="menu-tile t-hero" data-open="hero"><img class="k-ico" src="assets/icons/hero.svg" alt=""><b>영웅 · 장비</b></button>
+            <button class="menu-tile t-shop" data-open="shop"><img class="k-ico" src="assets/icons/shop.svg" alt=""><b>보석 상점</b></button>
+            <button class="menu-tile t-set" data-open="settings"><img class="k-ico" src="assets/icons/settings.svg" alt=""><b>설정</b></button>
           </div>
+          <button class="k-btn l menu-resume" data-close>계속하기</button>
         </div>
       </div>
     </div>
@@ -195,7 +204,7 @@
         <div class="k-ribbon blue"><h2 id="shop-h">보석 상점</h2></div>
         <button class="k-close" data-close aria-label="닫기"><img class="k-ico" src="assets/icons/close.svg" alt=""></button>
         <div class="k-sheet">
-          <div class="shop-top"><span class="shop-bal">보유 <img class="k-ico" style="--ico:24px" src="assets/icons/gem.svg" alt=""><b id="shop-gems" class="k-num shop-gems">0</b></span><small>스테이지를 클리어하면 보석을 얻어요</small></div>
+          <div class="shop-top"><span class="shop-art" id="shop-art" aria-hidden="true"></span><div class="shop-top-r"><span class="shop-bal">보유 <img class="k-ico" style="--ico:24px" src="assets/icons/gem.svg" alt=""><b id="shop-gems" class="k-num shop-gems">0</b></span><small>스테이지를 클리어하면 보석을 얻어요</small></div></div>
           <div id="shop-list" class="sh-body"></div>
         </div>
       </div>
@@ -203,25 +212,26 @@
 
     <div class="modal" id="m-settings" hidden role="dialog" aria-modal="true" aria-labelledby="set-h">
       <div class="k-modal">
-        <div class="k-ribbon gray"><h2 id="set-h">설정</h2></div>
+        <div class="k-ribbon"><h2 id="set-h">설정</h2></div>
         <button class="k-close" data-close aria-label="닫기"><img class="k-ico" src="assets/icons/close.svg" alt=""></button>
         <div class="k-sheet settings">
-          <div class="set-row"><span>데미지 숫자</span>
+          <div class="set-row"><span class="set-l"><img class="k-ico set-ico" src="assets/icons/crit.svg" alt="">데미지 숫자</span>
             <div class="seg" role="radiogroup" aria-label="데미지 숫자">
               <button role="radio" data-dmg="full">전체</button><button role="radio" data-dmg="simple">간소</button><button role="radio" data-dmg="off">끄기</button>
             </div>
           </div>
-          <div class="set-row"><span id="lbl-shake">화면 흔들림</span><button class="switch" data-set="shake" role="switch" aria-labelledby="lbl-shake"></button></div>
-          <div class="set-row"><span id="lbl-sound">효과음</span><button class="switch" data-set="sound" role="switch" aria-labelledby="lbl-sound"></button></div>
-          <div class="set-row"><span>버전 <b id="set-ver">-</b></span><button id="btn-check-update" class="k-btn s secondary">업데이트 확인</button></div>
+          <div class="set-row"><span class="set-l" id="lbl-shake"><img class="k-ico set-ico" src="assets/icons/meteor.svg" alt="">화면 흔들림</span><button class="switch" data-set="shake" role="switch" aria-labelledby="lbl-shake"></button></div>
+          <div class="set-row"><span class="set-l" id="lbl-sound"><img class="k-ico set-ico" src="assets/icons/el-lightning.svg" alt="">효과음</span><button class="switch" data-set="sound" role="switch" aria-labelledby="lbl-sound"></button></div>
+          <div class="set-row"><span class="set-l"><img class="k-ico set-ico" src="assets/icons/settings.svg" alt="">버전 <b id="set-ver" class="k-badge ver-badge">-</b></span><button id="btn-check-update" class="k-btn s secondary">업데이트 확인</button></div>
           <div class="set-row reset">
-            <button id="btn-reset" class="k-btn s danger">저장 초기화</button>
+            <button id="btn-reset" class="k-btn s danger">저장 데이터 초기화</button>
             <div id="reset-confirm" hidden>
               <p>정말 초기화할까요?<br>층·골드·보석·도감이 모두 사라져요.</p>
               <button id="btn-reset-yes" class="k-btn s danger">초기화</button>
               <button id="btn-reset-no" class="k-btn s gray">취소</button>
             </div>
           </div>
+          <p class="set-credit">글꼴: Black Han Sans · Jua · Gowun Dodum (SIL Open Font License)</p>
         </div>
       </div>
     </div>
@@ -230,6 +240,7 @@
       <div class="k-modal dark narrow">
         <div class="k-ribbon gold"><h2 id="off-h">돌아오신 걸 환영해요!</h2></div>
         <div class="k-sheet center">
+          <div class="off-art" id="off-art" aria-hidden="true"></div>
           <p id="off-time"></p>
           <div class="big-reward"><span class="coin"></span>+<b id="off-gold" class="k-num gold">0</b></div>
           <button id="btn-claim" class="k-btn l wide">받기</button>
@@ -258,6 +269,7 @@
       <div class="k-modal narrow">
         <div class="k-ribbon green"><h2 id="upd-h">새 버전 준비 완료</h2></div>
         <div class="k-sheet">
+          <div class="upd-art" aria-hidden="true"><i></i><img class="k-ico" src="assets/icons/reroll.svg" alt=""></div>
           <p class="upd-size" id="upd-size"></p>
           <div class="upd-notes" id="upd-notes"></div>
           <button id="btn-upd-now" class="k-btn success l wide">지금 업데이트</button>

@@ -9,7 +9,34 @@ import {
 import { fmt, clamp } from './util.js';
 import { icon } from './icons.js';
 import { heroPortraitURL, itemIconURL } from './art/units.js';
+import { emblemImg } from './art/emblems.js';
+import { glyph } from './art/fx.js';
 
+// 받침대 룬 서클(고해상도, 한 번 굽기) — 전장 마법진과 같은 문양(동심원 + 육망성 + 룬 10자)
+let runeURL = '';
+function runeRingURL() {
+  if (runeURL) return runeURL;
+  const c = document.createElement('canvas'), R = 256;
+  c.width = c.height = R;
+  const x = c.getContext('2d');
+  x.translate(R / 2, R / 2); x.scale(R / 68, R / 68);
+  x.lineJoin = x.lineCap = 'round';
+  const pass = (w, col, a) => {
+    x.globalAlpha = a; x.strokeStyle = col; x.lineWidth = w;
+    for (const r of [31, 24, 10]) { x.beginPath(); x.arc(0, 0, r, 0, Math.PI * 2); x.stroke(); }
+    x.beginPath();
+    for (const o of [0, Math.PI]) for (let j = 0; j <= 3; j++) { const a2 = -Math.PI / 2 + o + j * Math.PI * 2 / 3; j ? x.lineTo(Math.cos(a2) * 24, Math.sin(a2) * 24) : x.moveTo(Math.cos(a2) * 24, Math.sin(a2) * 24); }
+    x.stroke();
+    x.lineWidth = w * 0.7;
+    for (let k = 0; k < 10; k++) { const a2 = k * Math.PI / 5; x.save(); x.translate(Math.cos(a2) * 27.5, Math.sin(a2) * 27.5); x.rotate(a2 + Math.PI / 2); glyph(x, 0, 0, 2.4, k); x.restore(); }
+  };
+  pass(3.2, '#b8a8ff', 0.35); pass(1.4, '#d8ccff', 1); pass(0.6, '#ffffff', 0.9);
+  runeURL = c.toDataURL();
+  return runeURL;
+}
+
+// 클래스 선택 화면: [패시브, 궁극기] 엠블럼
+const ABILITY_EM = { knight: ['thorns', 'flawless'], ranger: ['pierce', 'homing'], sorcerer: ['chainboom', 'glacier'], cleric: ['holyLight', 'judgment'], assassin: ['double', 'soulHarvest'] };
 const RARITY_BY_KEY = Object.fromEntries(RARITIES.map(r => [r.key, r]));
 const SUB_NAME = Object.fromEntries(SUBSTATS.map(s => [s.key, s.name]));
 // hero.js 내부 SLOT_MAIN_KEY와 동일(문서 §캐릭터 성장 & 장비) — export가 없어 여기서 재정의
@@ -86,7 +113,7 @@ export function createHeroUI(root, handlers = {}) {
       </header>
       <div class="hu-stage hu-cp-stage">
         <div class="hu-rays" aria-hidden="true"></div>
-        <div class="hu-pedestal" aria-hidden="true"><i></i></div>
+        <div class="hu-pedestal" aria-hidden="true"><i style="--rune:url(${runeRingURL()})"></i></div>
         <img class="hu-hero hu-cp-hero" alt="" draggable="false">
         <div class="hu-cp-lock" hidden>${icon('lock')}<span></span></div>
         <button class="hu-nav prev" aria-label="이전 영웅">‹</button><button class="hu-nav next" aria-label="다음 영웅">›</button>
@@ -116,7 +143,8 @@ export function createHeroUI(root, handlers = {}) {
       <div class="hu-scroll">
         <div class="hu-stage hu-main-stage">
           <div class="hu-rays" aria-hidden="true"></div>
-          <div class="hu-pedestal" aria-hidden="true"><i></i></div>
+          <div class="hu-motes" aria-hidden="true">${'<i></i>'.repeat(9)}</div>
+          <div class="hu-pedestal" aria-hidden="true"><i style="--rune:url(${runeRingURL()})"></i></div>
           <img class="hu-hero hu-main-hero" alt="" draggable="false">
           <div class="hu-slotcol l">${SLOT_ORDER_L.map(s => `<button class="k-slot hu-eq" data-slot="${s}" aria-label="${SLOT_NAMES[s]}"></button>`).join('')}</div>
           <div class="hu-slotcol r">${SLOT_ORDER_R.map(s => `<button class="k-slot hu-eq" data-slot="${s}" aria-label="${SLOT_NAMES[s]}"></button>`).join('')}</div>
@@ -251,7 +279,7 @@ export function createHeroUI(root, handlers = {}) {
       const c = HERO_CLASSES[cls], unlocked = c.unlock(best);
       return `<button class="hu-thumb${unlocked ? '' : ' locked'}${cls === cpSel ? ' sel' : ''}" role="tab" aria-selected="${cls === cpSel}" data-cls="${cls}" style="--cc:${clsCol(cls)}" aria-label="${c.name}${unlocked ? '' : ' (잠김)'}">
         <img src="${heroPortraitURL(cls, unlocked ? heroTier(lvl) : 0, unlocked ? eq : null, 160)}" alt="" draggable="false">
-        ${unlocked ? '' : `<span class="hu-thumb-lock">${icon('lock')}</span>`}<span class="hu-thumb-name">${c.name}</span>
+        ${unlocked ? '' : `<span class="hu-thumb-lock">${icon('lock')}</span>`}<span class="hu-thumb-name">${c.name}</span>${unlocked ? '' : `<span class="hu-thumb-req">${({ cleric: 20, assassin: 40 })[cls] || ''}층 클리어</span>`}
       </button>`;
     }).join('');
     for (const b of cpThumbs.children) on(b, 'click', () => selectPreview(b.dataset.cls));
@@ -273,6 +301,9 @@ export function createHeroUI(root, handlers = {}) {
     $('.hu-pips.d').innerHTML = bars(info.diff); $('.hu-pips.p').innerHTML = bars(info.pow); $('.hu-pips.s').innerHTML = bars(info.surv);
     txt($('.hu-cp-passive'), c.passive);
     txt($('.hu-cp-ultname'), '궁극기 · ' + c.ult.name);
+    // 패시브·궁극기 아이콘 = 클래스별 그린 엠블럼(체크박스·같은 과녁이 모든 클래스에 반복되던 문제)
+    const ab = ABILITY_EM[cls] || ABILITY_EM.knight, ic = $$('.hu-cp .hu-skill-ico');
+    if (ic[0]) ic[0].innerHTML = emblemImg(ab[0]); if (ic[1]) ic[1].innerHTML = emblemImg(ab[1]);
     txt($('.hu-cp-ult'), c.ultDesc);
     cpLock.hidden = unlocked;
     if (!unlocked) txt(cpLock.querySelector('span'), UNLOCK_TEXT[cls] || '잠김');
@@ -357,6 +388,7 @@ export function createHeroUI(root, handlers = {}) {
     for (const b of tabs) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
     panels.char.hidden = tab !== 'char';
     panels.bag.hidden = tab !== 'bag';
+    const sc = $('.hu-scroll'); if (sc) sc.scrollLeft = 0; // 가로로 밀린 채 남아 탭 글자가 잘리던 문제
     if (tab === 'bag') newDot.hidden = true; // 가방 탭을 보면 NEW 카운트 확인한 것으로 간주(타일별 표시는 유지)
     renderPanel();
   }
@@ -407,6 +439,9 @@ export function createHeroUI(root, handlers = {}) {
       const btn = slotBtns[slot];
       const it = hero.equip[slot];
       btn.classList.toggle('empty', !it);
+      // 장착 유도: 가방에 이 칸보다 센 장비가 있으면 칸이 맥동 + ▲ (전설을 가방에 넣어 두고 잊지 않게)
+      const cur = it ? itemPower(it) : -1;
+      btn.classList.toggle('can-up', hero.bag.some(b => b.slot === slot && itemPower(b) > cur));
       if (it) { btn.dataset.r = it.rarity; btn.innerHTML = `<img src="${itemIconURL(slot, it.rarity, hero.cls, 112)}" alt="" draggable="false"><span class="k-lv">${it.ilvl}</span>`; }
       else { delete btn.dataset.r; btn.innerHTML = slotSil(slot) + `<span class="hu-eq-name">${SLOT_NAMES[slot]}</span>`; }
       btn.title = it ? `${SLOT_NAMES[slot]} · ${it.name}` : `${SLOT_NAMES[slot]} (비어 있음)`;
@@ -422,7 +457,7 @@ export function createHeroUI(root, handlers = {}) {
     for (const s of SUBSTATS) if (g[s.key]) rows.push([s.name, g[s.key]]);
     bonusesEl.innerHTML = rows.length
       ? rows.map(([n, v]) => `<div class="hu-bonus"><span>${n}</span><b class="k-num ok">+${v.toFixed(1)}%</b></div>`).join('')
-      : `<div class="hu-bonus empty">${icon('bag')}<span>장비를 장착하면 능력치가 올라요. 전투에서 빛기둥으로 떨어져요!</span></div>`;
+      : SLOTS.map(sl => `<div class="hu-bonus zero"><span>${MAIN_STAT_NAME[SLOT_MAIN_KEY[sl]]}</span><b class="k-num">+0%</b></div>`).join(''); // 빈 장비여도 표(0) — 안내 문장 대신
     milestonesEl.innerHTML = MILESTONES.map(m => {
       const done = hasMilestone(hero.level, m.key);
       return `<div class="hu-ms${done ? ' done' : ''}"><span class="hu-ms-lv k-num">Lv.${m.lv}</span><span class="hu-ms-desc">${m.desc}</span><span class="hu-ms-state">${icon(done ? 'check' : 'lock')}</span></div>`;
@@ -440,7 +475,7 @@ export function createHeroUI(root, handlers = {}) {
 
     const items = sortByPower ? hero.bag.slice().sort((a, b) => itemPower(b) - itemPower(a)) : hero.bag;
     let html = items.map((it, i) => `<button class="k-slot hu-tile" data-r="${it.rarity}" data-id="${it.id}" aria-label="${it.name}" style="--i:${Math.min(i, 8)}">
-      <img src="${itemIconURL(it.slot, it.rarity, hero.cls, 112)}" alt="" draggable="false"><span class="k-lv">${it.ilvl}</span>${newItemIds.has(it.id) ? '<span class="k-badge new hu-tile-new">N</span>' : ''}
+      <img src="${itemIconURL(it.slot, it.rarity, hero.cls, 112)}" alt="" draggable="false"><span class="k-lv">${it.ilvl}</span>${newItemIds.has(it.id) ? '<span class="k-badge new hu-tile-new">N</span>' : ''}${itemPower(it) > (hero.equip[it.slot] ? itemPower(hero.equip[it.slot]) : -1) ? '<i class="hu-up" aria-label="장착하면 강해짐"></i>' : ''}
     </button>`).join('');
     for (let i = items.length; i < BAG_SIZE; i++) html += `<div class="k-slot empty hu-tile" aria-hidden="true">${i === items.length ? '' : ''}</div>`;
     bagGrid.innerHTML = html;

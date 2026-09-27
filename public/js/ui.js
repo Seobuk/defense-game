@@ -4,12 +4,13 @@ import {
   PERKS, perkCost, perkMax, perkDisplay, MAX_STAGE, SPEED3_UNLOCK, OFFLINE_CAP_HOURS,
   SPELLS, SPELL_BY_KEY, FUSIONS, MANA_MAX, PICK_AUTO_T,
 } from './config.js';
-import { HERO_CLASSES, heroTitle, RARITIES, MILESTONES, heroPower } from './hero.js';
+import { HERO_CLASSES, heroTitle, RARITIES, MILESTONES, heroPower, heroClearXp } from './hero.js';
 import { heroPortrait, bestRarityIdx } from './heroui.js';
 import { fmt } from './util.js';
 import { icon } from './icons.js';
 import { momentLeft } from './art/hud.js';
-import { heroPortraitURL, magePortraitURL, enemyURL } from './art/units.js';
+import { heroPortraitURL, magePortraitURL, enemyURL, itemIconURL } from './art/units.js';
+import { emblemImg } from './art/emblems.js';
 
 const SYN_BY_KEY = Object.fromEntries(SYNERGIES.map(s => [s.key, s]));
 const KIND_TAG = { cannon: '마법', duo: '협동', event: '이벤트' };
@@ -28,9 +29,10 @@ const TIPS = [
   '두 마법사의 레벨이 묘하게 맞아떨어지면… 무슨 일이 생길까요?',
   '마나가 차면 판타지 스킬 카드를 골라요. 스테이지가 끝나면 빌드가 초기화돼요.',
 ];
-const CLEAR_SHOW_MS = 2200;
+const CLEAR_SHOW_MS = 3200;
 const HOLD_DELAY = 350;           // 누르고 있으면 이 뒤부터 연타
 const HOLD_RATE = [4, 20];        // 초당 구매 시도: 시작 → 최대
+const ULT_SHORT = { knight: '성방패', ranger: '화살비', sorcerer: '블리자드', cleric: '천상치유', assassin: '그림자' };
 const PICK_RING_C = 2 * Math.PI * 17; // pick-ring 원 둘레(반지름 17)
 
 const txt = (el, s) => { if (el._t !== s) { el._t = s; el.textContent = s; } };
@@ -88,7 +90,9 @@ const SPELL_ICON = {
   babyDragon: spI('<path d="M6 30c2-10 10-16 20-16l4-8 3 9c6 2 10 7 10 13l-6-2c0 7-6 12-14 12S8 36 6 30z"/><circle cx="32" cy="24" r="2.8" fill="#22163a" stroke="none"/><path d="M14 22 6 12l12 4z"/>'),
   stoneGolem: spI('<rect x="8" y="8" width="32" height="32" rx="8" fill="#b8b0a4"/><rect x="14" y="18" width="7" height="6" rx="2" fill="#ffd23a"/><rect x="27" y="18" width="7" height="6" rx="2" fill="#ffd23a"/><path d="M16 32h16M24 8l-3 7" fill="none"/>'),
 };
-const spellIcon = (key, el) => SPELL_ICON[key] || elementIcon(el);
+// 카드·칩·도감은 그린 엠블럼(art/emblems.js)을 쓴다. 없으면 예전 선 아이콘
+const spellIcon = (key, el) => emblemImg(key) || SPELL_ICON[key] || elementIcon(el);
+const synIcon = key => emblemImg(key) || SYN_ICON[key] || '';
 const classIcon = cls => CLASS_ICON[cls] || '';
 const SPARK_ICON = svg(24, '<path d="M12 1l2.4 8.6L23 12l-8.6 2.4L12 23l-2.4-8.6L1 12l8.6-2.4z" fill="currentColor"/>');
 // AI 동료 마법사(청록·냉기 계열) — 로봇 이모지 대신 지팡이+서리 아이콘
@@ -120,8 +124,8 @@ export function createUI(root, handlers = {}) {
   for (const id of [
     'stage-wrap', 'panel', 'title', 'hud-gold', 'gold', 'stage-no', 'theme-name', 'wave', 'wave-text', 'gems',
     'btn-menu', 'menu-new', 'mana', 'spell-row',
-    'toasts', 'clear', 'clear-stage', 'clear-gems', 'badge-flawless', 'badge-first', 'btn-next',
-    'defeat', 'defeat-stage', 'defeat-tip', 'defeat-kills', 'defeat-prog', 'defeat-rec', 'btn-retry', 'btn-prev', 'end-codex', 'end-hero',
+    'toasts', 'clear', 'clear-stage', 'clear-gems', 'clear-gold', 'clear-xp', 'clear-drops', 'badge-flawless', 'badge-first', 'btn-next',
+    'defeat', 'defeat-stage', 'defeat-tip', 'defeat-kills', 'defeat-prog', 'defeat-rec', 'btn-retry', 'btn-rec-retry', 'btn-prev', 'end-codex', 'end-hero',
     'pick', 'pick-ring', 'pick-ring-fg', 'pick-ring-n', 'pick-cards', 'pick-reroll', 'pick-reroll-n',
     'btn-hero', 'hb-portrait', 'hb-lv', 'hb-pow', 'hb-new',
     'hero-status', 'hero-icon', 'hero-title', 'hero-lv', 'hero-hp-fill', 'hero-down', 'sk-heroult', 'heroult-ico', 'heroult-name',
@@ -129,7 +133,7 @@ export function createUI(root, handlers = {}) {
     'upgrades', 'btn-start', 'start-sub', 'title-ver', 'codex-count', 'codex-fill', 'codex-list', 'codex-list-fusion',
     'ctab-hidden', 'ctab-fusion', 'shop-gems', 'shop-list',
     'set-ver', 'btn-check-update', 'btn-reset', 'reset-confirm', 'btn-reset-yes', 'btn-reset-no',
-    'off-time', 'off-gold', 'btn-claim', 'm-ending', 'upd-h', 'upd-size', 'upd-notes', 'btn-upd-now', 'btn-upd-later',
+    'off-time', 'off-art', 'off-gold', 'btn-claim', 'm-ending', 'upd-h', 'upd-size', 'upd-notes', 'btn-upd-now', 'btn-upd-later',
     'btn-open-settings', 'upd-progress', 'upd-progress-text', 'upd-progress-fill',
   ]) {
     E[id] = $(id);
@@ -211,10 +215,11 @@ export function createUI(root, handlers = {}) {
 
   // ── 상단 HUD ──
   on(E['btn-menu'], 'click', () => openModal('m-menu'));
-  const panels = { codex: openCodex, shop: openShop, settings: openSettings };
+  const panels = { codex: openCodex, shop: openShop, settings: openSettings, hero: () => H.onOpenHero?.() };
   for (const b of root.querySelectorAll('[data-open]')) {
     on(b, 'click', () => {
       if (b.closest('#m-menu')) closeModal('m-menu');
+      for (const id of ['m-codex', 'm-shop', 'm-settings']) if (isOpen(id)) closeModal(id); // 패널은 한 번에 하나(겹쳐 쌓지 않음)
       panels[b.dataset.open]?.();
     });
   }
@@ -330,7 +335,7 @@ export function createUI(root, handlers = {}) {
     if (heroUlt.cls !== h.cls) {
       heroUlt.cls = h.cls;
       html(E['heroult-ico'], classIcon(h.cls));
-      txt(E['heroult-name'], (HERO_CLASSES[h.cls]?.ult.name || '궁극기').slice(0, 4));
+      txt(E['heroult-name'], ULT_SHORT[h.cls] || (HERO_CLASSES[h.cls]?.ult.name || '궁극기').slice(0, 4)); // 원 버튼에 맞는 짧은 이름
     }
     const cls = HERO_CLASSES[h.cls] || HERO_CLASSES.knight;
     const down = h.state === 'down';
@@ -476,6 +481,7 @@ export function createUI(root, handlers = {}) {
   }
 
   function openPick(pick) {
+    clearTimeout(pickResolveTimer); // 앞 카드의 닫힘 타이머가 새 카드를 닫지 않게
     pickOpen = true; pickClosing = false;
     hideSpellTip();
     const n = pick.cards.length;
@@ -490,10 +496,12 @@ export function createUI(root, handlers = {}) {
       html(c.ico, spellIcon(card.spell, sp.element));
       txt(c.name, sp.name);
       c.pips.forEach((p, pi) => p.classList.toggle('on', pi < card.level));
-      txt(c.desc, sp.desc[card.level - 1]);
+      const dsc = sp.desc[card.level - 1] || '';
+      txt(c.desc, dsc);
+      c.desc.classList.toggle('long', dsc.length > 30); // 고정 칸에 맞춰 한 단계 작게
       txt(c.rar, { common: '일반', rare: '희귀', legend: '전설' }[card.rarity] || '일반');
       c.tag.hidden = false;
-      if (card.level > 1) { c.tag.className = 'pc-tag up'; txt(c.tag, 'Lv' + card.level); }
+      if (card.level > 1) { c.tag.className = 'pc-tag up'; txt(c.tag, `Lv${card.level - 1} → ${card.level}`); }
       else { c.tag.className = 'pc-tag'; txt(c.tag, 'NEW'); }
       c.spark.hidden = !card.fusionHint;
       c.b.setAttribute('aria-label', `${sp.name}, ${card.level > 1 ? 'Lv' + card.level + ' 강화' : '새 스킬'}. ${sp.desc[card.level - 1]}${card.fusionHint ? '. 무언가 일어날 것 같다…' : ''}`);
@@ -558,15 +566,27 @@ export function createUI(root, handlers = {}) {
   }
 
   // ── 클리어 · 패배 (보스 경고 배너는 render.js 캔버스 몫) ──
-  let clearTimer = 0, clearWait = false, endingPending = false;
+  let clearTimer = 0, clearWait = false, endingPending = false, clearDelay = 0, bossKillAt = -1e9;
+  // 클리어 보상 패널: 이번 판에 번 골드·떨어진 장비를 모은다(스테이지가 바뀌면 리셋)
+  let runStage = -1, runGold = 0;
+  const runDrops = [];
   function showClear(v) {
     const r = v.result;
     if (!r) return;
     clearTimeout(clearTimer);
     E.defeat.hidden = true;
-    txt(E['clear-stage'], `${v.stage}층 클리어`);
+    txt(E['clear-stage'], `${v.stage}층 돌파!`);
     stars.forEach((s, i) => { s.className = i < r.stars ? 'star on' : 'star'; });
     txt(E['clear-gems'], fmt(r.gems?.[0] ?? 0));
+    txt(E['clear-gold'], '+' + fmt(runGold));
+    const cls = v.hero?.cls;
+    E['clear-xp'].parentElement.hidden = !cls;
+    if (cls) txt(E['clear-xp'], '+' + fmt(heroClearXp(v.stage, !!r.firstClear)));
+    const RK = ['common', 'uncommon', 'rare', 'epic', 'legend'];
+    const drops = runDrops.slice().sort((a, b) => RK.indexOf(b.rarity) - RK.indexOf(a.rarity)).slice(0, 6);
+    E['clear-drops'].innerHTML = drops.map((it, i) => `<span class="k-slot cr-drop" data-r="${it.rarity}" style="--i:${i}"><img src="${itemIconURL(it.slot, it.rarity, cls || 'knight', 96)}" alt="${it.name}" draggable="false"></span>`).join('')
+      + (runDrops.length > 6 ? `<span class="cr-more num">+${runDrops.length - 6}</span>` : '');
+    E['clear-drops'].hidden = !drops.length;
     E['badge-flawless'].hidden = !r.flawless;
     E['badge-first'].hidden = !r.firstClear;
     clearWait = !meta.autoNext;
@@ -590,6 +610,8 @@ export function createUI(root, handlers = {}) {
 
   function showDefeat(stage) {
     hideClear(false);
+    const di = root.querySelector('#defeat-icon');
+    if (di && !di.querySelector('.em')) di.innerHTML = emblemImg('wallBroken');
     txt(E['defeat-stage'], `${stage}층 방어 실패`);
     const pr = view?.progress, tot = pr?.total || 0, kd = Math.min(pr?.killed || 0, tot);
     txt(E['defeat-kills'], `${kd}/${tot}`);
@@ -601,6 +623,9 @@ export function createUI(root, handlers = {}) {
     for (const o of upg) o.b.classList.toggle('is-rec', o === rec);
     E['defeat-rec'].hidden = !rec;
     if (rec) E['defeat-rec'].innerHTML = `${icon(rec.key)}<span>추천: <b>${rec.name}</b> 강화하고 재도전!</span>`;
+    defeatRec = rec;
+    E['btn-rec-retry'].hidden = !rec; // 한 번에: 추천 강화 1회 + 재도전 (가장 흔한 다음 행동을 버튼 하나로)
+    if (rec) E['btn-rec-retry'].innerHTML = `${icon(rec.key)}<span>${rec.name} 강화 + 재도전</span>`;
     txt(E['defeat-tip'], TIPS[Math.floor(Math.random() * TIPS.length)]);
     E['btn-prev'].disabled = stage <= 1;
     E.defeat.hidden = false;
@@ -608,6 +633,8 @@ export function createUI(root, handlers = {}) {
   }
   const clearRec = () => { for (const o of upg) o.b.classList.remove('is-rec'); };
   on(E['btn-retry'], 'click', () => { E.defeat.hidden = true; clearRec(); H.onRetry?.(); });
+  let defeatRec = null;
+  on(E['btn-rec-retry'], 'click', () => { if (defeatRec) H.onUpgrade?.(defeatRec.key); E.defeat.hidden = true; clearRec(); H.onRetry?.(); });
   on(E['btn-prev'], 'click', () => { E.defeat.hidden = true; clearRec(); H.onPrevStage?.(); });
 
   function openEnding() {
@@ -656,7 +683,7 @@ export function createUI(root, handlers = {}) {
       const f = FUSION_BY_KEY[c.s.key];
       if (known && f) {
         const [a, b] = f.elements;
-        html(c.ico, SPARK_ICON);
+        html(c.ico, synIcon(c.s.key));
         c.ico.style.background = `linear-gradient(135deg, var(--elc-${a}) 50%, var(--elc-${b}) 50%)`;
         txt(c.tag, `${ELEMENT_NAME[a]}+${ELEMENT_NAME[b]}`);
       } else {
@@ -665,7 +692,7 @@ export function createUI(root, handlers = {}) {
         txt(c.tag, '');
       }
     } else {
-      html(c.ico, known ? SYN_ICON[c.s.key] : '?');
+      html(c.ico, synIcon(c.s.key)); // 잠김 = 같은 그림의 어두운 실루엣(CSS) — 무엇이 숨어 있는지 궁금하게
       txt(c.tag, KIND_TAG[c.s.kind] ?? '');
     }
     return known;
@@ -703,7 +730,8 @@ export function createUI(root, handlers = {}) {
   }
 
   // ── 보석 상점 ──
-  E['shop-list'].innerHTML = PERKS.map(p => `<div class="perk"><div class="perk-icon" aria-hidden="true">${PERK_ICON[p.key]}</div>`
+  root.querySelector('#shop-art').innerHTML = emblemImg('gems');
+  E['shop-list'].innerHTML = PERKS.map(p => `<div class="perk"><div class="perk-icon" aria-hidden="true">${emblemImg(p.key) || PERK_ICON[p.key]}</div>`
     + `<div class="perk-body"><div class="perk-name">${p.name} <span class="perk-lv num"></span></div>`
     + `<div class="perk-desc">${p.desc}</div><div class="perk-fx"></div></div>`
     + `<button class="k-btn s secondary gem-btn">${icon('gem')}<b></b></button></div>`).join('');
@@ -714,7 +742,7 @@ export function createUI(root, handlers = {}) {
       el.animate(BUMP_SOFT, bumpOpts);
       H.onBuyPerk?.(p.key);
     });
-    return { p, btn, lv: el.querySelector('.perk-lv'), fx: el.querySelector('.perk-fx'), cost: btn.querySelector('b') };
+    return { p, el, btn, lv: el.querySelector('.perk-lv'), fx: el.querySelector('.perk-fx'), cost: btn.querySelector('b') };
   });
   let shopKey = '';
   function renderShop() {
@@ -723,10 +751,17 @@ export function createUI(root, handlers = {}) {
     if (key === shopKey) return;
     shopKey = key;
     txt(E['shop-gems'], fmt(gems));
+    // '추천' = 아직 최대가 아닌 퍼크 중 가장 싼 것(같으면 먼저 나온 것)
+    let best = null, bestCost = Infinity;
+    for (const r of perkRows) { const lv = perks[r.p.key] | 0; if (lv < perkMax(r.p.key) && perkCost(r.p.key, lv) < bestCost) { bestCost = perkCost(r.p.key, lv); best = r; } }
     for (const r of perkRows) {
+      r.el.classList.toggle('best', r === best);
       const k = r.p.key, lv = perks[k] | 0, max = perkMax(k), isMax = lv >= max, cost = perkCost(k, lv);
       txt(r.lv, `Lv.${lv}/${max}`);
-      txt(r.fx, isMax ? `${perkDisplay(k, lv)} (최대)` : `${perkDisplay(k, lv)} → ${perkDisplay(k, lv + 1)}`);
+      // 현재 → 다음 을 두 칩으로(칩 안에서는 줄바꿈 없음 — 값이 어색하게 쪼개지지 않게)
+      const esc = t => String(t).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
+      html(r.fx, isMax ? `<span class="fx-chip max">${esc(perkDisplay(k, lv))} · 최대</span>`
+        : `<span class="fx-chip now">${esc(perkDisplay(k, lv))}</span><i class="fx-arrow" aria-hidden="true"></i><span class="fx-chip next">${esc(perkDisplay(k, lv + 1))}</span>`);
       txt(r.cost, isMax ? 'MAX' : fmt(cost));
       r.btn.disabled = isMax || gems < cost;
       r.btn.setAttribute('aria-label', isMax ? `${r.p.name} 최대 레벨` : `${r.p.name} 강화, 보석 ${cost}개`);
@@ -785,11 +820,43 @@ export function createUI(root, handlers = {}) {
     const h = Math.floor(minutes / 60), m = minutes % 60;
     const capped = minutes >= OFFLINE_CAP_HOURS * 60 ? ' (최대)' : '';
     txt(E['off-time'], `${h ? h + '시간 ' : ''}${m ? m + '분' : ''}${capped} 동안 황금 곡괭이가 골드를 모았어요!`);
-    txt(E['off-gold'], fmt(gold));
+    if (!E['off-art'].firstChild) E['off-art'].innerHTML = emblemImg('treasure');
+    countUp(E['off-gold'], gold, 900);
+    offGold = gold;
     openModal('m-offline', () => onClaim?.());
   }
+  let offGold = 0;
   E['btn-claim'].dataset.autofocus = '';
-  on(E['btn-claim'], 'click', () => closeModal('m-offline'));
+  on(E['btn-claim'], 'click', () => { coinFountain(E['btn-claim'], E['hud-gold'], Math.min(16, 6 + Math.floor(Math.log10(1 + offGold) * 2))); closeModal('m-offline'); });
+  // 숫자 카운트업(보상 화면, ease-out)
+  function countUp(el, to, ms) {
+    const t0 = performance.now();
+    const tick = now => {
+      const u = Math.min(1, (now - t0) / ms), e = 1 - (1 - u) ** 3;
+      txt(el, fmt(Math.round(to * e)));
+      if (u < 1 && el.isConnected) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
+  // 받기 → 동전 분수가 골드 알약으로 날아가 꽂힌다(곡선 · 스태거)
+  function coinFountain(from, to, n) {
+    const a = from.getBoundingClientRect(), b = to.getBoundingClientRect(), host = root.getBoundingClientRect();
+    if (!a.width || !b.width || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const x0 = a.left + a.width / 2 - host.left, y0 = a.top + a.height / 2 - host.top, x1 = b.left + 18 - host.left, y1 = b.top + b.height / 2 - host.top;
+    for (let i = 0; i < n; i++) {
+      const c = document.createElement('span');
+      c.className = 'fly-coin coin';
+      root.appendChild(c);
+      const sx = x0 + (Math.random() - 0.5) * 60, peak = y0 - 60 - Math.random() * 90, mx = (sx + x1) / 2 + (Math.random() - 0.5) * 80;
+      c.animate([
+        { transform: `translate(${x0}px,${y0}px) scale(.4)`, opacity: 0 },
+        { transform: `translate(${sx}px,${peak}px) scale(1.1)`, opacity: 1, offset: 0.3 },
+        { transform: `translate(${mx}px,${(peak + y1) / 2}px) scale(1)`, opacity: 1, offset: 0.62 },
+        { transform: `translate(${x1}px,${y1}px) scale(.6)`, opacity: 0.9 },
+      ], { duration: 650 + i * 20, delay: i * 45, easing: 'cubic-bezier(.45,0,.55,1)', fill: 'both' });
+      setTimeout(() => { c.remove(); if (i === n - 1) bump(to); }, 700 + i * 65); // 끝나면 정리(애니메이션이 멈춘 창에서도)
+    }
+  }
 
   // ── 업데이트 ──
   E['btn-upd-now'].dataset.autofocus = '';
@@ -866,7 +933,7 @@ export function createUI(root, handlers = {}) {
         // 보스 WARNING·컷인이 끝난 뒤 카드가 뜨게 잠깐 기다린다(최대 1.6초 — 자동 선택 3초 안에 카드를 볼 수 있게)
         const now = performance.now();
         if (pickWaitRef !== v.pick) { pickWaitRef = v.pick; pickWaitT = now; }
-        if (momentLeft() <= 0.3 || now - pickWaitT > 1600) { pickRef = v.pick; openPick(v.pick); }
+        if (momentLeft() <= 0.15 || now - pickWaitT > 4000) { pickRef = v.pick; openPick(v.pick); }
       } else syncPickRing(v.pick);
     } else { pickRef = null; pickWaitRef = null; if (pickOpen && !pickClosing) hidePick(); } // 이벤트 없이 사라진 경우(재도전 등) 방어적으로 즉시 닫음
     syncReroll(v.rerollLeft | 0);
@@ -893,7 +960,7 @@ export function createUI(root, handlers = {}) {
     updateHeroUlt(v.heroUnit);
 
     html(E['p2-icon'], pa.kind === 'bot' ? AI_ICON : (KIND_ICON[pa.kind] ?? PERSON_ICON));
-    txt(E['p2-name'], pa.kind === 'bot' ? 'AI 동료 마법사' : pa.name);
+    txt(E['p2-name'], pa.kind === 'bot' ? 'AI 동료' : pa.name);
     txt(E['p2-gold'], fmt(pa.gold));
     let lvSum = 0;
     for (const key in pa.lv) lvSum += pa.lv[key];
@@ -901,10 +968,10 @@ export function createUI(root, handlers = {}) {
     const synKey = (pa.syn || []).join() + '|' + (v.duo || []).join();
     if (synKey !== p2Syn) {
       p2Syn = synKey;
-      const synIcon = key => `<span title="${SYN_BY_KEY[key]?.name ?? ''}" aria-label="${SYN_BY_KEY[key]?.name ?? ''}">${SYN_ICON[key] ?? ''}</span>`;
+      const synChip = key => `<span title="${SYN_BY_KEY[key]?.name ?? ''}" aria-label="${SYN_BY_KEY[key]?.name ?? ''}">${synIcon(key)}</span>`;
       const duo = (v.duo || []).filter(k => SYN_ICON[k]);
-      E['p2-syn'].innerHTML = (pa.syn || []).filter(k => SYN_ICON[k]).map(synIcon).join('')
-        + (duo.length ? `<span class="sep" aria-hidden="true">${icon('partner')}</span>` + duo.map(synIcon).join('') : '');
+      E['p2-syn'].innerHTML = (pa.syn || []).filter(k => SYN_ICON[k]).map(synChip).join('')
+        + (duo.length ? `<span class="sep" aria-hidden="true">${icon('partner')}</span>` + duo.map(synChip).join('') : '');
     }
 
     // 다른 경로로 다음 판이 시작되면 대기 중인 창 정리
@@ -923,7 +990,17 @@ export function createUI(root, handlers = {}) {
   function onEvents(events, v) {
     for (const ev of events) {
       switch (ev.type) {
-        case 'clear': showClear(v); break;
+        case 'clear': { // 보스를 쓰러뜨린 판은 격파 연출(보스 격파! · 폭발 · 드롭)이 먼저 보이고 1.2초 뒤 클리어
+          clearTimeout(clearDelay);
+          const boss = performance.now() - bossKillAt < 1500;
+          clearDelay = setTimeout(() => { if (v.phase === 'clear') showClear(v); }, boss ? 1200 : 350);
+          break;
+        }
+        case 'kill':
+          if (ev.isBoss) bossKillAt = performance.now();
+          if (v.stage !== runStage) { runStage = v.stage; runGold = 0; runDrops.length = 0; }
+          runGold += ev.gold || 0;
+          break;
         case 'defeat': showDefeat(ev.stage ?? v.stage); break;
         case 'upgrade': if (ev.o === 0) sparkle(ev.stat); break;
         case 'spellPick': resolvePick(ev.spell); break;
@@ -933,6 +1010,8 @@ export function createUI(root, handlers = {}) {
           break;
         }
         case 'loot': {
+          if (v.stage !== runStage) { runStage = v.stage; runGold = 0; runDrops.length = 0; }
+          if (ev.item) runDrops.push(ev.item);
           E['hb-new'].hidden = false;
           const hold = { common: 0.7, uncommon: 1, rare: 1.2, epic: 1.35, legend: 1.6 }[ev.item?.rarity] ?? 1; // render.js lootFx: 빛기둥 → 가방 비행
           setTimeout(() => bump(E['btn-hero']), (hold + 0.55) * 1000);

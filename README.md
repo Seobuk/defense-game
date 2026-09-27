@@ -47,7 +47,7 @@ public/index.html      화면 뼈대 · style.css
 public/js/main.js      부팅, 게임 루프(고정 1/60 스텝 × 배속, 히트스톱), 저장·업데이트 배선
 public/js/sim.js       순수 시뮬레이션 (DOM 없음, node에서 실행 가능)
 public/js/config.js    수치·공식 · stages.js 스테이지/적/보스 · bot.js 자동 강화/AI 동료
-public/js/render.js    캔버스 렌더러(층 순서·이벤트 분배) → js/art/ core · units(적·보스·영웅·마법사) · world(배경·성벽·드롭) · fx(이펙트·마법탄·데미지 숫자) · hud(보스바·콤보·컷인)
+public/js/render.js    캔버스 렌더러(층 순서·이벤트 분배) → js/art/ core · units(적·보스·영웅·마법사) · world(배경·성벽·드롭) · fx(이펙트·마법탄·데미지 숫자) · hud(보스바·콤보·컷인·조합 줄) · emblems(스킬·조합·퍼크 그린 엠블럼)
 public/css/           fonts.css(번들 글꼴) · kit.css(UI 키트)  ·  public/assets/ fonts · icons(SVG, js/icons.js)
 public/js/spells.js    판타지 스킬 14종 · 원소 융합 8종 효과 · hero.js 영웅 클래스/성장/장비(순수 함수)
 public/js/ui.js        DOM HUD·패널·모달·카드 선택 · heroui.js 영웅/장비 화면(hero.css) · save.js 저장/방치 보상 · audio.js WebAudio 효과음

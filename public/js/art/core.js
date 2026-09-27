@@ -35,15 +35,15 @@ export function bake(key, hw, hh, draw, res = S) {
 }
 
 // 같은 모양에 색만 덮은 변형 (흰 번쩍임, 빙결, 색수차 등)
-export function tint(src, key, color, a) {
-  return bake(key, src.hw, src.hh, x => {
+export function tint(src, key, color, a) { // 원본과 같은 해상도로 굽는다(해상도가 다르면 잘려 사각형처럼 보이던 버그)
+  return bake(key + '|' + src.width, src.hw, src.hh, x => {
     x.setTransform(1, 0, 0, 1, 0, 0);
-    x.drawImage(src, 0, 0);
+    x.drawImage(src, 0, 0, x.canvas.width, x.canvas.height);
     x.globalCompositeOperation = 'source-atop';
     x.globalAlpha = a;
     x.fillStyle = color;
-    x.fillRect(0, 0, src.width, src.height);
-  });
+    x.fillRect(0, 0, x.canvas.width, x.canvas.height);
+  }, src.width / (src.hw * 2));
 }
 
 
@@ -174,7 +174,7 @@ export function decayCamera(dt) {
 // ═════════════ 공용 상수 · 이징 · 풀 ═════════════
 // UI 정렬용 월드 좌표: 장비 드롭이 날아가 꽂히는 영웅(가방) 버튼 / 마나 게이지가 가득 찰 때 반짝이는 위치
 // 세로로 긴 화면에선 DOM HUD가 월드 y=0 보다 topExtra 위에 있으므로 y는 getter (월드 좌표)
-export const BAG_POS = { x: 664, get y() { return 170 - topExtra; } };
+export const BAG_POS = { x: 652, get y() { return 170 - topExtra; } };
 export const MANA_POS = { x: 360, get y() { return 80 - topExtra; } };
 export const GOLD_POS = { x: CFG_GOLD.x, get y() { return CFG_GOLD.y - topExtra; } }; // 동전이 날아갈 골드 알약
 export const hudY = y => y - topExtra; // HUD(화면 위쪽) 기준 월드 y → 실제 월드 y

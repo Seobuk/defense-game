@@ -3,6 +3,7 @@ import { createGame, startStage, step, act, drainEvents, tickPick, refreshFusion
 import { DT, MAX_STAGE, SPEED3_UNLOCK, PERK_KEYS, perkCost, perkMax, cannonStats, UPGRADE_KEYS, SPELL_KEYS, SYNERGIES, WALL_Y, WORLD_W } from './config.js';
 import { MAX_HERO_LV, RARITY_KEYS, rollItem, addToBag } from './hero.js';
 import { createRenderer, fontsReady } from './render.js';
+import { simSlow } from './art/hud.js';
 import { createUI } from './ui.js';
 import { createHeroUI } from './heroui.js';
 import { createAudio } from './audio.js';
@@ -11,7 +12,7 @@ import * as updater from './updater.js';
 
 const HITSTOP_CAP = 500;          // ms
 const HITSTOP_SCALE = [1, 0.75, 0.5]; // 배속별 히트스톱 축소
-const NEXT_DELAY = 2400;          // 클리어 후 자동 진행까지(ms)
+const NEXT_DELAY = 3900;          // 클리어 후 자동 진행까지(ms) — 보상 패널을 볼 최소 시간(보스 판은 1.2초 늦게 뜬다)
 const SAVE_EVERY = 3000;
 const MAX_STEPS = 20;             // 한 프레임 최대 시뮬 스텝(큰 공백은 버림)
 const HUD_H = 90;                 // 전장 탭 무시: 월드 y < 90 은 상단 HUD
@@ -417,7 +418,7 @@ function frame(now) {
   const holding = now < stopUntil;
   if (dbgLoot && game.hero?.cls && game.phase === 'play' && !paused) { dropLoot(dbgLoot); dbgLoot = null; }
   if (!paused && !holding) {
-    acc += dt * game.speed;
+    acc += dt * game.speed * simSlow();
     let n = 0;
     while (acc >= DT && n < MAX_STEPS) { step(game, DT); acc -= DT; n++; }
     if (n >= MAX_STEPS) acc = 0;

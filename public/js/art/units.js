@@ -7,13 +7,14 @@ import { clamp } from '../util.js';
 import {
   TAU, INK, bake, tint, circ, ell, rrect, fs, rad, lin, poly, shine, mulberry, INK2, SKIN, RARITY_COL, TIER_RARITY,
   mix, lite, dim, cel, bakeO, tintOf, cache, S,
-  ctx, T, RT, frameNo, topExtra,
+  ctx, T, RT, frameNo, frameDt, topExtra, hudY,
   shake, flash, FONT, OWN, rnd, easeOut, easeBack, lerp, pool, take,
   wt, place, spr, put, txt, rr, additive, groundRune,
 } from './core.js';
 import {
   gl, part, burst, ring, sprPop, lightBeam, K_GLOW, K_SPARK, K_STAR, K_SMOKE, K_DEBRIS, MSTY,
   glyph, shadow, flame, bubble, ice, reticle, sparkle, rays, runeCircle, magicCore, curseSigil, shieldDome, lightWings,
+  numZone,
 } from './fx.js';
 
 export const MAGE_FEET = 1004;             // 성벽 위 마법사 발 위치(y)
@@ -788,9 +789,9 @@ const VARIANT = { w: ['#ffffff', 1], f: ['#a8e8ff', 0.55], r: ['#ff2050', 1], c:
 const HOME = { slime: 0, mushroom: 0, kingSlime: 0, goblin: 1, wolf: 1, goblinChariot: 1, skeleton: 2, boneThrower: 2, shieldSkel: 2, lichLord: 2, imp: 3, bomber: 3, magmaGolem: 3, demon: 4, wraith: 4, demonLord: 4, doomDragon: 4 };
 const KEY = [['#fff4c8', 1, 1], ['#bfe9ff', 1, 1], ['#d6ecff', 1, 1], ['#ffb46a', 0, -1.3], ['#e2c8ff', 1, 1]];
 const NAMED = { kingSlime: 1, goblinChariot: 1, lichLord: 1, magmaGolem: 1, demonLord: 1, doomDragon: 1 };
-// 시각 크기 (ART §3.4): 잡몹 ×1.4, 엘리트 ×1.5, 네임드 ×1.3 (최소 반경 110)
+// 시각 크기 (ART §3.4): 잡몹 ×1.7, 엘리트 ×1.75, 네임드 ×1.45 (최소 반경 124) — 보스는 화면을 채우는 존재감
 export function visR(e) {
-  return NAMED[e.type] && e.named !== false ? Math.max(e.r * 1.3, 110) : e.r * (e.elite ? 1.5 : 1.4);
+  return NAMED[e.type] && e.named !== false ? Math.max(e.r * 1.45, 124) : e.r * (e.elite ? 1.75 : 1.7);
 }
 const LINES = { n: [3.5, 2], e: [5, 3], b: [6.5, 3.5] };
 
@@ -842,7 +843,7 @@ function finish(x, draw, L, rim, rimW, shadeW) {
 export function enemy(type, r, v = 'n', cls, pose = 0) {
   const art = ART[type] ? type : 'unknown';
   cls = cls || (NAMED[art] ? 'b' : 'n');
-  const vr = cls === 'b' ? Math.max(r * 1.3, 110) : r * (cls === 'e' ? 1.5 : 1.4);
+  const vr = cls === 'b' ? Math.max(r * 1.45, 124) : r * (cls === 'e' ? 1.75 : 1.7); // visR 과 같게
   const rk = Math.max(4, Math.round(vr * 2) / 2);
   const key = `u:e|${art}|${rk}|${cls}|${pose}`;
   const n = cache.get(key) || bakeEnemy(key, art, rk, cls, pose);
@@ -870,7 +871,7 @@ const WINGS = {
   } },
 };
 function wingTex(type, r, cls) {
-  const W = WINGS[type], vr = cls === 'e' ? r * 1.5 : r * 1.4, rk = Math.round(vr * 2) / 2, u = rk / 100, [L, D] = LINES[cls];
+  const W = WINGS[type], vr = cls === 'e' ? r * 1.75 : r * 1.7, rk = Math.round(vr * 2) / 2, u = rk / 100, [L, D] = LINES[cls];
   return bake(`u:wg|${type}|${rk}|${cls}`, W.hw * u + L + 2, W.hh * u + L + 2, x => {
     finish(x, q => { q.scale(u, u); LW = D / u; W.draw(q); }, L, KEY[HOME[type] ?? 0], 2, 0);
   });
@@ -1500,31 +1501,64 @@ export function classIcon(cls) {
 
 // 장비 아이콘 (희귀도 타일 + 부위 그림)
 export function itemIcon(slot, rarity, cls, res, bare = false) {
-  const R = RARITY_COL[rarity] || RARITY_COL.common;
+  const R = RARITY_COL[rarity] || RARITY_COL.common, ri = Math.max(0, TIER_RARITY.indexOf(rarity));
   return bake(`it|${slot}|${rarity}|${cls}${res ? '|r' + res.toFixed(2) : ''}${bare ? '|b' : ''}`, 17, 17, x => {
-    if (bare) x.scale(1.35, 1.35); // DOM 칸(k-slot)이 등급 타일을 그리므로 그림만 크게
+    if (bare) x.scale(1.12, 1.12); // DOM 칸(k-slot)이 등급 타일을 그리므로 그림만 크게
     else {
       rrect(x, -15, -15, 30, 30, 7); fs(x, lin(x, 0, -15, 0, 15, [[0, R[1]], [0.5, R[0]], [0.52, dim(R[0], 0.12)], [1, R[2]]]), 2.6, INK2);
       rrect(x, -12, -12.5, 24, 3, 1.5); x.fillStyle = 'rgba(255,255,255,0.45)'; x.fill();
+      x.scale(0.8, 0.8); // 타일 안쪽에 들어가게
     }
-    const m = '#eef2f7';
+    // 등급이 오를수록 실루엣에 장식이 붙는다: 고급 = 등급색 포인트 · 희귀 = 보석 · 영웅 = 금 세공 · 전설 = 뒤 후광
+    if (ri >= 4) {
+      x.save(); x.globalAlpha = 0.9;
+      for (let k = 0; k < 8; k++) { x.rotate(Math.PI / 4); poly(x, [-1.6, -6, 0, -14.5, 1.6, -6]); x.fillStyle = '#fff0b8'; x.fill(); }
+      x.restore();
+    }
+    const metal = ri >= 3 ? '#fff0c8' : '#eef2f7', acc = ri >= 1 ? R[0] : '#b9c2d0', gold = '#ffc92e';
+    const gem = (cx, cy, r) => { if (ri < 2) return; circ(x, cx, cy, r); fs(x, rad(x, cx, cy, 0, r, [[0, '#ffffff'], [0.45, R[1]], [1, R[2]]], cx - r * 0.3, cy - r * 0.3), 1.2, INK2); };
     switch (slot) {
       case 'weapon':
         x.save(); x.rotate(cls === 'ranger' ? 0 : 0.75); x.scale(0.46, 0.46); x.translate(0, cls === 'ranger' ? 0 : 20);
         (WEAPON_ART[cls] || WEAPON_ART.knight)(x, R, rarity === 'common' ? 'rare' : rarity);
-        x.restore(); break;
-      case 'helm':
-        x.beginPath(); x.arc(0, 2, 10, Math.PI, 0); x.lineTo(10, 7); x.lineTo(5, 7); x.lineTo(5, 3); x.lineTo(-5, 3); x.lineTo(-5, 7); x.lineTo(-10, 7); x.closePath();
-        fs(x, cel(x, -10, -8, 10, 7, m), 2.2, INK2); break;
-      case 'armor':
-        x.beginPath(); x.moveTo(-10, -8); x.lineTo(-4, -10); x.quadraticCurveTo(0, -6, 4, -10); x.lineTo(10, -8); x.lineTo(8, 9); x.quadraticCurveTo(0, 12, -8, 9); x.closePath();
-        fs(x, cel(x, -10, -10, 10, 11, m), 2.2, INK2); break;
-      case 'trinket':
-        x.beginPath(); x.moveTo(-7, -10); x.lineTo(0, 1); x.lineTo(7, -10); x.lineWidth = 2; x.strokeStyle = '#ffd23a'; x.stroke();
-        circ(x, 0, 4, 6.5); fs(x, rad(x, 0, 4, 0, 6.5, [[0, '#ffffff'], [0.5, R[1]], [1, R[2]]], -2, 2), 2.2, INK2); break;
-      default:
-        x.beginPath(); x.moveTo(-6, -10); x.lineTo(6, -10); x.quadraticCurveTo(10, 0, 11, 10); x.quadraticCurveTo(0, 7, -11, 10); x.quadraticCurveTo(-10, 0, -6, -10); x.closePath();
-        fs(x, cel(x, -11, -10, 11, 10, dim(R[0], 0.1)), 2.2, INK2);
+        x.restore();
+        if (ri >= 3) { x.save(); x.globalAlpha = 0.85; poly(x, [9, -12, 10.5, -9, 14, -8, 10.5, -7, 9, -4, 7.5, -7, 4, -8, 7.5, -9]); x.fillStyle = '#ffffff'; x.fill(); x.restore(); }
+        break;
+      case 'helm': { // 투구: 깃털 장식 + 둥근 투구 + 면갑 틈
+        x.beginPath(); x.moveTo(-1, -9); x.bezierCurveTo(4, -17, 12, -15, 14, -8); x.bezierCurveTo(9, -11, 6, -9, 4, -6); x.closePath();
+        fs(x, cel(x, -1, -17, 14, -6, acc), 1.8, INK2);
+        x.beginPath(); x.arc(0, 1, 10.5, Math.PI, 0); x.lineTo(10.5, 8); x.quadraticCurveTo(0, 12, -10.5, 8); x.closePath();
+        fs(x, cel(x, -10, -9, 10, 11, metal), 2.2, INK2);
+        rrect(x, -9, 1, 18, 4.4, 2); fs(x, '#3a3450', 1.4, INK2);
+        x.beginPath(); x.moveTo(0, -9); x.lineTo(0, 1); x.lineWidth = 1.6; x.strokeStyle = ri >= 3 ? gold : 'rgba(80,90,110,0.7)'; x.stroke();
+        gem(0, 8.5, 2.4);
+        shine(x, -5, -4, 2.8, 1.4, -0.6, 0.8);
+        break;
+      }
+      case 'armor': { // 흉갑: 어깨 보호대 2 + 몸통 + 복부 판
+        for (const d of [-1, 1]) { circ(x, d * 10, -6, 5.5); fs(x, cel(x, d * 10 - 5, -11, d * 10 + 5, -1, acc), 1.8, INK2); }
+        x.beginPath(); x.moveTo(-8, -10); x.quadraticCurveTo(0, -6, 8, -10); x.lineTo(8.5, 5); x.quadraticCurveTo(0, 13, -8.5, 5); x.closePath();
+        fs(x, cel(x, -8, -10, 8, 12, metal), 2.2, INK2);
+        x.lineWidth = 1.3; x.strokeStyle = ri >= 3 ? gold : 'rgba(80,90,110,0.65)';
+        x.beginPath(); x.moveTo(0, -7); x.lineTo(0, 9); x.moveTo(-6.5, 2); x.quadraticCurveTo(0, 5, 6.5, 2); x.stroke();
+        gem(0, -3, 2.6);
+        shine(x, -4, -6, 2.4, 1.2, -0.6, 0.8);
+        break;
+      }
+      case 'trinket': { // 목걸이: 금 사슬 + 테두리 받침 + 보석
+        x.beginPath(); x.moveTo(-8, -12); x.quadraticCurveTo(-7, -2, 0, 0); x.quadraticCurveTo(7, -2, 8, -12); x.lineWidth = 2; x.strokeStyle = gold; x.stroke();
+        circ(x, 0, 5, 8); fs(x, cel(x, -8, -3, 8, 13, gold), 2, INK2);
+        circ(x, 0, 5, 5.2); fs(x, rad(x, 0, 5, 0, 5.2, [[0, '#ffffff'], [0.45, R[1]], [1, R[2]]], -1.6, 3.4), 1.4, INK2);
+        if (ri >= 3) for (const d of [-1, 1]) { circ(x, d * 8.5, 5, 1.6); x.fillStyle = '#fff6c8'; x.fill(); }
+        break;
+      }
+      default: { // 망토: 걸쇠 + 펄럭이는 자락(물결 밑단) + 안감
+        x.beginPath(); x.moveTo(-6, -11); x.lineTo(6, -11); x.quadraticCurveTo(10, 0, 12, 10); x.quadraticCurveTo(8, 7, 5, 11); x.quadraticCurveTo(1, 7, -2, 11); x.quadraticCurveTo(-6, 7, -9, 11); x.quadraticCurveTo(-10, 0, -6, -11); x.closePath();
+        fs(x, cel(x, -12, -11, 12, 11, ri >= 1 ? dim(R[0], 0.12) : '#8a8fa8'), 2.2, INK2);
+        x.beginPath(); x.moveTo(4, -9); x.quadraticCurveTo(8, 0, 9, 8); x.lineWidth = 2; x.strokeStyle = ri >= 1 ? R[1] : '#c8ccd8'; x.stroke();
+        rrect(x, -7, -13, 14, 4, 2); fs(x, ri >= 3 ? gold : '#b9c2d0', 1.6, INK2);
+        circ(x, 0, -11, 2.6); fs(x, ri >= 2 ? R[1] : '#eef2f7', 1.4, INK2);
+      }
     }
   }, res);
 }
@@ -1532,29 +1566,56 @@ export function itemIcon(slot, rarity, cls, res, bare = false) {
 // ═════════════ 전장 그리기 ═════════════
 export function visOf(e) {
   let v = vis.get(e.id);
-  if (!v) { v = { pop: e.y > 0 ? 0 : 1, punch: 0, chroma: -1, fl: 0, lastH: 0, seen: 0, hpv: e.hp + (e.shield || 0), hitD: 0, age: 0, top: e.y <= 0, landed: false }; vis.set(e.id, v); }
+  if (!v) { v = { pop: e.y > 0 && !e.named ? 0 : 1, punch: 0, chroma: -1, fl: 0, lastH: 0, seen: 0, hpv: e.hp + (e.shield || 0), hitD: 0, age: 0, top: !e.named, landed: false, intro: e.named ? 0 : 1, flT: -1 }; vis.set(e.id, v); }
   v.seen = frameNo;
   return v;
 }
 
-// ── 네임드 보스 시각 위치 (ART §3.4, §10.10) — 판정 좌표(e.y)는 그대로, 그림만 HUD 아래(y 300~420)로 내린다 ──
-// ref = sim 기준 y, off = 시각 오프셋. 멈춰 서는 보스는 등장하며 오프셋이 차오르고(ramp), 걷는 보스는 ref 뒤로 fade 거리 동안 사라진다.
-// 오프셋은 시각 반경 안쪽으로 제한 → 마법탄이 그림의 윗부분에 맞는다(판정과 어긋나 보이지 않게)
-const BOSS_Y = { lichLord: { ref: 260, off: 80, ramp: 1 }, demonLord: { ref: 300, off: 45, ramp: 1 }, doomDragon: { ref: 170, off: 120, ramp: 1 }, kingSlime: { ref: 150, off: 150, fade: 450 } };
+// ── 네임드 보스 시각 위치 · 등장 (ART §3.4, §10.10) ──
+// 판정 좌표(e.y)는 그대로 두고 그림만 내린다: 보스 머리가 HUD·보스바·스킬 칩 줄(HUD 기준 y 176) 아래에 오도록
+// '바닥선'을 잡고, 등장 지점(Y0)~Y2 구간을 [바닥선, Y2]로 눌러 그린다(Y2 아래는 실제 위치 그대로 → 이음매 없음).
+// 이 공간 왜곡은 warpY()로 마법탄·타격·영웅·스킬 연출에도 똑같이 적용해 탄이 빈 곳에 맞는 것처럼 보이지 않게 한다.
+// 등장: 위에서 떨어져(0.6초) 착지 → 흔들림 + 먼지 링 + 포효 링 (드래곤은 날아 내려옴, 전차는 돌진이라 그대로).
+const BOSS_TOP = 232; // HUD 기준 y: 보스바(94~152) + 보스전 스킬 칩 줄(~196) 아래
+const WB = { on: false, x: 0, ey: 0, yv: 0, vr: 0, D: 0 }; // 이번 프레임 왜곡 기준 보스
+function stageDY(e) {
+  if (!e.named) return 0;
+  const v = visOf(e), vr = visR(e), floor = hudY(BOSS_TOP) + vr * 1.02, Y2 = floor + 230;
+  if (v.y0 === undefined) v.y0 = Math.min(e.y, floor - 1);
+  if (e.y >= Y2) return 0;
+  const yv = floor + (Y2 - floor) * clamp((e.y - v.y0) / (Y2 - v.y0), 0, 1);
+  return Math.max(0, yv - e.y);
+}
 export function bossDY(e) {
-  const b = e.named && BOSS_Y[e.type];
-  if (!b) return 0;
-  if (e.y < b.ref) {
-    if (!b.ramp) return b.off;
-    const t = clamp((e.y + e.r) / (b.ref + e.r), 0, 1);
-    return b.off * t * t * (3 - 2 * t);
-  }
-  return b.fade ? b.off * Math.max(0, 1 - (e.y - b.ref) / b.fade) : b.off;
+  if (!e.named) return 0;
+  const v = visOf(e), d = stageDY(e);
+  if (v.intro >= 1 || e.type === 'goblinChariot') return d;
+  const u = clamp(v.intro, 0, 1);
+  return d - (e.type === 'doomDragon' ? (1 - easeOut(u)) * 150 : (1 - u * u) * 110); // 짧게 떨어짐(가속) / 날아 내려옴(감속) — 보스바 위로는 안 올라감
+}
+// 보스 주변 점의 그려질 y (마법탄·타격·영웅 등). 보스에서 가로로 멀면 영향 없음
+export function warpY(x, y) {
+  if (!WB.on) return y;
+  const wx = clamp(1 - (Math.abs(x - WB.x) - WB.vr) / 140, 0, 1);
+  if (wx <= 0) return y;
+  const lo = WB.yv + WB.vr + 160;
+  if (y >= lo) return y;
+  const m = y <= WB.ey ? y + WB.D : WB.yv + (y - WB.ey) * (lo - WB.yv) / (lo - WB.ey);
+  return y + (m - y) * wx;
+}
+function setWarp(view) {
+  WB.on = false;
+  let best = null;
+  for (const e of view.enemies) if (e.named && !e.dead && (!best || e.r > best.r)) best = e;
+  if (!best) return;
+  const D = stageDY(best);
+  if (D < 1) return;
+  WB.on = true; WB.x = best.x; WB.ey = best.y; WB.D = D; WB.yv = best.y + D; WB.vr = visR(best);
 }
 function landFx(e, x, y, vr) { // 보스 착지: 흔들림 + 먼지 링 + 파편
   const fly = e.type === 'doomDragon';
   shake(fly ? 0.3 : 0.45);
-  ring(x, y, vr * 0.4, vr * 2.2, 0.6, fly ? '#ffd0a0' : '#e8dcc8', 10);
+  ring(x, y, vr * 0.4, vr * 1.3, 0.4, fly ? '#c89070' : '#a89478', 6); // 먼지 고리(흙빛, 낮은 알파)
   burst(K_SMOKE, x, y, 10, 60, 220, 1.0, 60, fly ? 'rgba(255,200,170,0.4)' : 'rgba(210,195,175,0.55)', -20, 1.6, 20);
   if (!fly) burst(K_DEBRIS, x, y - 10, 10, 160, 420, 0.8, 7, ['#8a7a6a', '#c8b8a0', '#5a4a3a'], 900, 0.5, 200);
 }
@@ -1625,16 +1686,22 @@ function drawPops() {
 }
 
 const FLY = { doomDragon: 70, wraith: 16, lichLord: 18 };
+const GOO_COL = { kingSlime: '#6fb6ff', goblinChariot: '#e0a060', lichLord: '#b27aff', magmaGolem: '#ff7a2a', demonLord: '#ff4060', doomDragon: '#ff6a4a' };
 export function drawEnemies(view) {
+  fadeTop = hudY(72);
+  setWarp(view);
   order.length = 0;
   for (const e of view.enemies) if (!e.dead && e.y + e.r * 2 > -60 - topExtra) order.push(e);
-  order.sort((a, b) => (a.type === 'doomDragon' ? 5000 : a.y) - (b.type === 'doomDragon' ? 5000 : b.y));
+  // 네임드 보스는 늘 맨 위(잡몹·엘리트가 얼굴을 덮지 않게), 보스와 겹친 잡몹은 흐리게(fadeA)
+  order.sort((a, b) => (a.named ? 5000 + a.y : a.y) - (b.named ? 5000 + b.y : b.y));
+  BB.on = false;
+  for (const e of order) if (e.named && (!BB.on || e.r > BB.r0)) { BB.on = true; BB.r0 = e.r; BB.x = e.x; BB.y = e.y + bossDY(e); BB.r = visR(e); }
   // 접지 그림자 (ART §3.2 7번)
   const sh = shadow();
   for (const e of order) {
     const fly = FLY[e.type] || 0, vr = visR(e), v = visOf(e);
     const w = vr * (fly ? 2.1 : 1.8) * (fly ? 0.9 + 0.1 * Math.sin(T * 2.4 + e.id) : 1);
-    ctx.globalAlpha = (fly ? 0.55 : 0.9) * fadeA(v);
+    ctx.globalAlpha = (fly ? 0.55 : 0.9) * fadeA(v, e);
     spr(sh, e.x, e.y + bossDY(e) + vr * (FEET[e.type] ?? 0.88) + fly * 0.5, w, w * 0.34);
   }
   ctx.globalAlpha = 1;
@@ -1643,7 +1710,7 @@ export function drawEnemies(view) {
   for (const e of order) {
     if (!e.elite) continue;
     const vr = visR(e);
-    ctx.globalAlpha = (0.55 + 0.25 * Math.sin(T * 5 + e.id)) * fadeA(visOf(e));
+    ctx.globalAlpha = (0.55 + 0.25 * Math.sin(T * 5 + e.id)) * fadeA(visOf(e), e);
     ctx.strokeStyle = '#ff3a4a';
     ctx.beginPath(); ctx.ellipse(e.x, e.y + vr * 0.88, vr * 0.95, vr * 0.3, 0, 0, TAU); ctx.stroke();
   }
@@ -1653,8 +1720,8 @@ export function drawEnemies(view) {
   for (const e of order) {
     if (!e.isBoss) continue;
     const col = e.named ? (e.type === 'doomDragon' && e.state === 'enrage' ? '#ff2020' : '#ff3a8a') : '#ff4a2a';
-    ctx.globalAlpha = (e.named ? 0.3 : 0.24) + 0.12 * Math.sin(T * 3 + e.id);
-    const s = visR(e) * (e.named ? 3.2 : 2.6);
+    ctx.globalAlpha = (e.named ? 0.16 : 0.14) + 0.05 * Math.sin(T * 3 + e.id); // 우윳빛 방지: 반경 ≤ 1.3배, 알파 ≤ 0.2
+    const s = visR(e) * 2.5;
     spr(gl(col), e.x, e.y + bossDY(e), s, s);
   }
   ctx.globalAlpha = 1;
@@ -1684,7 +1751,7 @@ export function drawEnemies(view) {
   drawEnemyMarks(view, order);
   // 체력바: 어두운 트랙 + 2단 채움 + 잉크 테 (네임드는 HUD 보스바)
   for (const e of order) {
-    if (e.named || !(e.hp < e.maxHp) || e.maxHp <= 0) continue;
+    if (e.named || !(e.hp < e.maxHp) || e.maxHp <= 0 || e.y < fadeTop + 30) continue;
     const vr = visR(e), w = e.isBoss ? vr * 1.5 : Math.max(34, vr * 1.5), h = e.isBoss ? 9 : 7;
     const x = e.x - w / 2, y = e.y - vr * 1.05 - 14;
     const r = clamp(e.hp / e.maxHp, 0, 1);
@@ -1697,7 +1764,10 @@ export function drawEnemies(view) {
   }
 }
 const HPC = [['#b6ff8a', '#3fcf4a'], ['#fff09a', '#f0b020'], ['#ffa08a', '#e8302a']];
-const fadeA = v => (v.top ? Math.min(1, v.age / 0.25) : 1); // 위 여분에서 걸어 들어올 때 페이드 인
+let fadeTop = 0; // 이 y(HUD 아래) 위의 잡몹은 흐리게 → HUD 알약 밑에서 걸어 나오며 나타난다
+const BB = { on: false, x: 0, y: 0, r: 0, r0: 0 }; // 이번 프레임 네임드 보스 시각 원
+const fadeA = (v, e) => (v.intro < 1 ? Math.min(1, v.intro * 4) : v.top && e ? clamp((e.y - fadeTop) / 40, 0, 1) : 1)
+  * (BB.on && e && !e.named && Math.abs(e.x - BB.x) < BB.r * 0.9 && Math.abs(e.y - BB.y) < BB.r ? 0.55 : 1);
 
 function drawBody(e) {
   const v = visOf(e);
@@ -1745,7 +1815,7 @@ function drawBody(e) {
   const blink = !rage && ((T + e.id * 0.37) % 3.4) < 0.13;
   const body = enemy(e.type, e.r, 'n', cls, rage ? 2 : blink ? 1 : 0);
   const hw = body.hw, hh = body.hh;
-  const fa = fadeA(v);
+  const fa = fadeA(v, e);
   ctx.globalAlpha = fa;
 
   if (e.type === 'doomDragon') { // 날개짓
@@ -1791,7 +1861,7 @@ function drawBody(e) {
     ctx.drawImage(ice(), -s / 2, -fo - s / 2 + vr * 0.12, s, s);
   }
   // 흰 번쩍임: 보스는 계속 맞아도 형체가 보이게 약하게, 큰 타격(punch)만 강하게
-  const fl = e.isBoss ? Math.max(h * 0.2, pu * 0.28) : Math.max(h * 0.85, pu * 0.6); // 보스는 옅은 틴트만 → 형체 유지
+  const fl = e.isBoss ? Math.max(h * 0.2, pu * 0.28) : Math.max(h * 0.4, pu * 0.36); // 흰 틴트 ≤ 40% → 연타에도 형체·색 유지
   if (e.state === 'fuse' && (T * 10) % 1 < 0.5) {
     ctx.globalAlpha = 0.7 * fa;
     ctx.drawImage(enemy(e.type, e.r, 'r', cls), bx, by, hw * 2, hh * 2);
@@ -1817,6 +1887,8 @@ function drawBody(e) {
     const g = golemGlow(vr);
     ctx.globalAlpha = e.state === 'cast' ? 1 : 0.3 + 0.3 * Math.sin(T * 3);
     ctx.drawImage(g, -g.hw, -g.hh - fo, g.hw * 2, g.hh * 2);
+    ctx.globalAlpha = 0.75 + 0.25 * Math.sin(T * 6); // 눈빛: 이글거리는 두 눈(표정)
+    for (const sd of [-1, 1]) spr(gl('#fff0a0'), sd * 11 * u, -fo - 80 * u, 26 * u * 2, 16 * u * 2);
   } else if (e.type === 'lichLord') {
     ctx.globalAlpha = 0.6 + 0.4 * Math.sin(T * 4);
     const s = vr * (e.state === 'cast' ? 1.4 : 0.8);
@@ -1862,15 +1934,12 @@ export function drawGroundFx(view) {
   if (h && hero && h.state !== 'down') {
     if ((h.cls || hero.cls) === 'knight') { // 도발 오라
       const R = (HERO_CLASSES.knight && HERO_CLASSES.knight.taunt) || 150;
+      // 바닥에 눕힌 옅은 룬 고리(원근) — 채운 빛 없음. 도발 범위 안에 적이 들어오면(끌어당길 때만) 잠깐 밝아진다
+      let pull = false;
+      for (const e of view.enemies) if (!e.dead && (e.x - h.x) ** 2 + (e.y - h.y) ** 2 < R * R) { pull = true; break; }
+      HF.taunt = clamp((HF.taunt || 0) + (pull ? 3 : -1.5) * frameDt, 0, 1);
       additive(true);
-      ctx.globalAlpha = 0.1 + 0.04 * Math.sin(RT * 3);
-      spr(gl('#ff9a4a'), h.x, h.y, R * 2.1, R * 2.1);
-      // 점선 원 대신 구운 룬 서클(가산, 천천히 회전)로 도발 범위 표시
-      const rc = runeCircle('#ffb060'), k = R / 31;
-      ctx.globalAlpha = 0.34 + 0.1 * Math.sin(RT * 3);
-      place(h.x, h.y, RT * 0.25, k, k);
-      ctx.drawImage(rc, -rc.hw, -rc.hh, rc.hw * 2, rc.hh * 2);
-      wt();
+      groundRune(runeCircle('#ffb060'), h.x, h.y + 14, R / 31, RT * 0.25, 0.13 + HF.taunt * (0.2 + 0.08 * Math.sin(RT * 6)));
       additive(false);
       ctx.globalAlpha = 1;
     }
@@ -1935,16 +2004,26 @@ export function drawGolem(view) {
 // 저주 낙인 + 기절 별 (적 위)
 function drawEnemyMarks(view, order) {
   const curse = !!(view.spells && view.spells.curseMark);
+  // 저주 낙인(전체 저주)은 잡몹 머리 위 문양 대신 발밑 보라 빛 웅덩이 — 떼 전체에 아이콘이 떠 어지럽지 않게.
+  // 머리 위 문양은 보스와 개별 저주(주황)만
+  const sig = e => e.cursed || e.isBoss;
+  const cg = gl('#b04dff');
   additive(true);
   for (const e of order) {
     if (!(curse || e.cursed)) continue;
-    ctx.globalAlpha = 0.45;
-    spr(gl(e.cursed && !curse ? '#ffb84a' : '#b04dff'), e.x, e.y + bossDY(e) - visR(e) * 1.15 - 16, 40, 40);
+    const vr = visR(e), fa = fadeA(visOf(e), e);
+    if (!sig(e)) {
+      ctx.globalAlpha = (0.42 + 0.12 * Math.sin(T * 3 + e.id)) * fa;
+      spr(cg, e.x, e.y + bossDY(e) + vr * (FEET[e.type] ?? 0.88), vr * 2.4, vr * 0.8);
+      continue;
+    }
+    ctx.globalAlpha = 0.45 * fa;
+    spr(gl(e.cursed && !curse ? '#ffb84a' : '#b04dff'), e.x, e.y + bossDY(e) - vr * 1.15 - 16, 40, 40);
   }
   additive(false);
   ctx.globalAlpha = 1;
   for (const e of order) {
-    if (!(curse || e.cursed)) continue;
+    if (!(curse || e.cursed) || !sig(e)) continue;
     const s = (e.isBoss ? 32 : 22) * (1 + 0.06 * Math.sin(T * 4 + e.id));
     place(e.x, e.y + bossDY(e) - visR(e) * 1.15 - 16 + Math.sin(T * 2.5 + e.id) * 2, Math.sin(T * 1.5 + e.id) * 0.2, 1, 1);
     const img = curseSigil(e.cursed ? '#ffae3a' : '#b04dff');
@@ -1975,7 +2054,7 @@ export function drawHero(view) {
   const tier = clamp(h.tier | 0, 0, 4);
   const body = heroBody(cls, tier, rar('armor'), rar('helm'));
   HF.body = body;
-  const face = h.facing < 0 ? -1 : 1, fx = h.x, fy = h.y + 14;
+  const face = h.facing < 0 ? -1 : 1, fx = h.x, fy = warpY(h.x, h.y) + 14; // 보스 등장 구간에선 보스와 같은 왜곡
   const down = h.state === 'down';
   const mv = Math.hypot(h.x - HF.lx, h.y - HF.ly);
   HF.lx = h.x; HF.ly = h.y;
@@ -2061,8 +2140,14 @@ export function drawHero(view) {
   if (wr === 'legend' && rnd() < 0.25) part(K_STAR, fx + face * 18 + (rnd() - 0.5) * 26, fy - 66 - rnd() * 40, 0, -40, 0.5, 10, '#ffe45a', 0, 1);
   // 무적 방패 돔
   if (h.invulnT > 0) {
-    ctx.globalAlpha = Math.min(1, h.invulnT * 3) * (0.8 + 0.2 * Math.sin(RT * 8));
-    spr(shieldDome(), fx, fy - 48, 170, 170);
+    const da2 = Math.min(1, h.invulnT * 3);
+    additive(true);
+    groundRune(runeCircle('#ffc94a'), fx, fy, 2.6, -RT * 0.8, 0.5 * da2);
+    additive(false);
+    ctx.globalAlpha = da2 * (0.85 + 0.15 * Math.sin(RT * 8));
+    place(fx, fy - 48, RT * 0.35, 1, 1);
+    spr(shieldDome(), 0, 0, 170, 170);
+    wt();
     ctx.globalAlpha = 1;
   }
   if (cls === 'cleric') { // 성직자 후광 링 (실루엣 표식)
@@ -2106,6 +2191,7 @@ function drawHeroDown(h, body, face, fx, fy) {
   txt(String(Math.ceil(left)), cx, cy + 1, 16, '#ffffff', '#22163a', 4);
 }
 function heroBar(h, x, y, cls) {
+  numZone('hero', x + 6, y + 4, 108, 30); // 영웅 체력바·Lv 위엔 데미지 숫자를 올리지 않는다
   const w = 56, bh = 8, r = h.hp < 0 ? 1 : clamp(h.hp / Math.max(1, h.maxHp), 0, 1); // hp -1 = 방금 생성(가득)
   ctx.fillStyle = 'rgba(20,12,36,0.85)';
   rr(x - w / 2 - 2, y - 2, w + 4, bh + 4, 5); ctx.fill();
@@ -2348,7 +2434,7 @@ export function events(view, evs, opts) {
         break;
       case 'heroRespawn':
         HF.pop = 0;
-        lightBeam(ev.x, 64, -40, ev.y + 16, 0.9, '#ffffff', '#ffd23a');
+        lightBeam(ev.x, 36, -40, ev.y + 16, 0.7, '#ffffff', '#ffd23a'); // 가는 빛줄기(짧게)
         ring(ev.x, ev.y, 10, 110, 0.5, '#ffe07a', 8);
         sprPop(runeCircle('#ffd23a'), ev.x, ev.y + 14, 0.6, 1.6, 0.8, Math.PI / 2, 2, 0.38);
         burst(K_STAR, ev.x, ev.y - 30, 14, 80, 260, 0.8, 16, ['#ffffff', '#ffe07a'], -60, 2);
@@ -2366,18 +2452,21 @@ export function update(view, da, dt) {
     const v = visOf(e);
     v.age += dt;
     if (v.pop < 1) v.pop = Math.min(1, v.pop + da * 4);
-    if (e.named && !v.landed && !e.dead) { // 보스 착지 연출 (ART §10.10)
-      const b = BOSS_Y[e.type];
-      if (b ? (b.ramp ? e.y >= b.ref - 1 : e.y > 0) : e.type === 'magmaGolem' ? e.state !== 'walk' : e.y > 60) {
+    if (e.named && !e.dead && v.intro < 1) { // 보스 등장: 떨어져 착지 (ART §10.10)
+      v.intro = Math.min(1, v.intro + dt / 0.6);
+      if (v.intro >= 1 && !v.landed) {
         v.landed = true;
-        if (e.type !== 'goblinChariot') landFx(e, e.x, e.y + bossDY(e) + visR(e) * (FEET[e.type] ?? 0.88), visR(e));
+        const vr = visR(e), fy = e.y + bossDY(e);
+        if (e.type !== 'goblinChariot') landFx(e, e.x, fy + vr * (FEET[e.type] ?? 0.88), vr);
+        ring(e.x, fy + vr * 0.5, vr * 0.5, vr * 1.35, 0.4, GOO_COL[e.type] || '#ff4a6a', 7); // 포효: 보스 색, 작게·짧게
+        flash(0.08, '#ff3050');
       }
     }
     if (v.punch > 0) v.punch = Math.max(0, v.punch - da * 7);
     if (v.chroma > -1) v.chroma -= dt;
     // 피격 번쩍임: 새로 맞을 때마다 켜졌다 빨리 꺼짐 (연타 중에도 형체가 보이게)
     const hT = e.hitT || 0;
-    if (hT > v.lastH + 0.005 && RT - (v.flT || 0) >= 0.12) { v.fl = 1; v.flT = RT; } // 적당 120ms에 한 번, 60ms만
+    if (hT > v.lastH + 0.005 && RT - v.flT >= 0.15) { v.fl = 1; v.flT = RT; } // 적당 150ms에 한 번, 60ms만
     v.lastH = hT;
     v.fl = Math.max(0, v.fl - da * 16);
     // 불타는 적: 불씨

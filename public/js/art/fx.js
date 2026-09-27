@@ -6,11 +6,11 @@ import { fmt, clamp } from '../util.js';
 import { BOSSES } from '../stages.js';
 import {
   TAU, S, bake, bakeO, circ, poly, rad, lin, fs, shine, lite, dim, mulberry, INK2, EL,
-  ctx, K, BX, BY, T, RT, topExtra, GOLD_POS,
+  ctx, K, BX, BY, T, RT, topExtra, GOLD_POS, hudY,
   shake, flash, punchZoom, colA, flashA, flashCol, MANA_POS, NUM_FONT, OWN, rnd, easeOut, lerp, pool, take,
   wt, ht, place, placeH, spr, additive, groundRune,
 } from './core.js';
-import { MF, HF, visOf, stuns, afterImage, MAGE_FEET, bone, visR, bossDY } from './units.js';
+import { MF, HF, visOf, stuns, afterImage, MAGE_FEET, bone, visR, bossDY, warpY } from './units.js';
 import { coins } from './world.js';
 import { stamp } from './hud.js';
 
@@ -64,7 +64,7 @@ let ghostPrev = new Map();        // 망령 객체 → 마지막 위치
 let healAcc = 0, healT = 0, lastWallHp = -1, lastWallMax = -1, lastPhase = '', lastStage = 0;
 let pickA = 0, manaWasFull = false, defeatA = 0;
 let numBudget = 0, numCap = 8, lastMode = 'full', numRef = 1; // numRef = 최근 큰 피해(상대 크기 기준, 천천히 줄어듦)
-let bossPresent = false, bossTicker = 0, bossShow = 0, bossTickT = 0; // 보스 누적 피해 티커(§6)
+let bossPresent = false, bossTicker = 0, bossShow = 0, bossTickT = 9, bossPunch = 0, bossE = null; // 보스 누적 피해 티커(§6)
 export const dmgMode = () => lastMode;
 
 // 빛 스프라이트 캐시 (색 → 구운 글로우, 문자열 키 생성·GC 줄임). 해상도가 바뀌면 resetGlows()
@@ -336,6 +336,32 @@ export function magicCore(core, main, edge) {
   });
 }
 
+// 마법탄 리본 꼬리 (§9.7 개정): 머리 +x 4, 꼬리 -60 로 가늘어지는 두 겹 리본(원소 메인 → 투명, 안쪽 흰 심). 가산
+export function missileTrail(main, core) {
+  return bake('f:mt|' + main + core, 64, 12, x => {
+    const rib = (w, c0, c1, a) => {
+      x.beginPath();
+      x.moveTo(6, 0); x.quadraticCurveTo(2, -w, -14, -w * 0.8); x.quadraticCurveTo(-40, -w * 0.4, -62, 0);
+      x.quadraticCurveTo(-40, w * 0.4, -14, w * 0.8); x.quadraticCurveTo(2, w, 6, 0);
+      x.globalAlpha = a;
+      x.fillStyle = lin(x, 6, 0, -62, 0, [[0, c0], [0.35, c1], [1, 'rgba(0,0,0,0)']]);
+      x.fill();
+    };
+    rib(11, main, main, 0.7);
+    x.scale(0.7, 1);
+    rib(4.5, '#ffffff', core, 0.75); // 흰 심은 머리 쪽 짧게
+    x.globalAlpha = 1;
+  }, Math.min(S, 2));
+}
+// 마법탄 백열 코어: 외곽선 없는 흰 심 → 코어색 → 투명 (가산)
+export function hotCore(core) {
+  return bake('f:hc|' + core, 12, 12, x => {
+    circ(x, 0, 0, 12);
+    x.fillStyle = rad(x, 0, 0, 0, 12, [[0, '#ffffff'], [0.38, '#ffffff'], [0.6, core], [1, 'rgba(0,0,0,0)']]);
+    x.fill();
+  }, Math.min(S, 2));
+}
+
 // 얼음 창 (+x 방향 결정)
 export function iceSpear() {
   return bake('icesp', 38, 11, x => {
@@ -424,14 +450,13 @@ export function slashArc(col) {
 }
 
 // 무적 방패 돔 (기사 궁극기)
-export function shieldDome() {
-  return bake('dome', 62, 62, x => {
+export function shieldDome() { // 성스러운 방패: 채움은 거의 없이(≤0.12) 테두리 룬 띠 + 옅은 육각 결 + 금빛 림 — 마법진 계열과 같은 손
+  return bake('dome2', 62, 62, x => {
     circ(x, 0, 0, 60);
-    x.fillStyle = rad(x, 0, 0, 20, 60, [[0, 'rgba(255,230,140,0.05)'], [0.8, 'rgba(255,215,90,0.28)'], [1, 'rgba(255,245,200,0.75)']]);
+    x.fillStyle = rad(x, 0, 0, 30, 60, [[0, 'rgba(255,230,140,0)'], [0.85, 'rgba(255,215,90,0.1)'], [1, 'rgba(255,240,190,0.3)']]);
     x.fill();
-    x.lineWidth = 3; x.strokeStyle = 'rgba(255,240,180,0.95)'; x.stroke();
-    x.save(); circ(x, 0, 0, 58); x.clip();
-    x.strokeStyle = 'rgba(255,230,150,0.45)'; x.lineWidth = 1.4;
+    x.save(); circ(x, 0, 0, 50); x.clip();
+    x.strokeStyle = 'rgba(255,230,150,0.2)'; x.lineWidth = 1.1;
     const s = 16, h = s * Math.sqrt(3) / 2;
     for (let row = 0, yy = -64; yy < 64; row++, yy += h) {
       for (let xx = -64 + (row % 2) * s * 0.75; xx < 64; xx += s * 1.5) {
@@ -441,7 +466,19 @@ export function shieldDome() {
       }
     }
     x.restore();
-    x.beginPath(); x.arc(0, 0, 50, Math.PI * 1.1, Math.PI * 1.45); x.lineWidth = 6; x.strokeStyle = 'rgba(255,255,255,0.8)'; x.stroke();
+    for (const [w, c, al] of [[5, '#ffc94a', 0.35], [2.2, '#ffd86a', 1], [0.9, '#ffffff', 0.9]]) { // 룬 띠
+      x.globalAlpha = al; x.strokeStyle = c; x.lineWidth = w;
+      circ(x, 0, 0, 59); x.stroke();
+      circ(x, 0, 0, 51); x.stroke();
+      x.lineWidth = w * 0.7;
+      for (let k = 0; k < 14; k++) {
+        const a2 = k * TAU / 14;
+        x.save(); x.translate(Math.cos(a2) * 55, Math.sin(a2) * 55); x.rotate(a2 + Math.PI / 2);
+        glyph(x, 0, 0, 2.6, k); x.restore();
+      }
+    }
+    x.globalAlpha = 1;
+    x.beginPath(); x.arc(0, 0, 45, Math.PI * 1.12, Math.PI * 1.42); x.lineWidth = 4; x.strokeStyle = 'rgba(255,255,255,0.55)'; x.stroke();
   }, Math.min(S, 1.5));
 }
 
@@ -492,37 +529,53 @@ export function ring(x, y, r0, r1, life, col, w) {
   r.x = x; r.y = y; r.r0 = r0; r.r1 = r1; r.life = r.max = life; r.col = col; r.w = w;
 }
 
-// 동시 표시 상한(§6): 넘치면 가장 오래된 일반(N) 숫자부터 제거해 자리를 만든다
 // ═════════════ 데미지 숫자 (ART §6) ═════════════
-// 규칙: 대상별로 0.15초 안 연타는 소유자와 무관하게 한 숫자로 합친다(굴러가는 숫자) · 화면에 최대 8개(간소 5) ·
-// 크기 = 등급(일반/치명/큰 치명) × 최근 최대 피해 대비 상대값 · 겹치면 실제 글자 폭으로 재서 위·옆 칸으로 밀기 ·
-// 상단 HUD/보스바/영웅 버튼 영역에는 절대 그리지 않음 · '!'는 치명만 · 받은 피해(성벽·영웅)는 빨강 '−'.
+// 규칙: 대상별로 0.15초 안 연타는 한 숫자로 합친다(굴러가는 숫자) · 화면에 최대 8개(간소 5) ·
+// 크기 = 등급(일반/치명/큰 치명) × 최근 최대 피해 대비 상대값 · 자리는 실제 글자 폭으로 재서 위·옆 칸 →
+// 빈 칸이 없으면 **겹쳐 그리지 않고 버린다** · 한 줄(±60)에 최대 4개 · 천장(HUD·보스바 아래)에 닿으면 멈춰 사라짐 ·
+// 헤드라인(LEVEL UP·전설 획득·보스 경고·영웅 머리 위) 금지 구역 · 화면 끝 44 안쪽 · '!'는 치명만 · 받은 피해는 빨강 '−'.
+// 글자는 숫자마다 오프스크린 캔버스에 한 번 구워 drawImage 로만 그린다(매 프레임 텍스트·그라데이션 없음).
 const NUM_PX = 26;                       // 기준 글자 크기(월드 px) — s 배율로 22~56
 const RANK_S = { N: 0.85, C: 1.2, B: 1.6, H: 0.9 }; // H = 받은 피해
+const NX0 = 44, NX1 = WORLD_W - 44;      // 좌우 안전선
 let bossBand = false;                    // 보스바가 떠 있으면 숫자 안전선이 더 아래
-const numTop = () => (bossBand ? 196 : 158) - topExtra;
-function numW(n) { ctx.font = `${NUM_PX}px ${NUM_FONT}`; return ctx.measureText(n.txt).width * n.s0 + 10; }
-function hitsAny(n, x, y, w, h) {
-  for (const o of NUMS) {
-    if (!o.on || o === n) continue;
-    const oh = NUM_PX * o.s0 * 0.95;
-    if (Math.abs(o.x - x) * 2 < o.w + w && Math.abs(o.y - y) * 2 < oh + h) return true;
-  }
+const numTop = () => (bossBand ? 204 : 162) - topExtra;
+const numH = n => NUM_PX * n.s0 * 1.1; // 테두리·팝 확대까지 포함한 칸 높이
+function numW(n) { ctx.font = `${NUM_PX}px ${NUM_FONT}`; return ctx.measureText(n.txt).width * n.s0 + 14; }
+// 금지 구역: 키별 사각형(중심 x,y · 폭 · 높이) + 남은 시간. 헤드라인을 그리는 쪽이 매 프레임 갱신한다
+const ZONES = new Map();
+export function numZone(key, x, y, w, h, life = 0.1) {
+  let z = ZONES.get(key);
+  if (!z) ZONES.set(key, z = {});
+  z.x = x; z.y = y; z.w = w; z.h = h; z.t = life;
+}
+function inZone(x, y, w, h) {
+  for (const z of ZONES.values()) if (z.t > 0 && Math.abs(z.x - x) * 2 < z.w + w && Math.abs(z.y - y) * 2 < z.h + h) return true;
   return false;
 }
-// 새 숫자 자리 잡기: 제자리 → 위 → 좌상/우상 → 더 위 … (실제 폭 기준, 영웅 버튼·화면 끝 피해서)
-function placeNum(n, x, y) {
-  const w = n.w, h = NUM_PX * n.s0 * 0.95, top = numTop() + h / 2;
-  const cand = [[0, 0], [0, -1], [-0.55, -0.5], [0.55, -0.5], [0, -2], [-0.55, -1.5], [0.55, -1.5], [0, -3], [-1.1, 0], [1.1, 0]];
-  let bx = x, by = y;
-  for (const [cx, cy] of cand) {
-    let px = x + cx * w, py = Math.max(top, y + cy * h);
-    const maxX = py < 260 - topExtra ? 596 : WORLD_W - 12; // 영웅 버튼(BAG_POS 주변) 피하기
-    px = clamp(px, 12 + w / 2, maxX - w / 2);
-    bx = px; by = py;
-    if (!hitsAny(n, px, py, w, h)) break;
+function hitsAny(n, x, y, w, h) {
+  let row = 0;
+  for (const o of NUMS) {
+    if (!o.on || o === n) continue;
+    const oh = numH(o);
+    if (Math.abs(o.x - x) * 2 < o.w + w && Math.abs(o.y - y) * 2 < oh + h) return true;
+    if (Math.abs(o.y - y) < 60 && ++row >= 4) return true; // 한 줄 과밀
   }
-  n.x = bx; n.y = by;
+  return n.cls !== 'H' && inZone(x, y, w, h);
+}
+// 새 숫자 자리 잡기: 제자리 → 위 → 좌상/우상 → 더 위 … 전부 막히면 false (겹쳐 그리지 않는다)
+const CAND = [[0, 0], [0, -1], [-0.6, -0.5], [0.6, -0.5], [0, -2], [-0.6, -1.5], [0.6, -1.5], [-1.1, 0], [1.1, 0], [0, 1]];
+function placeNum(n, x, y) {
+  const w = n.w, h = numH(n), top = numTop() + h / 2;
+  for (const [cx, cy] of CAND) {
+    const py = y + cy * h;
+    if (py < top) continue; // 천장 위로는 올리지 않는다(평평하게 눌려 겹치던 원인)
+    const maxX = py < 280 - topExtra ? 582 : NX1; // 영웅 버튼(BAG_POS 주변) 피하기
+    const px = clamp(x + cx * w, NX0 + w / 2, maxX - w / 2);
+    if (!hitsAny(n, px, py, w, h)) { n.x = px; n.y = py; return true; }
+  }
+  if (y < top) return placeNum(n, x, top + 1); // 천장보다 위에서 난 숫자는 천장 바로 아래로
+  return false;
 }
 function freeSlot(rank) {
   let n = 0, victim = null;
@@ -541,6 +594,11 @@ function styleNum(n) {
   n.s0 = RANK_S[n.cls] * (n.cls === 'H' ? 1 : 0.78 + 0.34 * Math.sqrt(clamp(n.val / numRef, 0, 1)));
   n.txt = (n.cls === 'H' ? '−' : '') + fmt(n.val) + (n.crit ? '!' : '');
   n.w = numW(n);
+  // 숫자 폭 ≤ 맞은 적 시각 폭 × 1.25(최소 84) — 잡몹을 통째로 덮는 큰 숫자 금지
+  if (n.tgt && typeof n.tgt === 'object' && n.cls !== 'H') {
+    const maxW = Math.max(84, visR(n.tgt) * 2.5), k = Math.max(0.72, Math.min(1, maxW / n.w));
+    if (k < 1) { n.s0 *= k; n.w = numW(n); }
+  }
 }
 // 고정 문자열 숫자(골드 +N, 회복 +N 등). 합치지 않음
 export function num(x, y, str, col, ink, s, crit, life = 0.75) {
@@ -550,7 +608,7 @@ export function num(x, y, str, col, ink, s, crit, life = 0.75) {
   n.txt = str; n.col = col; n.top = lite(col, 0.7); n.ink = ink; n.s = n.s0 = Math.min(2.1, s); n.crit = crit; n.val = 0; n.cls = crit ? 'C' : 'N'; n.tgt = null; n.o = -1;
   n.w = numW(n);
   n.vy = -36;
-  placeNum(n, x, y - 10);
+  if (!placeNum(n, x, y - 10)) { n.on = false; return null; }
   return n;
 }
 // 피해 숫자. tgt = 맞은 적 객체(같은 대상 연타 합치기 키), 없으면 자리로 합친다
@@ -558,19 +616,18 @@ export function dmgNum(x, y, dmg, o, cls, col, ink, s, crit, life, suffix, tgt =
   if (!(dmg > 0)) return;
   numRef = Math.max(numRef, dmg);
   for (const n of NUMS) {
-    if (!n.on || n.cls === '' || n.age > 1.1 || n.mt > 0.15 || (n.cls === 'H') !== (cls === 'H')) continue;
+    if (!n.on || n.cls === '' || n.age > 1.1 || n.mt > 0.25 || (n.cls === 'H') !== (cls === 'H')) continue;
     if (tgt ? n.tgt !== tgt : (n.tgt || Math.abs(n.x - x) > 40 || Math.abs(n.y - y) > 60)) continue;
     n.val += dmg;
     if (RANK_S[cls] > RANK_S[n.cls]) { n.cls = cls; n.col = col; n.top = top || lite(col, 0.7); n.ink = ink; n.life = Math.max(n.life, life); }
     n.crit = n.crit || crit;
     n.mt = 0; n.t = Math.min(n.t, 0.12); n.punch = 1;
-    const w0 = n.w;
+    const w0 = n.w, x0 = n.x, y0 = n.y;
     styleNum(n);
-    if (n.w > w0 + 4) placeNum(n, n.x, n.y); // 자리가 커졌으면 다시 비키기
+    if (n.w > w0 + 4 && !placeNum(n, x0, y0)) { n.x = x0; n.y = y0; } // 커졌으면 다시 비키기(못 비키면 제자리 — 같은 숫자라 겹침 아님)
     return;
   }
   if (numBudget <= 0 || !freeSlot(cls)) return;
-  numBudget--;
   const n = take(NUMS);
   n.on = true; n.t = 0; n.mt = 0; n.age = 0; n.life = life; n.punch = 0;
   n.val = dmg; n.cls = cls; n.o = o; n.tgt = tgt; n.crit = crit;
@@ -578,9 +635,32 @@ export function dmgNum(x, y, dmg, o, cls, col, ink, s, crit, life, suffix, tgt =
   styleNum(n);
   n.s = n.s0;
   n.vy = cls === 'H' ? -24 : -40;
-  placeNum(n, x, y);
+  if (!placeNum(n, x, y)) { n.on = false; return; }
+  numBudget--;
 }
-
+// 숫자 한 개를 오프스크린에 굽는다: 테두리(0.2em) + 바닥 그림자 + 딱 끊긴 2단 그라데이션(§5.3)
+function bakeNum(n, R) {
+  const fs = NUM_PX * n.s0, pad = fs * 0.3;
+  const cw = Math.ceil((n.w + pad * 2) * R), ch = Math.ceil((fs * 1.2 + pad * 2) * R);
+  const c = n.cv || (n.cv = document.createElement('canvas'));
+  if (c.width < cw || c.height < ch || c.width > cw * 2) { c.width = cw; c.height = ch; }
+  const x = c.getContext('2d');
+  x.setTransform(1, 0, 0, 1, 0, 0);
+  x.clearRect(0, 0, c.width, c.height);
+  x.setTransform(R, 0, 0, R, c.width / 2, c.height / 2);
+  x.font = `${fs}px ${NUM_FONT}`;
+  x.textAlign = 'center'; x.textBaseline = 'middle'; x.lineJoin = 'round';
+  x.lineWidth = fs * 0.2;
+  x.strokeStyle = n.ink; x.fillStyle = n.ink;
+  x.strokeText(n.txt, 0, fs * 0.085); x.fillText(n.txt, 0, fs * 0.085);
+  x.strokeText(n.txt, 0, 0);
+  const g = x.createLinearGradient(0, -fs * 0.42, 0, fs * 0.42);
+  g.addColorStop(0, n.top); g.addColorStop(0.5, n.top); g.addColorStop(0.53, n.col); g.addColorStop(1, n.col);
+  x.fillStyle = g;
+  x.fillText(n.txt, 0, 0);
+  n.cw = c.width / R; n.ch = c.height / R;
+  n.key = n.txt + n.col + n.ink + n.s0 + '|' + R;
+}
 export function nearest(view, x, y, maxD) {
   let best = null, bd = maxD * maxD;
   const es = view.enemies;
@@ -651,7 +731,7 @@ function judgmentFx(x, w, twi) {
 }
 function spellFx(view, ev, n) {
   const fus = view.fusions || [];
-  const x = +ev.x || 0, y = +ev.y || 0;
+  const x = +ev.x || 0, y = warpY(x, +ev.y || 0);
   switch (ev.key) {
     case 'lightningStrike': strike(x, y, fus.includes('superconduct'), n === 0); break;
     case 'iceLance': {
@@ -707,7 +787,7 @@ function shot(cls, x0, y0, x1, y1, crit, speed) {
 function heroAttackFx(view, ev) {
   const h = view.heroUnit;
   HF.atk = 0; HF.tx = ev.tx; HF.ty = ev.ty;
-  const face = ev.tx >= ev.x ? 1 : -1, hx = ev.x, hy = ev.y, tx = ev.tx, ty = ev.ty;
+  const face = ev.tx >= ev.x ? 1 : -1, hx = ev.x, hy = warpY(ev.x, ev.y), tx = ev.tx, ty = warpY(ev.tx, ev.ty);
   const ang = Math.atan2(ty - hy, tx - hx);
   switch (ev.cls) {
     case 'ranger': shot('ranger', hx + face * 16, hy - 16, tx, ty, ev.crit, 1400); break;
@@ -736,18 +816,22 @@ function heroAttackFx(view, ev) {
     shake(0.02);
   }
 }
+const ULT_CALL = { knight: ['성스러운 방패', '#ffe07a'], ranger: ['화살비', '#8dff6a'], sorcerer: ['블리자드', '#9fe8ff'], cleric: ['천상의 치유', '#fff3a8'], assassin: ['그림자 난무', '#ff8ad8'] };
 function heroUltFx(view, ev) {
   const u = take(ULTS), x = +ev.x || 360, y = +ev.y || 900, r = +ev.r || 170;
   u.on = true; u.t = 0; u.cls = ev.cls; u.x = x; u.y = y + 14; u.r = r; u.tg.length = 0; u.k = 0;
   shake(0.3);
+  const cn = ULT_CALL[ev.cls];
+  if (cn) stamp(cn[0] + '!', cn[1], 300, 58, 1.1); // 궁극기 이름 외침(클래스 색) — 효과만 번쩍이고 끝나지 않게
   switch (ev.cls) {
     case 'knight':
       u.dur = 0.8;
-      ring(x, y, 20, r, 0.5, '#ffe07a', 14);
-      ring(x, y, 10, r * 0.75, 0.4, '#ffffff', 6);
-      sprPop(starFlash('#ffd23a'), x, y - 34, 0.6, 2.6, 0.35);
+      // 바닥 룬 서클이 펼쳐지며(원근) 테두리 금빛 고리 하나 — 흰 충격파 없음
+      sprPop(runeCircle('#ffc94a'), x, y + 14, 0.6, r / 31, 0.7, Math.PI / 2, 1.2, 0.38);
+      ring(x, y, 20, r, 0.45, '#ffc94a', 8);
+      sprPop(starFlash('#ffd23a'), x, y - 34, 0.5, 1.8, 0.3);
       burst(K_STAR, x, y - 30, 16, 120, 360, 0.7, 18, ['#ffffff', '#ffe07a'], 0, 2);
-      flash(0.25, '#ffd23a');
+      flash(0.12, '#ffd23a');
       for (const e of view.enemies) if (!e.dead && Math.hypot(e.x - x, e.y - y) <= r + e.r) stuns.set(e.id, RT + 1.5);
       break;
     case 'ranger': {
@@ -924,66 +1008,76 @@ export function drawEshots(view) {
 // 마법탄 (§9.7). 탄이 많을 때(다중 시전 + 최고 시전 속도 = 140발+) 전부 같은 크기로 그리면 "점 벽지"가 된다 →
 // 탄마다 고정 시드로 약 44발만 '주탄'(크게·꼬리·반짝)으로, 나머지는 '보조탄'(60% 크기·반투명 헤드 + 옅은 빛)으로 그린다.
 // 판정·개수는 그대로이고 그리기 호출 수가 크게 줄어든다(성능 §12).
-const MAIN_BOLTS = 36;
+const MAIN_BOLTS = 30;
+let BY_ = new Float32Array(256), BA_ = new Float32Array(256); // 탄별 그려질 y(보스 왜곡) · 알파(HUD·화면 끝 페이드)
 export function drawBullets(view) {
   const bs = view.bullets;
   if (!bs.length) return;
-  const n = bs.length, twin = view.duo && view.duo.includes('twin'), fireP1 = !!(view.spells && view.spells.flameBullet);
+  const n = bs.length, twin = view.duo && view.duo.includes('twin'), fireP1 = !!(view.spells && view.spells.flameBullet), frz = view.frenzyT > 0; // 광란: 내 탄 붉은 금빛
   const keep = n <= MAIN_BOLTS ? 2 : MAIN_BOLTS / n, dense = n > MAIN_BOLTS;
   const sp = Math.min(0.3, 24 / n), tk = (twin ? 1.18 : 1) * (dense ? 1.2 : 1);
-  const nTail = n > 60 ? 3 : 4;
+  const top = hudY(96);
+  if (BY_.length < n) { BY_ = new Float32Array(n * 2); BA_ = new Float32Array(n * 2); }
+  // 빗나간 탄이 화면 위(HUD 밑)·양옆 끝으로 날아가며 "색종이"처럼 쌓이지 않게 가까워지면 사라진다. AI 동료 탄은 한 톤 약하게
+  for (let i = 0; i < n; i++) {
+    const b = bs[i], y = warpY(b.x, b.y);
+    BY_[i] = y;
+    BA_[i] = clamp((y - top) / 110, 0, 1) * clamp(Math.min(b.x, WORLD_W - b.x) / 50, 0, 1) * (b.owner === 1 ? 0.78 : 1);
+  }
+  const isMain = (b, seed) => seed < (b.owner === 1 ? keep * 0.45 : keep);
   additive(true);
   // 1) 보조탄: 옅은 빛만 (가산)
-  if (dense) for (const b of bs) {
-    if (seedOf(b) < keep) continue;
+  if (dense) for (let i = 0; i < n; i++) {
+    const b = bs[i];
+    if (isMain(b, seedOf(b)) || BA_[i] <= 0) continue;
     const st = mstyle(b.kind, b.owner, fireP1);
-    ctx.globalAlpha = 0.42 * clamp((b.y + 60) / 36, 0, 1);
-    spr(gl(st[1]), b.x, b.y, 20, 20);
+    ctx.globalAlpha = 0.3 * BA_[i];
+    spr(gl(st[1]), b.x, BY_[i], 16, 16);
   }
-  // 2) 주탄: 속도 방향 스미어 + 잔상 구슬 사슬(크기·알파 감쇠, 원소 메인→에지) + 헤일로
-  for (const b of bs) {
-    const seed = seedOf(b);
-    if (seed >= keep) continue;
-    const st = mstyle(b.kind, b.owner, fireP1), jr = 0.9 + 0.2 * seed, spd = Math.hypot(b.vx, b.vy) || 1;
-    const ux = b.vx / spd, uy = b.vy / spd, fade = clamp((b.y + 60) / 36, 0, 1); // sim 경계(y=-60) 전 부드럽게
-    place(b.x, b.y, Math.atan2(b.vy, b.vx), 0.36 * st[3] * tk * jr, 1.4 * st[4] * tk * jr);
+  // 2) 주탄: 가늘어지는 리본 꼬리(속도 방향, 길이는 속도 비례) + 원소 헤일로 + 흰 백열 코어 — 전부 가산, 어두운 테 없음
+  for (let i = 0; i < n; i++) {
+    const b = bs[i], seed = seedOf(b), fade = BA_[i];
+    if (!isMain(b, seed) || fade <= 0) continue;
+    const by = BY_[i], own = b.owner === 1 ? 0.8 : 1;
+    const st = frz && b.owner === 0 ? MSTY.flame : mstyle(b.kind, b.owner, fireP1), jr = (0.92 + 0.16 * seed) * own, spd = Math.hypot(b.vx, b.vy) || 1;
+    const len = clamp(spd / 1600, 0.6, 1) * Math.min(st[3], 1.6) * tk * jr, wid = st[4] * tk * jr;
+    const puls = 1 + 0.08 * Math.sin(RT * (16 + seed * 8) + seed * 20);
     ctx.globalAlpha = fade;
-    ctx.drawImage(comet(st[1]), -30, -10, 34, 20);
+    place(b.x, by, Math.atan2(b.vy, b.vx), len, wid * 1.1);
+    const tr = missileTrail(st[1], st[0]);
+    ctx.drawImage(tr, -tr.hw, -tr.hh, tr.hw * 2, tr.hh * 2);
     wt();
-    const gap = (7 + seed * 2) * Math.min(st[3], 1.7) * tk;
-    for (let k = 1; k <= nTail; k++) {
-      const u = k / nTail, s = 13 * st[4] * tk * jr * (1 - 0.62 * u);
-      ctx.globalAlpha = (0.75 - 0.6 * u) * fade;
-      spr(gl(u < 0.5 ? st[1] : st[2]), b.x - ux * gap * k, b.y - uy * gap * k, s * 2.4, s * 2.4);
-    }
+    ctx.globalAlpha = 0.8 * fade;
+    spr(gl(st[1]), b.x, by, 46 * wid * puls, 46 * wid * puls);
     ctx.globalAlpha = fade;
-    const hs = 34 * st[4] * tk;
-    spr(gl(st[1]), b.x, b.y, hs, hs);
+    spr(hotCore(st[0]), b.x, by, 24 * wid * puls, 24 * wid * puls);
   }
   ctx.globalAlpha = 1;
   if (n < 100) { // 3) 주탄 헤드 주위를 0.3초 주기로 도는 반짝
     const sk = sparkle('#ffffff');
-    for (const b of bs) {
-      const seed = seedOf(b);
-      if (seed >= keep) continue;
+    for (let i = 0; i < n; i++) {
+      const b = bs[i], seed = seedOf(b);
+      if (!isMain(b, seed) || BA_[i] <= 0) continue;
       const st = mstyle(b.kind, b.owner, fireP1);
-      const ph = RT * (TAU / 0.3) + seed * TAU, orbR = 9 * st[4] * tk, tw = 0.5 + 0.5 * Math.sin(RT * 20 + seed * 12);
-      spr(sk, b.x + Math.cos(ph) * orbR, b.y + Math.sin(ph) * orbR * 0.6, 10 * tw * tk, 10 * tw * tk);
+      const ph = RT * (TAU / 0.3) + seed * TAU, orbR = 12 * st[4] * tk, tw = 0.5 + 0.5 * Math.sin(RT * 20 + seed * 12);
+      ctx.globalAlpha = BA_[i];
+      spr(sk, b.x + Math.cos(ph) * orbR, BY_[i] + Math.sin(ph) * orbR * 0.6, 12 * tw * tk, 12 * tw * tk);
+    }
+    ctx.globalAlpha = 1;
+  }
+  // 4) 보조탄 코어 + 주탄 마력 입자(꼬리 뒤로 떨어지는 반짝 — 파티클 예산 §12 안에서)
+  for (let i = 0; i < n; i++) {
+    const b = bs[i], fade = BA_[i];
+    if (fade <= 0) continue;
+    const st = mstyle(b.kind, b.owner, fireP1), seed = seedOf(b), main = isMain(b, seed);
+    if (!main) { ctx.globalAlpha = 0.6 * fade; spr(hotCore(st[0]), b.x, BY_[i], 11, 11); continue; }
+    if (rnd() < sp * 0.5) {
+      const fire = b.kind === 'flame' || (fireP1 && b.owner === 0);
+      part(fire ? K_GLOW : rnd() < 0.4 ? K_STAR : K_GLOW, b.x - b.vx * 0.02 + (rnd() - 0.5) * 8, BY_[i] - b.vy * 0.02 + (rnd() - 0.5) * 8,
+        (rnd() - 0.5) * 40, (rnd() - 0.5) * 40 - (fire ? 50 : 0), 0.36, fire ? 11 : 10, rnd() < 0.5 ? st[1] : st[0], 0, 2);
     }
   }
   additive(false);
-  for (const b of bs) { // 4) 헤드(흰 코어+원소 메인 링+에지 테, 16~24Hz 떨림)
-    const st = mstyle(b.kind, b.owner, fireP1), seed = seedOf(b), main = seed < keep;
-    const puls = 1 + 0.06 * Math.sin(RT * (16 + seed * 8) + seed * 20);
-    const s = (main ? 16 * tk : 9.5) * st[4] * puls;
-    ctx.globalAlpha = main ? 1 : 0.7;
-    spr(magicCore(st[0], st[1], st[2]), b.x, b.y, s, s);
-    if (main && rnd() < sp * 0.45) { // 마력 입자 떨굼 — 파티클 예산(§12) 안에서
-      const fire = b.kind === 'flame' || (fireP1 && b.owner === 0);
-      part(fire ? K_GLOW : rnd() < 0.3 ? K_STAR : K_GLOW, b.x - b.vx * 0.012 + (rnd() - 0.5) * 6, b.y - b.vy * 0.012 + (rnd() - 0.5) * 6,
-        (rnd() - 0.5) * 40, (rnd() - 0.5) * 40 - (fire ? 50 : 0), 0.32, fire ? 10 : 9, rnd() < 0.5 ? st[1] : st[0], 0, 2);
-    }
-  }
   ctx.globalAlpha = 1;
 }
 
@@ -1294,8 +1388,8 @@ export function drawParticles() {
     const p = P[i];
     if (p.life <= 0 || p.k >= K_CONF) continue;
     const u = p.life / p.max;
-    if (p.k === K_GLOW) {
-      ctx.globalAlpha = Math.min(1, u * 1.6);
+    if (p.k === K_GLOW) { // 큰 빛일수록 옅게(화면이 우윳빛으로 덮이지 않게 — 반경 220 넘으면 비례 감쇠)
+      ctx.globalAlpha = Math.min(1, u * 1.6) * (p.size > 220 ? Math.max(0.3, 220 / p.size) : 1);
       const s = p.size * (0.4 + 0.6 * u);
       spr(gl(p.col), p.x, p.y, s, s);
     } else if (p.k === K_SPARK) {
@@ -1317,7 +1411,7 @@ export function drawParticles() {
     if (r.life <= 0) continue;
     const u = 1 - r.life / r.max, e = 1 - (1 - u) * (1 - u);
     const R = r.r0 + (r.r1 - r.r0) * e, k = 1 + Math.min(0.35, r.w * 0.02) * (1 - u);
-    ctx.globalAlpha = (1 - u) * 0.95;
+    ctx.globalAlpha = (1 - u) * 0.95 * clamp(1 - (r.r1 - 220) / 500, 0.4, 1); // 큰 고리일수록 옅게(화면을 하얗게 덮지 않게)
     const img = ringSpr(r.col);
     ctx.drawImage(img, r.x - R * k, r.y - R * k, R * 2 * k, R * 2 * k);
   }
@@ -1378,43 +1472,35 @@ export function drawMeteors() {
 }
 
 export function drawNums() {
-  ctx.font = `${NUM_PX}px ${NUM_FONT}`; // 데미지 숫자는 Impact(§5.3)
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.lineJoin = 'round';
+  const R = Math.max(0.5, K * 1.3); // 구운 글자 해상도(팝 1.25배에도 선명하게)
   for (const n of NUMS) {
     if (!n.on) continue;
     const t = n.t;
     // 팝 인 90ms(0.3→1.25→1, back) · 합쳐질 때 1.15 톡 · 마지막 0.2초 페이드
     let k = t < 0.09 ? 0.3 + 0.95 * easeOut(t / 0.09) : t < 0.2 ? 1.25 - 0.25 * easeOut((t - 0.09) / 0.11) : 1;
     k *= 1 + n.punch * 0.15;
-    const s = Math.round(n.s0 * k * 16) / 16;
     const a = t > n.life - 0.2 ? Math.max(0, (n.life - t) / 0.2) : 1;
     if (a <= 0) continue;
+    if (n.key !== n.txt + n.col + n.ink + n.s0 + '|' + R) bakeNum(n, R);
     ctx.globalAlpha = a;
     const wobble = n.crit && t < 0.15 ? Math.sin(t * 90) * 3 * (1 - t / 0.15) : 0; // 치명 좌우 흔들림 1회(§6)
-    ctx.setTransform(K * s, 0, 0, K * s, BX + K * (n.x + wobble), BY + K * n.y);
-    // 테두리(0.2em) + 바닥 그림자 + 딱 끊긴 2단 그라데이션(§5.3)
-    ctx.lineWidth = NUM_PX * 0.2;
-    ctx.strokeStyle = n.ink; ctx.fillStyle = n.ink;
-    ctx.strokeText(n.txt, 0, 2.2); ctx.fillText(n.txt, 0, 2.2);
-    ctx.strokeText(n.txt, 0, 0);
-    const g = ctx.createLinearGradient(0, -NUM_PX * 0.42, 0, NUM_PX * 0.42);
-    g.addColorStop(0, n.top); g.addColorStop(0.5, n.top); g.addColorStop(0.53, n.col); g.addColorStop(1, n.col);
-    ctx.fillStyle = g;
-    ctx.fillText(n.txt, 0, 0);
+    ctx.setTransform(K * k, 0, 0, K * k, BX + K * (n.x + wobble), BY + K * n.y);
+    ctx.drawImage(n.cv, 0, 0, n.cw * R, n.ch * R, -n.cw / 2, -n.ch / 2, n.cw, n.ch);
   }
   ctx.globalAlpha = 1;
   wt(); // 공용 규약: draw*는 wt()로 끝난다
-  if (bossPresent && bossShow > 0.5) { // 보스 누적 피해 티커(§6) — 보스바 바로 아래 가운데
-    const y = 170 - topExtra, txt = '+' + fmt(bossShow);
-    ctx.font = `24px ${NUM_FONT}`;
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.lineWidth = 5; ctx.strokeStyle = '#4a1400'; ctx.strokeText(txt, 300, y);
-    const g2 = ctx.createLinearGradient(0, y - 12, 0, y + 12);
-    g2.addColorStop(0, '#fff3a8'); g2.addColorStop(0.5, '#fff3a8'); g2.addColorStop(0.52, '#ffb020'); g2.addColorStop(1, '#ffb020');
-    ctx.fillStyle = g2;
-    ctx.fillText(txt, 300, y);
+  // 보스 누적 피해 티커(§6): 보스 얼굴 대신 옆 어깨 높이에 굴러가는 합계 하나. 1.1초 동안 안 맞으면 페이드 → 다음 연타는 0부터
+  if (bossPresent && bossE && bossShow > 0.5 && bossTickT < 1.4) {
+    const vr = visR(bossE), side = bossE.x < 360 ? 1 : -1, by = bossE.y + bossDY(bossE);
+    const x = clamp(bossE.x + side * (vr * 0.9 + 70), 110, 610), y = Math.max(numTop() + 40, by - vr * 0.45);
+    const a = bossTickT > 1.1 ? Math.max(0, 1 - (bossTickT - 1.1) / 0.3) : 1;
+    const sz = 30 + Math.min(14, Math.log10(Math.max(10, bossShow)) * 1.6), k = 1 + bossPunch * 0.14;
+    ctx.globalAlpha = a;
+    place(x, y, side * -0.05, k, k);
+    numText(fmt(bossShow), 0, 0, sz, '#fff6c8', '#ff9a1a', '#4a1400');
+    wt();
+    ctx.globalAlpha = 1;
+    ctx.textAlign = 'center';
   }
 }
 
@@ -1423,8 +1509,8 @@ export function drawOverlays(view) {
   ht();
   const pulse = 0.5 + 0.5 * Math.sin(RT * 9);
   if (pickA > 0) { // 카드 선택 중: 전장을 살짝 어둡게 + 마력 빛 (DOM 카드가 위에 뜬다)
-    ctx.globalAlpha = pickA * 0.4;
-    ctx.fillStyle = '#140f2e';
+    ctx.globalAlpha = pickA * 0.66; // 카드 뒤 전장(보스 몸통)이 비쳐 산만하지 않게 충분히 어둡게
+    ctx.fillStyle = '#0e0a22';
     ctx.fillRect(0, -topExtra, WORLD_W, WORLD_H + topExtra);
     ctx.globalAlpha = pickA * 0.7;
     ctx.drawImage(vignette('rgba(120,50,200,0.8)', 0.55), 0, -topExtra, WORLD_W, WORLD_H + topExtra);
@@ -1435,8 +1521,6 @@ export function drawOverlays(view) {
     const rc = runeCircle('#c890ff');
     ctx.drawImage(rc, -260, -260, 520, 520);
     ht();
-    ctx.globalAlpha = pickA * 0.14;
-    spr(gl('#b070ff'), 360, 560, 700, 700);
     additive(false);
   }
   if (view.freezeT > 0) {
@@ -1449,7 +1533,14 @@ export function drawOverlays(view) {
   }
   if (view.frenzyT > 0) { // 광란: 가장자리 붉은 비네트 + 양옆 속도선(가산) — 전장 가운데는 깨끗하게
     const fa = Math.min(1, view.frenzyT / 0.5);
-    ctx.globalAlpha = fa * (0.4 + 0.25 * pulse);
+    additive(true); // 두 마법사 불꽃 오라(지팡이 끝 + 발밑)
+    for (const M of MF) {
+      ctx.globalAlpha = fa * (0.45 + 0.2 * Math.sin(RT * 14 + M.ox));
+      spr(gl('#ff5a1a'), M.ox, M.oy, 80, 80);
+      if (rnd() < 0.5) part(K_GLOW, M.ox + (rnd() - 0.5) * 50, MAGE_FEET - rnd() * 80, (rnd() - 0.5) * 30, -140 - rnd() * 100, 0.5, 12, rnd() < 0.5 ? '#ffb030' : '#ff5a1a', 0, 1);
+    }
+    additive(false);
+    ctx.globalAlpha = fa * (0.62 + 0.2 * pulse);
     ctx.drawImage(vignette('rgba(255,30,20,0.8)', 0.6), 0, -topExtra, WORLD_W, WORLD_H + topExtra);
     additive(true);
     const span = WORLD_H + topExtra;
@@ -1478,10 +1569,17 @@ export function drawOverlays(view) {
     ctx.globalAlpha = (0.3 - ratio) / 0.3 * (0.4 + 0.4 * pulse);
     ctx.drawImage(vignette('rgba(200,0,20,0.8)', 0.6), 0, -topExtra, WORLD_W, WORLD_H + topExtra);
   }
-  if (defeatA > 0) {
-    ctx.globalAlpha = defeatA * 0.45;
+  if (defeatA > 0) { // 패배: 전장 채도를 빼고(회색 톤) 붉은 비네트 — 패배 모달 뒤가 "무너진 순간"처럼
+    ctx.globalCompositeOperation = 'saturation';
+    ctx.globalAlpha = defeatA * 0.75;
+    ctx.fillStyle = '#808080';
+    ctx.fillRect(0, -topExtra, WORLD_W, WORLD_H + topExtra);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = defeatA * 0.35;
     ctx.fillStyle = '#2a0008';
     ctx.fillRect(0, -topExtra, WORLD_W, WORLD_H + topExtra);
+    ctx.globalAlpha = defeatA * 0.8;
+    ctx.drawImage(vignette('rgba(200,0,20,0.85)', 0.5), 0, -topExtra, WORLD_W, WORLD_H + topExtra);
   }
   ctx.globalAlpha = 1;
 }
@@ -1492,7 +1590,7 @@ export function events(view, evs, opts) {
   lastMode = mode;
   const me = opts.myIndex | 0;
   let hits = 0, kills = 0, shatters = 0, shields = 0, bigs = 0, crits = 0;
-  numCap = mode === 'simple' ? 5 : 8; // 동시 표시 상한(§6) — 넘치면 가장 약하고 오래된 숫자부터 비킨다
+  numCap = mode === 'simple' ? 4 : 6; // 동시 표시 상한(§6) — 넘치면 가장 약하고 오래된 숫자부터 비킨다
   numBudget = mode === 'simple' ? 2 : 3; // 새 숫자: 프레임당 생성 상한(합쳐지는 건 제외)
   bossBand = !!view.boss;
   meteorKills.length = 0;
@@ -1521,36 +1619,37 @@ export function events(view, evs, opts) {
         if (ev.o === 2 || ev.o === 3) { // 영웅·스킬 피해(§6): 시각은 heroAttack/spellFx가 맡고 여기선 숫자·보스 티커만
           const e2 = nearest(view, ev.x, ev.y, 40), boss2 = !!(e2 && e2.isBoss), d2 = +ev.dmg || 0;
           if (boss2) bossTicker += d2;
-          if (mode !== 'off' && (!boss2 || ev.crit) && (mode === 'full' || ev.crit)) {
+          if (mode !== 'off' && !boss2 && (mode === 'full' || ev.crit)) {
             const hero = ev.o === 2, el = EL[ev.kind];
             const col = hero ? '#ff6fd8' : el ? el[1] : '#c89aff', ink = hero ? HERO_NUM[1] : el ? dim(el[2], 0.35) : '#3a1a5a';
             const y2 = e2 ? e2.y + bossDY(e2) - visR(e2) * 0.85 : ev.y - 20;
-            dmgNum(ev.x, y2, d2, ev.o, ev.crit ? (boss2 ? 'B' : 'C') : 'N', col, ink, 1, !!ev.crit, ev.crit ? 0.85 : 0.7, '', e2, hero ? '#ffe8fb' : '#ffffff');
+            dmgNum(ev.x, y2, d2, ev.o, ev.crit ? 'C' : 'N', col, ink, 1, !!ev.crit, ev.crit ? 0.75 : 0.45, '', e2, hero ? '#ffe8fb' : '#ffffff');
           }
           break;
         }
-        const o = ev.o === 1 ? 1 : 0, full = hits++ < 12; // 프레임당 풀 연출 12개까지(파티클 예산 §12)
+        const o = ev.o === 1 ? 1 : 0, full = hits++ < (view.speed >= 3 ? 6 : 12); // 프레임당 풀 연출 12개까지(3배속은 6 — 파티클 예산 §12)
         const st = mstyle(ev.kind, o, fireP1), kc = st[1];
         // 맞은 적의 대포 쪽 표면에 튀김 (보스 얼굴을 가리지 않게)
         const e = nearest(view, ev.x, ev.y, 40), er = e ? e.r : 0;
         const ha = Math.PI * (0.2 + rnd() * 0.6);
-        const hx = ev.x + Math.cos(ha) * er * 0.75, hy = ev.y + Math.sin(ha) * er * 0.75;
+        const hx = ev.x + Math.cos(ha) * er * 0.75, hy = warpY(ev.x, ev.y) + Math.sin(ha) * er * 0.75;
+        const hs = e ? clamp(visR(e) / 36, 0.45, 1.2) : 0.8; // 타격 빛은 맞은 적 크기에 맞춘다(잡몹이 빛 덩어리에 묻히지 않게)
         if (full) { // 마력 폭발: 룬 섬광 + 파편 + 불티
-          if (runes++ < 8) sprPop(runeCircle(kc), hx, hy, 0.16, ev.crit ? 0.8 : 0.5, 0.2, 0, 3);
-          part(K_GLOW, hx, hy, 0, 0, 0.12, ev.crit ? 56 : 38, kc);
+          if (runes++ < 8) sprPop(runeCircle(kc), hx, hy, 0.16, (ev.crit ? 0.8 : 0.5) * hs, 0.2, 0, 3);
+          part(K_GLOW, hx, hy, 0, 0, 0.1, (ev.crit ? 56 : 38) * hs, kc);
           burst(K_SHARD, hx, hy, ev.big ? 5 : 3, 120, 300, 0.35, 4.5, [st[1], st[0]], 500, 2, 60);
           burst(K_SPARK, hx, hy, ev.crit ? 5 : 3, 250, 520, 0.14, 2.6, [kc, '#ffffff'], 0, 6);
-        } else if (hits < 40) part(K_GLOW, ev.x, ev.y, 0, 0, 0.14, 30, kc);
-        if (ev.crit && full && crits++ < 4) { // 별빛 폭발 (프레임당 4개까지 — 연타에 적이 흰 덩어리로 묻히지 않게)
-          sprPop(starFlash(kc), hx, hy, 0.3, ev.big ? 1.35 : 0.95, 0.2, 0, 0.6);
+        } else if (hits < 40) part(K_GLOW, ev.x, warpY(ev.x, ev.y), 0, 0, 0.12, 30 * hs, kc);
+        if (ev.crit && full && crits++ < 2) { // 별빛 폭발 (프레임당 2개까지 — 연타에 적이 흰 덩어리로 묻히지 않게)
+          sprPop(starFlash(kc), hx, hy, 0.3, (ev.big ? 1.35 : 0.95) * Math.max(0.6, hs), 0.2, 0, 0.6);
           burst(K_STAR, hx, hy, 3, 80, 220, 0.4, 14, ['#ffffff', st[0]], 0, 3);
           shake(0.012);
         }
-        if (ev.big && full && bigs++ < 6) {
+        if (ev.big && full && bigs++ < 3) {
           const v = e && visOf(e), bossHit = !!(e && e.isBoss);
           // 보스는 연타 중 형체가 안 보이지 않게 0.3초에 한 번만 크게
           if (!bossHit || v.chroma < -0.2) {
-            part(K_GLOW, hx, hy, 0, 0, 0.12, bossHit ? 120 : 96, '#ffffff');
+            part(K_GLOW, hx, hy, 0, 0, 0.1, bossHit ? 70 : 80 * hs, kc); // 흰 원판 대신 원소색 빛(떼가 흰 덩어리로 뭉개지지 않게)
             for (let k = 0; k < 7; k++) {
               const a = k * TAU / 7 + rnd() * 0.5;
               part(K_SPARK, hx, hy, Math.cos(a) * 760, Math.sin(a) * 760, 0.15, 3.5, k % 2 ? kc : '#ffffff', 0, 7);
@@ -1569,8 +1668,10 @@ export function events(view, evs, opts) {
           if (mode === 'full' || ev.crit) {
             const ny = e ? e.y + bossDY(e) - visR(e) * 0.85 : ev.y - 8;
             // 치명 = 주황 금(큰 치명은 흰→주황, 더 크게) · 일반 = 소유자 색(나 금빛 흰색 / AI 청록). 빨강은 받은 피해 전용
-            if (ev.crit) dmgNum(ev.x, ny, d, o, ev.big ? 'B' : 'C', ev.big ? '#ff8a1a' : '#ffb020', '#4a1400', 1, true, ev.big ? 0.95 : 0.85, '', e, ev.big ? '#ffffff' : '#fff3a8');
-            else if (!boss) dmgNum(ev.x, ny, d, o, 'N', o === me ? '#ffe9a0' : '#9fe8ff', OWN[o].ink, 1, false, 0.7, '', e, '#ffffff');
+            // 한 등급 = 한 모양(§6): 일반 흰색 · 치명 주황 '!' · 큰 치명 붉은 주황 '!' · AI 동료 청록 · 영웅 분홍 · 스킬 원소색. 보스는 티커 하나로만
+            if (boss) { /* 보스 누적 티커가 말해 준다 */ }
+            else if (ev.crit) dmgNum(ev.x, ny, d, o, ev.big ? 'B' : 'C', ev.big ? '#ff6a1a' : '#ffa21a', '#4a1400', 1, true, ev.big ? 0.85 : 0.75, '', e, ev.big ? '#fff3c0' : '#fff3a8');
+            else dmgNum(ev.x, ny, d, o, 'N', o === me ? '#e6ecff' : '#9fe8ff', o === me ? '#241a3e' : OWN[o].ink, 1, false, 0.45, '', e, '#ffffff');
           }
         }
         break;
@@ -1644,7 +1745,7 @@ export function events(view, evs, opts) {
         flash(0.35, '#ff2020');
         break;
       case 'frenzy':
-        stamp('광란!', '#ff4a3a', 400, 90, 1.3);
+        stamp('광란!', '#ff4a3a', 380, 116, 1.4);
         flash(0.28, '#ff2a1a');
         shake(0.25);
         break;
@@ -1699,28 +1800,30 @@ export function update(view, da, dt) {
   for (const b of BEAMS) if (b.life > 0) b.life -= da;
   numRef = Math.max(1, numRef * (1 - 0.35 * dt)); // 상대 크기 기준은 천천히 식는다
   const nTop = numTop();
+  for (const z of ZONES.values()) z.t -= dt;
   for (const n of NUMS) {
     if (!n.on) continue;
     n.t += dt; n.mt += dt; n.age += dt; // 숫자는 실시간(히트스톱 중에도 읽히게 떠오름 유지)
     n.punch = Math.max(0, n.punch - dt * 8);
-    n.y = Math.max(nTop + NUM_PX * n.s0 * 0.48, n.y + n.vy * dt * (n.t < 0.12 ? 0.2 : 1)); // 팝 동안은 거의 제자리 → 이후 위로 흐름
+    const ceil = nTop + numH(n) / 2;
+    n.y += n.vy * dt * (n.t < 0.12 ? 0.2 : 1); // 팝 동안은 거의 제자리 → 이후 위로 흐름
+    if (n.y < ceil) { n.y = ceil; n.life = Math.min(n.life, n.t + 0.2); } // 천장에 닿으면 멈춰 사라짐(한 줄로 눌려 겹치지 않게)
     n.vy *= Math.max(0, 1 - 1.6 * dt);
+    if (n.cls !== 'H' && n.t > 0.1 && inZone(n.x, n.y, n.w, numH(n))) n.life = Math.min(n.life, n.t + 0.12); // 헤드라인이 뜨면 비킨다
     if (n.t >= n.life) n.on = false;
   }
-  // 떠오르다 겹치면 서로 밀어낸다(최대 8개라 쌍 비교 비용 무시 가능): 위쪽 숫자는 위로, 천장에 닿으면 옆으로
+  // 떠오르다 겹치면: 위쪽 숫자를 위로 민다. 천장이라 못 밀면 더 오래된 쪽을 빨리 지운다(옆으로 밀어 겹치지 않게)
   for (let i = 0; i < NUMS.length; i++) {
     const a = NUMS[i];
     if (!a.on) continue;
     for (let j = i + 1; j < NUMS.length; j++) {
       const b = NUMS[j];
       if (!b.on) continue;
-      const ha = NUM_PX * a.s0 * 0.95, hb = NUM_PX * b.s0 * 0.95;
-      const ox2 = (a.w + b.w) / 2 - Math.abs(a.x - b.x), oy2 = (ha + hb) / 2 - Math.abs(a.y - b.y);
+      const ox2 = (a.w + b.w) / 2 - Math.abs(a.x - b.x), oy2 = (numH(a) + numH(b)) / 2 - Math.abs(a.y - b.y);
       if (ox2 <= 0 || oy2 <= 0) continue;
-      const [up, dn] = a.y < b.y || (a.y === b.y && a.t < b.t) ? [a, b] : [b, a];
-      const top = nTop + NUM_PX * up.s0 * 0.48;
-      if (up.y - oy2 >= top) up.y -= oy2;
-      else { const d = up.x < dn.x ? -1 : 1; up.x = clamp(up.x + d * ox2, 12 + up.w / 2, WORLD_W - 12 - up.w / 2); }
+      const [up] = a.y < b.y || (a.y === b.y && a.t < b.t) ? [a, b] : [b, a];
+      if (up.y - oy2 >= nTop + numH(up) / 2) up.y -= oy2;
+      else { const old = a.t > b.t ? a : b; old.life = Math.min(old.life, old.t + 0.1); }
     }
   }
   for (const m of METEORS) {
@@ -1745,8 +1848,15 @@ export function update(view, da, dt) {
   // 보스 누적 피해 티커(§6): 0.5초마다 갱신, 보스가 없으면 리셋
   bossPresent = false;
   for (const e of view.enemies) if (e.isBoss && !e.dead) { bossPresent = true; break; }
-  if (bossPresent) { if ((bossTickT += dt) >= 0.5) { bossTickT = 0; bossShow = bossTicker; bossTicker = 0; } }
-  else { bossTicker = 0; bossShow = 0; bossTickT = 0; }
+  bossE = null;
+  for (const e of view.enemies) if (e.isBoss && !e.dead && (!bossE || e.r > bossE.r)) bossE = e;
+  bossTickT += dt; bossPunch = Math.max(0, bossPunch - dt * 6);
+  if (bossTicker > 0) { if (bossTickT > 1.4) bossShow = 0; bossShow += bossTicker; bossTicker = 0; bossTickT = 0; bossPunch = 1; }
+  if (!bossPresent) { bossShow = 0; bossTickT = 9; }
+  else if (bossE && bossE.named) { // 보스 얼굴 금지 구역 — 다른 숫자가 얼굴을 덮지 않게
+    const vr = visR(bossE);
+    numZone('bossFace', bossE.x, bossE.y + bossDY(bossE) - vr * 0.1, vr * 1.7, vr * 1.9);
+  }
 }
 
 function updateMagic(view, da, dt) {
@@ -1888,15 +1998,17 @@ function updateMagic(view, da, dt) {
 // 화면 섬광 (HUD 위 맨 마지막 층)
 export function drawFlash() {
   ht();
-  if (colA > 0) {
+  if (colA > 0) { // 색 섬광: 가장자리 빛 + 아주 옅은 전체 틴트(≤0.12) — 전장이 우윳빛으로 날아가지 않게
     ctx.globalCompositeOperation = 'lighter';
-    ctx.globalAlpha = colA * 0.6;
+    ctx.globalAlpha = Math.min(1, colA * 1.2);
+    ctx.drawImage(vignette(flashCol, 0.4), 0, -topExtra, WORLD_W, WORLD_H + topExtra);
+    ctx.globalAlpha = Math.min(0.12, colA * 0.25);
     ctx.fillStyle = flashCol;
     ctx.fillRect(0, -topExtra, WORLD_W, WORLD_H + topExtra);
     ctx.globalCompositeOperation = 'source-over';
   }
   if (flashA > 0) {
-    ctx.globalAlpha = flashA * 0.75;
+    ctx.globalAlpha = Math.min(0.45, flashA * 0.6);
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, -topExtra, WORLD_W, WORLD_H + topExtra);
   }

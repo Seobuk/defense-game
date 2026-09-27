@@ -20,7 +20,7 @@
 /* ── 공용 풀스크린: 밤 무대 + 클래스 색 방사광 ── */
 .hu-screen {
   --cc: #7b6cff;
-  position: absolute; inset: 0; pointer-events: auto; overflow: hidden;
+  position: absolute; inset: 0; pointer-events: auto; overflow: hidden; overflow: clip; /* clip: 장식(방사광)이 가로 스크롤을 만들지 않게 */
   display: flex; flex-direction: column;
   background: linear-gradient(180deg, #1d1745 0%, #140f2e 55%, #0c0920 100%);
   animation: hu-fade .25s var(--ease-out);
@@ -58,9 +58,9 @@
 }
 .hu-pedestal i { /* 눕힌 룬 서클: 정원을 돌린 뒤 세로로 눌러 바닥에 눕힌다 */
   position: absolute; left: 10%; right: 10%; top: 50%; aspect-ratio: 1; margin-top: -40%; border-radius: 50%;
-  background: repeating-conic-gradient(color-mix(in srgb, var(--cc) 80%, #fff) 0 3deg, transparent 3deg 15deg);
-  -webkit-mask: radial-gradient(closest-side, transparent 70%, #000 72% 84%, transparent 86%); mask: radial-gradient(closest-side, transparent 70%, #000 72% 84%, transparent 86%);
-  opacity: .85; transform: scaleY(.29); animation: hu-rune 9s linear infinite;
+  background: var(--rune) center / 100% 100% no-repeat; mix-blend-mode: screen;
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--cc) 80%, transparent));
+  opacity: .9; transform: scaleY(.29); animation: hu-rune 9s linear infinite;
 }
 .hu-hero {
   position: absolute; z-index: 1; left: 50%; bottom: calc(4% + 12px); height: 90%; width: auto; max-width: 80%; translate: -50% 0; object-fit: contain; object-position: bottom;
@@ -110,11 +110,13 @@
 .hu-skill + .hu-skill { margin-top: 6px; }
 .hu-skill-ico { flex: none; width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: rgba(10, 6, 30, .55); box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--cc) 70%, transparent); }
 .hu-skill-ico .k-ico { --ico: 24px; }
+.hu-skill-ico { overflow: visible; }
+.hu-skill-ico img.em { width: 46px; height: 46px; margin: -6px; filter: drop-shadow(0 2px 0 rgba(20, 10, 40, .5)); }
 .hu-skill.ult .hu-skill-ico { background: linear-gradient(180deg, #ffe45a, #ffb21a); box-shadow: 0 0 0 2px var(--ink); }
 .hu-skill b { display: block; font-weight: 400; font-size: 14px; color: #fff; }
 .hu-skill.ult b { color: var(--gold); }
 .hu-skill p { margin: 2px 0 0; font-family: var(--font-body); font-size: 13px; line-height: 1.4; color: #e2dcff; }
-.hu-thumbs { position: relative; z-index: 2; flex: none; display: flex; justify-content: center; gap: 8px; padding: 12px 10px 4px; }
+.hu-thumbs { position: relative; z-index: 2; flex: none; display: flex; justify-content: center; gap: 10px; padding: 12px 10px 26px; }
 .hu-thumb {
   --cc: #7b6cff; position: relative; width: 58px; height: 58px; padding: 0; border: 0; border-radius: 50%; overflow: visible;
   background: radial-gradient(circle at 50% 35%, color-mix(in srgb, var(--cc) 70%, #fff) 0%, var(--cc) 45%, #140f2e 100%);
@@ -123,19 +125,32 @@
 .hu-thumb > img { position: absolute; left: -12%; top: 4%; width: 124%; height: auto; clip-path: circle(41% at 50% 34%); pointer-events: none; }
 .hu-thumb.sel { transform: translateY(-4px) scale(1.12); box-shadow: 0 0 0 3px var(--ink), 0 0 0 6px #fff3a8, 0 0 18px 4px color-mix(in srgb, var(--cc) 80%, transparent); }
 .hu-thumb.locked { background: radial-gradient(circle, #3a3470, #140f2e); }
-.hu-thumb.locked > img { filter: brightness(0); opacity: .55; }
+.hu-thumb.locked > img { filter: brightness(.22) saturate(.4) drop-shadow(0 0 1.5px rgba(190, 180, 255, .9)); opacity: .9; }
+.hu-thumb-req { position: absolute; left: 50%; bottom: -36px; translate: -50% 0; font-family: var(--font-body); font-weight: 700; font-size: 9.5px; color: #b8b0e0; white-space: nowrap; }
 .hu-thumb-lock { position: absolute; right: -6px; top: -6px; z-index: 1; }
 .hu-thumb-lock .k-ico { --ico: 20px; }
 .hu-thumb-name {
-  position: absolute; left: 50%; bottom: -12px; translate: -50% 0; font-size: 11.5px; white-space: nowrap;
+  position: absolute; left: 50%; bottom: -22px; translate: -50% 0; font-size: 12px; white-space: nowrap;
   -webkit-text-stroke: 2.5px var(--ink); paint-order: stroke fill;
 }
 .hu-cp-foot { position: relative; z-index: 2; flex: none; margin-top: auto; padding: 18px 16px calc(12px + env(safe-area-inset-bottom)); }
 
 /* ── 영웅 화면 ── */
-.hu-scroll { position: relative; z-index: 2; flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 14px calc(env(safe-area-inset-bottom) + 24px);
+.hu-scroll { position: relative; z-index: 2; flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior-x: none; touch-action: pan-y; padding: 0 14px calc(env(safe-area-inset-bottom) + 24px);
   -webkit-mask: linear-gradient(180deg, transparent 0, #000 16px); mask: linear-gradient(180deg, transparent 0, #000 16px); }
-.hu-main-stage { height: clamp(210px, 36dvh, 330px); margin: 0 -14px; }
+.hu-main-stage { height: clamp(210px, 36dvh, 330px); margin: 0 -14px; overflow: hidden; overflow: clip; }
+/* 무대 마력 입자: 받침대에서 떠오르는 작은 빛(희귀도 색) */
+.hu-motes { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
+.hu-motes i { position: absolute; bottom: 12%; width: 6px; height: 6px; border-radius: 50%; background: radial-gradient(circle, #fff 0 25%, color-mix(in srgb, var(--cc) 90%, #fff) 45%, transparent 70%);
+  opacity: 0; animation: mote 3.4s ease-out infinite; }
+.hu-motes i:nth-child(1) { left: 30%; animation-delay: 0s; } .hu-motes i:nth-child(2) { left: 38%; animation-delay: .5s; }
+.hu-motes i:nth-child(3) { left: 46%; animation-delay: 1.3s; } .hu-motes i:nth-child(4) { left: 54%; animation-delay: .9s; }
+.hu-motes i:nth-child(5) { left: 62%; animation-delay: 1.8s; } .hu-motes i:nth-child(6) { left: 69%; animation-delay: 2.4s; }
+.hu-motes i:nth-child(7) { left: 34%; animation-delay: 2.9s; } .hu-motes i:nth-child(8) { left: 58%; animation-delay: 3.1s; }
+.hu-motes i:nth-child(9) { left: 50%; animation-delay: 2.1s; width: 8px; height: 8px; }
+.hu-main[data-r="epic"] .hu-motes i { background: radial-gradient(circle, #fff 0 25%, var(--r-epic) 45%, transparent 70%); }
+.hu-main[data-r="legend"] .hu-motes i { background: radial-gradient(circle, #fff 0 25%, var(--r-legend) 45%, transparent 70%); }
+@media (prefers-reduced-motion: reduce) { .hu-motes { display: none; } }
 .hu-main[data-r="legend"] .hu-pedestal { box-shadow: 0 0 0 3px var(--ink), 0 6px 0 3px #0c0920, 0 0 40px rgba(255, 190, 40, .8); }
 .hu-slotcol { position: absolute; z-index: 2; top: 6%; bottom: 10%; display: flex; flex-direction: column; justify-content: space-around; }
 .hu-slotcol.l { left: 12px; } .hu-slotcol.r { right: 12px; justify-content: space-evenly; }
@@ -143,7 +158,10 @@
 .hu-eq:active { transform: scale(.92); }
 .hu-eq img { width: 94%; height: 94%; object-fit: contain; pointer-events: none; }
 .hu-eq[data-r="epic"], .hu-eq[data-r="legend"] { box-shadow: inset 0 2px 0 rgba(255, 255, 255, .5), inset 0 -3px 0 var(--rc-lo), 0 3px 0 rgba(0, 0, 0, .35), 0 0 14px var(--rc); }
-.hu-eq.empty { color: rgba(190, 180, 255, .35); background: rgba(20, 15, 46, .72); box-shadow: inset 0 0 0 2px rgba(123, 108, 255, .35), 0 3px 0 rgba(0, 0, 0, .35); }
+.hu-eq.empty { /* 빈 칸 = 빛나는 실루엣(누르면 가방) */
+  color: rgba(214, 206, 255, .7); background: radial-gradient(circle at 50% 42%, rgba(123, 108, 255, .42), rgba(20, 15, 46, .82) 72%);
+  box-shadow: inset 0 0 0 2px rgba(160, 148, 255, .55), inset 0 0 14px rgba(123, 108, 255, .45), 0 3px 0 rgba(0, 0, 0, .35); }
+.hu-eq.empty .hu-sil { filter: drop-shadow(0 0 4px rgba(190, 180, 255, .8)); }
 .hu-sil { width: 62%; height: 62%; }
 .hu-eq-name { position: absolute; left: 0; right: 0; bottom: 2px; text-align: center; font-size: 10px; color: rgba(210, 200, 255, .75); }
 .hu-plate { position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 6px; margin-top: 2px; }
@@ -174,6 +192,7 @@
 .hu-bonuses { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .hu-bonus { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 9px 12px; border-radius: 12px; background: rgba(43, 35, 102, .8); box-shadow: inset 0 0 0 2px rgba(123, 108, 255, .25); font-size: 13px; }
 .hu-bonus b { font-size: 15px; }
+.hu-bonus.zero { opacity: .62; } .hu-bonus.zero b { color: #b8b0d8; }
 .hu-bonus.empty { grid-column: 1 / -1; justify-content: flex-start; gap: 10px; font-family: var(--font-body); color: #d0c8f5; }
 .hu-bonus.empty .k-ico { --ico: 32px; }
 .hu-milestones { display: flex; flex-direction: column; gap: 6px; }
@@ -287,3 +306,11 @@
 @media (prefers-reduced-motion: reduce) {
   .hero-ui *, .hero-ui *::before, .hero-ui *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+/* 장착 유도 · 비교 화살표 */
+.hu-up { position: absolute; right: 5px; bottom: 6px; width: 0; height: 0; border-left: 7px solid transparent; border-right: 7px solid transparent; border-bottom: 11px solid #4fe06a; filter: drop-shadow(0 0 0 #0e4a1e) drop-shadow(0 1.5px 0 #0e4a1e); animation: huUp 1s ease-in-out infinite; }
+@keyframes huUp { 0%, 100% { translate: 0 0; } 50% { translate: 0 -3px; } }
+.hu-eq.can-up { animation: huPulse 1.3s ease-in-out infinite; }
+.hu-eq.can-up::after { content: ""; position: absolute; right: -4px; top: -6px; width: 0; height: 0; border-left: 8px solid transparent; border-right: 8px solid transparent; border-bottom: 13px solid #4fe06a; filter: drop-shadow(0 1.5px 0 #0e4a1e); animation: huUp 1s ease-in-out infinite; }
+@keyframes huPulse { 0%, 100% { box-shadow: 0 0 0 2.5px var(--ink), 0 0 0 0 rgba(79, 224, 106, 0); } 50% { box-shadow: 0 0 0 2.5px var(--ink), 0 0 0 5px rgba(79, 224, 106, .75), 0 0 18px rgba(79, 224, 106, .6); } }
+@media (prefers-reduced-motion: reduce) { .hu-up, .hu-eq.can-up, .hu-eq.can-up::after { animation: none; } }
