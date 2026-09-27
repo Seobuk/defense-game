@@ -17,9 +17,68 @@ export const BAG_POS = C.BAG_POS;
 export const MANA_POS = C.MANA_POS;
 export const fontsReady = C.waitFonts; // main.js 부팅에서 첫 렌더 전에 기다린다
 
+// ── 가산 빛 예산 (DESIGN E 백색 과부하) ──
+// 모든 모듈이 'lighter'로 그리는 빛(drawImage·fillRect)의 화면 덮는 양(면적 × 알파)을 한 프레임 동안 센다.
+// 수요가 예산을 넘으면 다음 프레임의 가산 그리기 전체(선·채움 포함)를 C.lightK 배로 눌러 전장이 하얗게 날아가지 않게 한다.
+// 수요는 누르기 전 값으로 세므로 되먹임 진동이 없다. 변환 배율은 setTransform/scale/transform/save/restore 를 따라가며 추적.
+// ponytail: 빛 텍스처 평균 밝기를 한 상수(LIGHT_FILL)로 본다 — 모양별로 다르게 셀 필요가 생기면 텍스처에 c.fill 을 달 것
+const LIGHT_BUDGET = 0.16, LIGHT_FILL = 0.3, LIGHT_MIN = 0.35; // 예산: 스킬 하나 ≈ 0.1, 조용한 전장 ≈ 0.07 → 여러 스킬이 겹칠 때만 누른다
+function lightMeter(ctx) {
+  let det = 1, demand = 0, area = 1, k = 1, peak = 0, add = false;
+  const st = [];
+  const P = Object.getPrototypeOf(ctx);
+  const own = (name, fn) => { ctx[name] = fn; };
+  const setT = P.setTransform, scl = P.scale, trf = P.transform, sav = P.save, rst = P.restore, rT = P.resetTransform;
+  own('setTransform', function (a, b, c, d) { det = typeof a === 'number' ? Math.abs(a * d - b * c) : 1; return setT.apply(this, arguments); });
+  own('resetTransform', function () { det = 1; return rT.call(this); });
+  own('scale', function (x, y) { det *= Math.abs(x * y); return scl.call(this, x, y); });
+  own('transform', function (a, b, c, d) { det *= Math.abs(a * d - b * c); return trf.apply(this, arguments); });
+  own('save', function () { st.push(det, add); return sav.call(this); });
+  own('restore', function () { if (st.length) { add = st.pop(); det = st.pop(); } return rst.call(this); });
+  // 합성 모드는 JS 쪽에 들고 있는다(네이티브 getter 를 그리기마다 읽지 않게)
+  const gco = Object.getOwnPropertyDescriptor(P, 'globalCompositeOperation');
+  Object.defineProperty(ctx, 'globalCompositeOperation', { get() { return gco.get.call(this); }, set(v) { add = v === 'lighter'; gco.set.call(this, v); } });
+  let pk = 1; // 우선 빛 배율(C.lightPrio): √k
+  const kk = () => (C.lightPrio ? pk : k);
+  const lit = (x, w, h) => {
+    if (!add) return false;
+    const a = x.globalAlpha;
+    demand += Math.abs(w * h) * det * a;
+    x.globalAlpha = a * kk();
+    return a;
+  };
+  const dI = P.drawImage, fR = P.fillRect, fl = P.fill, sk = P.stroke;
+  own('drawImage', function (img, a1, a2, a3, a4, a5, a6, a7, a8) {
+    const n = arguments.length;
+    if (!add) return n === 5 ? dI.call(this, img, a1, a2, a3, a4) : n === 3 ? dI.call(this, img, a1, a2) : dI.apply(this, arguments); // 일반 합성은 곧장(대부분의 그리기)
+    const a = n === 9 ? lit(this, a7, a8) : n === 5 ? lit(this, a3, a4) : lit(this, img.width || 0, img.height || 0);
+    const r = dI.apply(this, arguments);
+    if (a !== false) this.globalAlpha = a;
+    return r;
+  });
+  own('fillRect', function (x, y, w, h) { const a = lit(this, w, h); fR.call(this, x, y, w, h); if (a !== false) this.globalAlpha = a; });
+  const dimOnly = f => function () { // 선·경로 채움: 면적은 안 세고 배율만(번개·고리 선은 가늘다)
+    if (add && k < 1) { const a = this.globalAlpha; this.globalAlpha = a * kk(); f.apply(this, arguments); this.globalAlpha = a; }
+    else f.apply(this, arguments);
+  };
+  own('fill', dimOnly(fl));
+  own('stroke', dimOnly(sk));
+  return {
+    next(screenArea) { // 프레임 시작: 지난 프레임 수요로 이번 배율(빨리 누르고 천천히 푼다)
+      const d = demand * LIGHT_FILL / Math.max(1, area), want = d > LIGHT_BUDGET ? Math.max(LIGHT_MIN, LIGHT_BUDGET / d) : 1;
+      k = want < k ? want : k + (want - k) * 0.08;
+      pk = Math.sqrt(k);
+      peak = d; demand = 0; area = screenArea;
+      C.setLightK(k);
+    },
+    get k() { return k; }, get demand() { return peak; },
+  };
+}
+
 export function createRenderer(canvas) {
   const ctx = canvas.getContext('2d');
   C.setCanvas(ctx);
+  const meter = lightMeter(ctx);
   let W = 1, H = 1, scale = 1, ox = 0, oy = 0, lastCW = -1, lastCH = -1, lastDpr = 0;
   let T = 0, RT = 0, frameNo = 0;
 
@@ -54,6 +113,7 @@ export function createRenderer(canvas) {
     T += da;
     RT += dt;
     C.setClock(T, RT, dt, ++frameNo);
+    meter.next(W * H);
     const evs = Array.isArray(events) ? events : [];
     hud.setStackLeft(opts.stackLeft); // 좁은 화면: 오른쪽 스킬 스택 왼쪽 끝(월드 x) — 콤보·상태 알약이 그 왼쪽에
     // 이벤트: 각 모듈이 자기 몫을 처리 (fx 가 먼저 — 피해 숫자 예산·운석/파이어볼 사전 처리)
@@ -122,6 +182,7 @@ export function createRenderer(canvas) {
     fx.drawFireballs();
     fx.drawHeroShots();
     fx.drawSouls();
+    units.drawEnemyReveal(); // 빛이 넘치는 프레임엔 적 실루엣도 이펙트 위로(E 백색 과부하)
     units.drawHeroReveal(view); // 이펙트 위로 영웅 윤곽을 한 번 더(마법이 터져도 영웅이 묻히지 않게)
     fx.drawCollab(view);
     world.drawLoots();
@@ -161,6 +222,7 @@ export function createRenderer(canvas) {
   }
 
   resize();
+  window.__wdLight = meter; // 디버그: 가산 빛 수요·배율 확인
   // topExtra: 월드 y=0 위로 보이는 여분(월드 단위). DOM HUD는 화면 맨 위라 HUD 띠 = 월드 y < 90 - topExtra
   // sideX: 넓은 화면에서 월드 x=0 왼쪽/x=720 오른쪽으로 보이는 여분(월드 단위)
   return { resize, frame, toWorld, toScreen, layout, get topExtra() { return C.topExtra; }, get sideX() { return C.sideX; } };

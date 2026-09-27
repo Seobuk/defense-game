@@ -720,3 +720,70 @@ sim/메타 쪽만 바꿨다(DOM 없음): `config.js · sim.js · spells.js · ru
 - 클래스 동등성(최고 50~68층 메타 3개, 24회씩): 기사 +11% · 궁수 -10% · 마법사 +5% · 성직자 +1% · 암살자 -8%(영웅 기여도 29~41%). 최고 81~93층 메타: +4 · -10 · +3 · +5 · -1%(영웅 25~37%). 무작위 특성: +6 · -8 · +13 · -1 · -10%.
 
 **UI 패스가 할 일(요약)**: 하단 강화 버튼·자동 강화 토글 제거(비상 스킬·궁극기·배속·자동 진행만) · 오른쪽 스킬 스택(`game.spells` 순서, `SKILL_BY_KEY`, Lv 점, `spellCooldown`, 빈 칸) · `fusionMerge` 연출(두 아이콘 → 하나, 빈 칸 반짝) · 협공 빛줄기(`game.collabs` + `collabSlots`) · `collabProc`/`linkFinish`/`slowmo` 연출 · 정비 화면 '마법사 수련'(`MAGE_TRAINING`, `trainCost`, `trainDisplay`, `campAct {type:'train'}`, 보유 `meta.gold`) + 보석 강화(`META_UPGRADES`) · 결과 화면 `rewards.gold` · 도감 '협공' 탭(`SYNERGIES` kind `collab`). **없어진 export**(UI가 아직 참조하면 지울 것): config `UPGRADES/UPGRADE_KEYS/upgradeCost/upgradeMax/statDisplay/atkDmg/fireRate/critChance/startGoldAmount`, spells `onBasicHit`(→ `onSpellHit`), bot `autoUpgrade`(→ 테스트용 `botSpendGold`). main.js는 base 브랜치에서 이미 로그라이트 이전 API(`PERK_KEYS` 등)를 쓰고 있어 UI 패스가 통째로 새 API로 옮겨야 한다.
+
+### 3차 변경 구현 계약
+> 사용자: "자동 진행 끄면 내가 스킬 선택하게" · "AI 마법사 빼자(나중 협업 모드 때 추가)" · "파이어볼 6 회오리 6 찍으면 화염회오리 1로" · 스킬 이펙트가 레벨과 함께 자란다.
+> 네 트랙(sim/메타 · 특성 · 그림 · 화면)이 나눠 만들고 최종 통합·밸런스 패스가 맞췄다. 이 절이 위 절들과 겹치면 이 절이 우선이다(특히 '영웅 특성 트리' 절의 트리 모양·포인트 공식은 아래 D로 대체).
+
+**A. 카드는 늘 직접 고른다 · '자동 진행' 하나 · 카드 화면의 '자동 선택'(별개)**
+> 사용자가 빌드 도중 바꿈: "켜도 카드 선택은 직접 하게" → 이어서 "카드 선택 화면에서 자동 선택 켜게 해 줘. 귀찮은 이들을 위해서".
+- **카드는 자동 진행과 상관없이 플레이어가 고른다.** 카드가 뜨면 전투가 멈추고(`step`이 `g.pick` 동안 멈춤) 고를 때까지 기다린다 — 카운트다운 없음. 새 도전 무료 카드·이어하기로 복원된 선택·미뤄 둔 카드(`reofferPick`)·새로고침(`reroll`) 모두 같다.
+- **저장값 두 개**(`meta.settings`): `autoNext`(자동 진행 — 새 저장 **ON**, 기존 저장은 저장된 값, 최상위 `meta.auto`·옛 '자동 전투'는 버림) · `autoPick`(카드 자동 선택 — 새 저장 **OFF**). `newRun`/`restoreRun`이 `players[0].auto`/`players[0].autoPick`을 만든다.
+- **자동 진행**(`act {type:'auto', on}` = `players[0].auto`, 선택 중에도 받음): ON = 층을 깨면 다음 층 자동(main.js, 클리어 화면에서 켜면 1.2초 뒤) + 영웅 궁극기 자동(`bot.autoHero`). OFF = '다음 층 ▶' 버튼 · 궁극기 버튼. 카드에는 아무 영향이 없다. 영웅 자동 장착·자동 특성은 늘 돈다.
+- **자동 선택**(`act {type:'autoPick', on}` = `players[0].autoPick`, 자동 진행과 완전히 별개): 카드 화면 아래 토글 `#pick-auto`(설정 화면 '카드 자동 선택' `data-set="autoPick"`도 같은 값). ON이면 `pick.autoLeft = PICK_AUTO_T`(**2초**) — `tickPick`이 실시간으로 세다가 0이면 추천 카드(`bot.pickCard`, UI가 테두리를 금빛으로 채우는 그 카드)를 고른다. 그 사이 탭하면 직접 고른 카드가 우선. 선택 중에 켜면 바로 카운트다운, 끄면 `autoLeft = null`로 바로 사라지고 기다린다. main.js는 카드가 실제로 보일 때(`ui.isPickShown()`, 영웅 화면이 닫혀 있을 때)만 `tickPick`을 부른다.
+- **봇 전용 경로**: `players[0].kind === 'bot'`(헤드리스 러너 `harness.botPlayer`)이면 `autoPick`과 상관없이 카드 자동 선택 + 운석·빙결 자동(`bot.autoSkill`). 게임의 플레이어는 늘 `'human'`이고 UI에는 kind를 바꾸는 길이 없다.
+- 이벤트·필드: `g.pick = { cards, autoLeft: number | null, starter }`. UI API: `H.onToggleAutoNext(on)`(하단 토글) · `H.onToggleAutoPick(on)`(카드 화면 토글) · `H.onSettings({autoPick})`(설정 화면 — main.js가 도전 중이면 `act autoPick`도).
+
+**B. 솔로 마법사 — AI 동료 제거(협동 모드 자리는 잠든 채 유지)**
+- 성벽 위 마법사는 나 한 명, **성벽 중앙 `config.js SOLO_MAGE = {x:360, y:985}`**. 기본 주문·스킬 시전 이벤트의 `cast.x/y`, 얼음 창 출발점, 조합 발견 위치가 모두 여기. `mageAt(g, o)` = 솔로면 `SOLO_MAGE`, 협동이면 `CANNONS[o]`.
+- `players[]`는 2칸 모양 그대로(`players[1]` = 잠든 협동 자리, run.js는 `{name:'동료', kind:'human', auto:false}`). **`createGame({coop:true})`일 때만** 동료가 깨어난다(기본 주문 서리 화살·비상 스킬·마법사 조합·협동 조합·성벽 결계 수련). 솔로에선 `players[1]`이 시전·`act`(항상 false)·조합·성벽 최대치에 아무 영향이 없다. `g.coop`, sim `mages(g)`에 `ponytail:` 주석.
+- 없어진 것: `g.allySpells`, `g.allySpellT`, `allySpell` 이벤트, config `ALLY_SPELLS/allySpellLv`. 협동 조합(쌍둥이 포화·황금비·빙하 운석·이중 필살)은 협동 모드에서만 켜진다 — 도감 UI는 솔로에서 `kind:'duo'`를 숨기거나 '협동 모드' 표시. `dmgDone[1]`·`dmgSkill[1]`은 솔로에서 0.
+- 저장: `serializeRun`에 `allySpells`·`auto`가 없고, `normalizeRun`은 옛 값을 조용히 버린다(throw 없음).
+
+**B(추가). 영웅 성문** — `hero.js HERO_GATE = { x: SOLO_MAGE.x + 130, y: WALL_Y - 30 }`(490, 930): 층 시작·부활 때 영웅이 성벽 중앙 마법사를 가리지 않게 마법사 단 오른쪽 옆(`art/world.js`의 성문 단도 같은 값). ponytail: 협동 모드가 돌아오면 두 마법사 사이로.
+
+**D. 영웅 특성 개편(`talents.js` — 위 '영웅 특성 트리' 절의 선형 6노드·포인트 공식을 대체)**
+- 트리: 클래스 5 × 갈래 3 × **6단**(`tier` 0~5), 단마다 2~3노드 — 랭크형(2~3)과 1랭크 혼합, 갈래마다 **택1** 묶음 2개(`or`, 2단·4단), **핵심 노드** 1개(`ks`, 3단 — 전투 방식이 바뀌는 작은 궁극: bash·critBurst·ultRefresh·firstCrit·frenzy·packHunt·overheat·shatter·surge·emergency·holyNova·grace·shadowStrike·neuro·momentum, 모두 hero.js 훅), **궁극 특성**(`cap`, 6단, 기존 15종).
+- 단 해금 = **그 갈래에 쓴 포인트** `TIER_REQ = [0, 3, 6, 10, 14, 18]`(앞 노드 만렙 조건 없음). **궁극 특성은 클래스당 하나** — 하나를 찍으면 다른 갈래 궁극은 잠김('궁극은 하나만', 무료 초기화로 다시). **혼합 노드** `TALENT_HYBRIDS[cls]`(클래스당 2) = 두 갈래에 각각 `HYBRID_REQ`(8)점.
+- 예산 `talentPoints(hero)` = Lv20까지 레벨당 1, 이후 0.44(Lv20 20 · Lv40 28 · Lv76 44 · **Lv99 54**). 갈래 하나를 다 찍는 데 24~27점 → Lv99 = 한 갈래 마스터 + 나머지 둘 절반씩.
+- 협공 갈래 조건(서리 방벽·폭풍 소환)은 `branchSpent(hero, cls, branch) ≥ COLLAB_BRANCH_RANKS`(3). 협공 효과 노드(`collab`)는 모든 클래스에.
+- 추천·자동: `TALENT_RECOMMEND[cls] = { order:[주력, …], picks }`, `recommendNext(hero, cls)`(주력 갈래의 열린 궁극·핵심 먼저 → 낮은 단 → 추천 혼합 → 나머지 두 갈래 번갈아). `bot.botTalents`·`hero.autoTalent`가 이것을 쓴다.
+- 규칙 API: `talentBlock(hero, cls, key) → null | { code: max|points|tier|or|cap|hybrid|none, msg }` · `canAllocate` · `allocateTalent` · `resetTalents` · `talentBonus` · `branchSpent/branchMax/nextTierNeed/talentCap`.
+- 저장: 영웅에 `talentVer`(`TALENT_VER` 2) · `talentNotice`. `talentVer`가 없는 저장(v0.0.7까지 · WD2/WD3 백업 코드 포함)은 **모든 클래스 특성을 무료 환불**(`migrateTalents`), 포인트를 쓴 적이 있으면 정비 화면에 한 번 '특성 개편!' 안내 → `campAct {type:'talentNoticeSeen'}`. `SAVE_VERSION`은 그대로(3).
+- 화면(`talentui.js`): 단 = 행, 왼쪽 레일이 다음 단까지 차오름, '다음 단 해금까지 N점', 택1은 '또는' 캡슐(한쪽을 찍으면 다른 쪽 흐림), 핵심 태그, 잠긴 궁극, 추천 배지. 폰은 갈래 탭 + 아래 혼합 띠, 트리 폭 600px 이상(폴드·넓은 화면)은 3갈래 나란히 + 두 갈래 사이 혼합 노드.
+
+**E(그림). 이펙트가 레벨과 함께 자란다 — `art/fx.js`**
+- 레벨 = 이벤트 `lv` → `view.spells[key]` → `view.book[key]`(`skillLv(view, key, ev)`), 단계 `tier(lv)`: Lv1 작고 단색·입자 적음·흔들림 없음 → Lv2~3 크기·입자·두 번째 색 · 흔들림 시작 → Lv4~5 보조 레이어(잔상·룬·2차 폭발·옆 광선) → **Lv6 완전체 마무리**(스킬마다 고유, 스킬별 1.8~3.2초에 한 번 · 동시에 3개까지) + 마법사 머리 위 짧은 시전 컷.
+- 융합 Lv6: 불꽃 회오리 = 하늘까지 닿는 화염 기둥 · 초전도 = 하늘의 얼음 왕관 번개 · 증기 폭발 = 버섯 머리 증기 기둥 · 폭풍의 눈 = 황금 눈의 폭풍 고리 · 황혼 = 일식 + 금·보라 쌍광선 · 플라즈마 = 조여드는 전기 고리 + 8갈래 번개 · 망령 군단 = 거대한 망령의 문 + 해골 기사 4 + 유령 행렬 12 · 수호룡 = 금빛 드래곤 횡단.
+- MAX!: `spellPick{level ≥ SPELL_MAX_LV}` → 마법사 뒤 금빛 기둥·룬 + 스킬 문장 'MAX!'(스택 칸의 MAX 도장은 ui.js).
+- **백색 과부하 금지**: `render.js` 광량 예산(프레임마다 가산 빛 면적을 재서 넘치면 다음 프레임 가산 그리기 전체를 `lightK` 배, 최저 0.35 — 스킬 하나는 안 눌림, 디버그 `window.__wdLight`) · `flash()` ≤120ms, 겹치면 절반 · 큰 글로우는 흰 중심 없는 `hu(col)` · 흰 광선 중심 ≤20px · 형태(외곽선 불꽃·문·기사·결정·드래곤)는 가산이 아닌 보통 그리기 · 빛이 많은 프레임엔 적 실루엣(`units.drawEnemyReveal`)·영웅을 효과 위에 다시 그린다.
+- 솔로 그림: 마법사 하나(`units.SOLO_X` 360, `mageOn(view, i)` — 두 번째 마법사는 `view.coop`일 때만), AI 동료 주문서·'AI' 표시·마법사 사이 구슬 호는 없다.
+
+**UI(ui.js · main.js · camp.js)**: 하단 = 운석 · 빙결 · 영웅 궁극기 | 배속 · 자동 진행(카드 선택 중에도 이 토글만 살아 있음). 카드 화면 = 머리글 + '전투 정지 — 천천히 고르세요'(자동 선택 ON이면 카운트다운 링 + '추천 카드 자동 선택 · 탭하면 직접') + 카드 + [새로고침] [자동 선택]. 스택 = Lv 점 6개, Lv6 금테 MAX(+ 도장), 발견한 융합의 짝 두 칸 금빛 연결선(`#flinks`), 칸 툴팁 진행도. 카드 ✦ 띠 '이걸 찍으면 융합!' + (발견했으면) '→ 이름', 미발견은 '→ ???'. 정비 화면 '특성 개편!' 안내(`.cp-notice`). AI 동료 카드·주문 목록·토스트는 없다.
+
+**C0. 스킬 만렙 6** — `SPELL_MAX_LV = 6`. 기본 14종 `SPELLS[].lv/desc`, 융합 8종 `FUSIONS[].lv/lvDesc`(= `SKILL_BY_KEY[k].desc`) 모두 6단계. 옛 Lv5 저장은 그대로(만렙이 아닐 뿐).
+
+**C. 융합 = 두 재료 만렙 → 융합 Lv1**
+- `FUSIONS[i].test(spells)` = 두 재료 칸을 다 가졌나(짝이 모였다), **`.ready(spells)` = 두 칸 모두 만렙 스킬이 있나(합체 조건)**. `refreshFusion`(카드 선택·도전 시작·이어하기 때)이 ready인 융합을 합친다: 재료 둘이 빠지고 **융합 스킬 Lv1**(슬롯 맨 뒤) → `fusionMerge{ fusion, from:[a,b], level:1, slotFreed:true, full }` + `synergy{ key, o:-1, first }`(첫 발견이면 `hitstop{350}`). 연쇄 합체 처리. 시작 스킬(Lv1)끼리는 합체하지 않는다.
+- 재료 효과는 **만렙 그대로** 계속 발동(`g.book[재료] = 6`) + 융합 전용 시전(융합 레벨). 그래서 Lv1도 재료 둘보다 조금 세고 Lv6은 확실히 세다 — `npm test` 출력 '융합 강도'(재료 둘 만렙 대비, 20층 30초): Lv1 ×1.10~1.37 · Lv6 ×1.94~3.8(불꽃 회오리 3.8 · 황혼 3.6 · 증기 3.1 · 플라즈마 3.0 · 초전도 2.9 · 망령 2.7 · 수호룡 2.7 · 폭풍의 눈 1.9). 폭풍의 눈 낙뢰 가속 `FUSION_FX.stormEyeMul` 3 → 1.5.
+- 보유 융합의 재료(`g.fusionParts`)는 새 카드로 다시 나오지 않는다. **각성 카드는 강화할 것도 새로 넣을 것도 없을 때만**(한 장이라도 있으면 그 카드들만 — 1~2장일 수 있다).
+- 카드 `fusionHint:true` = **이 카드가 합체를 완성할 때만**(짝이 이미 만렙이고 이 카드가 이 스킬을 만렙으로 만든다). 미발견이면 UI는 ✦ "이걸 찍으면 융합!"만(짝 비공개).
+- **진행도(UI)**: `g.fusionProgress`(refreshFusion이 갱신) = config `fusionProgress(spells, discovered)` → `[{ key, parts:[a,b], lv:[la,lb], max:6 }]` — 도감에 오른(발견한) 융합 중 아직 없고 짝이 모인 것만. 스택 금빛 연결선 = `parts` 두 칸, 툴팁 "불꽃 회오리까지: 화염구 6/6 · 회오리 3/6". 정비 화면 등 게임 밖에선 `fusionProgress(spells, meta.discovered)`.
+
+**E(sim). 스킬 레벨이 이벤트에** — 쿨타임 스킬·융합 스킬의 `cast{…}`와 `spell{…}`에 `lv`(그 스킬 레벨 1~6: 기본 스킬은 `g.book` 레벨 = 합쳐진 재료는 6, 융합 시전은 융합 레벨). 폭풍의 눈 벼락(`spell{key:'lightningStrike', storm:true, lv}`) · 드래곤 브레스(`spell{key:'babyDragon', lv}`)도. 기본 주문 `cast{basic:true}`엔 없다. Lv6 도달·MAX 연출은 `spellPick{spell, level:6}` / `fusionMerge`로.
+
+**봇 · 하네스**
+- `bot.pickCard`(헤드리스 봇 · 카드 화면 '자동 선택'의 추천 카드 공용): 합체 완성 ✦ > 협공이 켜지는 스킬 > **가진 융합 스킬 강화**(카드 한 장당 가장 큰 화력 — 융합 Lv1 ×1.1~1.4 → Lv6 ×1.9~3.8) > **목표 짝**(짝이 모인 융합 중 레벨 합 최고) 강화 > 다른 짝 강화 > 보유 강화 > 가진 스킬과 짝이 되는 새 스킬 > 새 스킬 > 각성. (최종 밸런스 패스에서 융합 스킬 강화를 목표 짝 위로 — 새 짝만 쫓아 후반 빌드가 융합 4.3개로 넘치던 것을 3.9개로.)
+- `harness.botPlayer(g)` = 자동 진행 ON + `kind:'bot'`(봇 전용 경로: 카드 자동 선택 · 운석·빙결). `playRun` → `fusions`(도전의 합체 수) · `firstFuse`(첫 합체 층). 캠페인 출력에 '융합(첫 층)' 열과 시드 평균 '3번째 도전부터 도전당 합체 · 후반(마지막 1/3) 빌드 융합 수 · 첫 합체 층', 목표 확인(도전당 ≥1, **후반 2~4**).
+- 단위 테스트: 솔로(시전 위치 360·동료 없음·옛 allySpells 버림) + 협동 모드 자리 · **카드 흐름**(자동 진행 ON이어도 카운트다운 없이 무한 대기 · 새 도전·이어하기 복원도 대기 · 자동 선택 ON = 2초 뒤 추천 카드 · 선택 중 토글 즉시 반영 · 새 저장 autoNext ON/autoPick OFF) · 궁극기 자동은 자동 진행 ON일 때만 · 융합 8종(만렙 조건·✦ 조건·진행도·Lv1 합체·재료 만렙 유지·lv 이벤트·강도).
+
+**밸런스(최종 — `npm test`, 결정적: 같은 코드면 같은 결과)**
+- 1차(sim 트랙): 동료 화력이 빠지고 융합이 늦게(두 재료 만렙) 오면서 → `stages.js DIFF` 1~9층 ÷1.5, 11층부터 ÷3.6~5.6(중반이 가장 크게, 100층 ÷1.7) · 협공 `COLLAB_FX` 약 −30%(문구 숫자도).
+- 최종 패스: 영웅 클래스 배율 `dps` 기사 1.45 → **1.38**(동등성 메타에서 영웅 기여도 46% → 33% — 클래스 상한 45%) · 마법사 1.0 → **0.88**(동등성 +18% → +10%) · 협공 쌍화염 `twinFlame` 1.5 → **1.25**(문구 125%) · 봇 카드 우선순위(위) · 영웅 성문 위치(B). 궁수 0.95 · 성직자 0.9 · 암살자 0.95 · `HERO_K` 0.17 · 특성 수치는 그대로.
+- 결과(시드 1~3): 첫 도전 **10 · 11 · 11층** · 도전당 **+3.33 · +3.42 · +3.30층** · **28 · 27 · 28회** · **18.5 · 15.9 · 19.3시간** · 절반 이하 층 26.8초 · 새 층 90.6초 · 특성 완성 영웅 기여도 **30 · 33 · 30%** · 11층부터 마법사 스킬 비중 98.5%(도전별 최저 86~93%).
+- 융합: 첫 합체 평균 9.6층 · 3번째 도전부터 도전당 **2.69회**(초반 짧은 도전 2~6회차는 0~1회 — 첫 합체가 10~15층이라 11~17층에서 끝나는 도전은 한 번 합체하거나 못 함, 20층을 넘기는 6회차 무렵부터 도전마다 1회 이상) · 후반(마지막 1/3) 빌드 **3.86개**(시드별 3.90 · 3.89 · 3.80).
+- 협공 강도 **+20%**(기사 +9 · 궁수 +30 · 마법사 +36 · 성직자 +15 · 암살자 +13%, 최고 54~56층 메타 · 클래스별 24회). 클래스 동등성(같은 메타): 기사 **+2%** · 궁수 **−3%** · 마법사 **+10%** · 성직자 **−7%** · 암살자 **−2%**(영웅 기여도 21~33%).
+- 초반 템포(1~10층): 적 교전 생존 2.0초 · 중앙 띠 처치 95% · 영웅 중앙 띠 94% · 스킬 시전 116/분 · 1~9층 패배 없음. 융합 강도(재료 둘 만렙 대비): Lv1 ×1.10~1.37 · Lv6 ×1.94~3.78.
+- **주의 — 캠페인은 혼돈적이다**: 영웅 배율 하나를 0.05만 바꿔도 캠페인 궤적이 바뀌어 동등성 측정 메타(최고 50층에 처음 닿은 시점의 영웅 Lv 37~59)가 달라지고, 클래스별 결과가 ±10%p 흔들린다. 수치를 바꾸면 `npm test` 전체를 다시 돌려 확인할 것(시드 평균 목표가 기준, 시드 하나하나는 흔들린다).
+
+**다음 웨이브(4차)를 막지 않게**: 변이는 Lv6 스킬·융합 스킬의 카드 한 종류로 `genCards`에 더하면 된다(합체 조건은 `FUSIONS[].ready`라 변이한 재료도 레벨 6이면 그대로 합체). 망각은 `g.spells`에서 키를 빼고 `refreshFusion`을 부르면 book·진행도·협공이 다시 계산된다. 던전(지역) 특성은 `stages.js`의 테마(`themeOf`)에 붙일 자리 — 적 원소 약점은 `spellHit`의 `kind`(원소)로 판정할 수 있다.

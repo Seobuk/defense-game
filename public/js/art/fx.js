@@ -1,16 +1,16 @@
 // 이펙트(VFX) — 파티클·빛(글로우)·마법진·충격 프레임·마법탄/투사체·원소 스킬 연출·데미지 숫자·화면 틴트.
 // 이벤트 → 연출 매핑의 대부분(hit/kill/boom/spell/영웅 공격·궁극기/스킬/광란 등)이 여기 있다. docs/ART.md §5.3, §6, §9
 // 소유: FX 에이전트. 계약(아래 export 목록과 render.js 호출 순서)은 docs/ART.md §14 참고.
-import { WORLD_W, WORLD_H, WALL_Y, CANNONS, SPELL_BY_KEY, FUSION_BY_KEY } from '../config.js';
+import { WORLD_W, WORLD_H, WALL_Y, SPELL_BY_KEY, FUSION_BY_KEY, SPELL_MAX_LV } from '../config.js';
 import { fmt, clamp } from '../util.js';
 import { BOSSES } from '../stages.js';
 import {
-  TAU, S, bake, bakeO, circ, poly, rad, lin, fs, shine, lite, dim, mulberry, INK2, EL,
+  TAU, S, bake, bakeO, circ, poly, rad, lin, fs, shine, lite, dim, cel, mulberry, INK2, EL,
   ctx, K, BX, BY, T, RT, topExtra, sideX, fillView, drawView, GOLD_POS, hudY, frameNo,
-  shake, flash, punchZoom, colA, flashA, flashCol, MANA_POS, NUM_FONT, OWN, rnd, easeOut, lerp, pool, take,
-  wt, ht, place, placeH, spr, additive, groundRune,
+  shake, flash, punchZoom, colA, flashA, flashCol, MANA_POS, NUM_FONT, OWN, rnd, easeOut, easeBack, lerp, pool, take,
+  wt, ht, place, placeH, spr, put, ell, additive, groundRune, setLightPrio,
 } from './core.js';
-import { MF, HF, visOf, stuns, afterImage, MAGE_FEET, bone, visR, bossDY, warpY, babyDragon } from './units.js';
+import { MF, mageOn, HF, visOf, stuns, afterImage, MAGE_FEET, bone, visR, bossDY, warpY, babyDragon, babyWing, ghostSpr } from './units.js';
 import { emblem } from './emblems.js';
 import { coins } from './world.js';
 import { stamp, pop } from './hud.js';
@@ -41,7 +41,7 @@ const METEORS = pool(20, () => ({ on: false, x0: 0, y0: 0, x1: 0, y1: 0, t: 0, d
 const DECALS = pool(24, () => ({ life: 0, max: 1, x: 0, y: 0, r: 0 }));
 const BEAMS = pool(4, () => ({ life: 0, max: 1, x: 0, y0: 0 }));
 const SPRS = pool(150, () => ({ life: 0, max: 1, x: 0, y: 0, s0: 1, s1: 1, ang: 0, spin: 0, vs: 0, sq: 1, img: null }));
-const FIREBALLS = pool(10, () => ({ on: false, t: 0, dur: 0.28, x0: 0, y0: 0, x1: 0, y1: 0, r: 100, plasma: false, kills: [] }));
+const FIREBALLS = pool(10, () => ({ on: false, t: 0, dur: 0.28, x0: 0, y0: 0, x1: 0, y1: 0, r: 100, plasma: false, kills: [], lv: 3 }));
 const SOULS = pool(48, () => ({ on: false, t: 0, dur: 0.8, x0: 0, y0: 0, cx: 0, cy: 0 }));
 const HSHOTS = pool(24, () => ({ on: false, t: 0, delay: 0, dur: 0.1, cls: '', x0: 0, y0: 0, x1: 0, y1: 0, crit: false }));
 const ULTS = pool(6, () => ({ on: false, t: 0, dur: 1, cls: '', x: 0, y: 0, r: 0, tg: [], k: 0 }));
@@ -63,7 +63,10 @@ export const dmgMode = () => lastMode;
 // 빛 스프라이트 캐시 (색 → 구운 글로우, 문자열 키 생성·GC 줄임). 해상도가 바뀌면 resetGlows()
 const glows = new Map();
 export const gl = col => { let c = glows.get(col); if (!c) glows.set(col, c = glow(col)); return c; };
-export function resetGlows() { glows.clear(); ringCache.clear(); }
+// 흰 심 없는 색 빛(E 백색 과부하): 큰 빛·광선 헤일로는 이걸로 — 멋은 채도로, 흰색은 작은 심에만
+const hues = new Map();
+export const hu = col => { let c = hues.get(col); if (!c && !/^#[0-9a-f]{6}$/i.test(col)) return gl(col); if (!c) hues.set(col, c = bake('f:hue|' + col, 16, 16, x => { circ(x, 0, 0, 16); x.fillStyle = rad(x, 0, 0, 0, 16, [[0, col], [0.45, col + '8c'], [1, col + '00']]); x.fill(); }, Math.min(S, 1.5))); return c; };
+export function resetGlows() { glows.clear(); ringCache.clear(); hues.clear(); }
 
 // 수직 빛기둥 (부활·레벨업·심판·성직자 타격) — 다른 모듈용 생성 함수
 export function lightBeam(x, w, y0, y1, life, core, halo) {
@@ -667,8 +670,20 @@ export function nearest(view, x, y, maxD) {
 // ══ 마법 판타지 이벤트 연출 ══
 export function sprPop(img, x, y, s0, s1, life, ang = 0, spin = 0, sq = 1) {
   const s = take(SPRS);
-  s.img = img; s.x = x; s.y = y; s.s0 = s0; s.s1 = s1; s.life = s.max = life; s.ang = ang; s.spin = spin; s.vs = rnd() * TAU; s.sq = sq;
+  s.img = img; s.x = x; s.y = y; s.s0 = s0; s.s1 = s1; s.life = s.max = life; s.ang = ang; s.spin = spin; s.vs = rnd() * TAU; s.sq = sq; s.norm = false;
   return s;
+}
+// 일반 합성 팝(외곽선 있는 모양 — 밝은 바닥에서도 하얗게 뜨지 않고 형태로 읽힌다). 회전 = ang 그대로
+function shapePop(img, x, y, s0, s1, life, ang = 0) { const s = sprPop(img, x, y, s0, s1, life, ang, 0); s.vs = 0; s.norm = true; return s; }
+// 만화풍 불꽃 혀(셀 셰이딩 + 굵은 테). 원점 = 뿌리, 끝 = -y
+function petal() {
+  return bake('f:petal', 12, 22, x => {
+    const path = () => { x.beginPath(); x.moveTo(0, -21); x.bezierCurveTo(9, -8, 11, 6, 0, 20); x.bezierCurveTo(-11, 6, -9, -8, 0, -21); };
+    path(); fs(x, lin(x, 0, -21, 0, 20, [[0, '#ff4a1a'], [0.45, '#ff8a1e'], [1, '#ffd23a']]), 2.6, '#5a1400');
+    x.beginPath(); x.moveTo(0, -6); x.bezierCurveTo(5, 2, 5, 10, 0, 16); x.bezierCurveTo(-5, 10, -5, 2, 0, -6);
+    x.fillStyle = '#fff2a0'; x.fill();
+    shine(x, -3.5, -2, 1.6, 4, 0.2, 0.7);
+  }, Math.min(S, 2));
 }
 function soul(x, y) {
   const s = take(SOULS);
@@ -681,139 +696,328 @@ export function manaSparkle() {
   burst(K_STAR, MANA_POS.x, MANA_POS.y, 12, 40, 180, 0.7, 12, ['#ffffff', '#e0a0ff', '#ff9ad8'], 160, 1.2, 30);
   for (let k = 0; k < 6; k++) part(K_GLOW, MANA_POS.x - 110 + k * 44, MANA_POS.y, 90, 0, 0.18 + k * 0.05, 34, k % 2 ? '#ffffff' : '#d890ff');
 }
-// 증기 폭발 (화염 + 냉기 융합)
-function steamFx(x, y, r) {
-  part(K_GLOW, x, y, 0, 0, 0.14, r * 1.3, '#ffffff');
-  part(K_GLOW, x, y, 0, 0, 0.3, r * 1.8, '#ff8a3a');
-  burst(K_SMOKE, x, y, 9, 60, 190, 1.0, 46, 'rgba(236,248,255,0.75)', -60, 1.6);
-  burst(K_SHARD, x, y, 6, 150, 380, 0.6, 6, ['#ffffff', '#bff4ff', '#7fe3ff'], 500, 1, 80);
-  burst(K_GLOW, x, y, 6, 80, 240, 0.4, 20, ['#ffb040', '#ff6a1f'], -80, 3);
-  ring(x, y, 8, r * 1.2, 0.4, '#e8fbff', 9);
-  sprPop(starFlash('#bff4ff'), x, y, 0.4, 1.5, 0.22);
-  shake(0.05);
+// 증기 폭발 (화염 + 냉기 융합) — 흰 원판 대신 하늘색 증기 + 주황 심(백색 과부하 금지)
+function steamFx(x, y, r, t = tier(3)) {
+  part(K_GLOW, x, y, 0, 0, 0.12, r * 0.8, '#ffffff');
+  part(K_GLOW, x, y, 0, 0, 0.3, r * 1.6, '#ff8a3a');
+  burst(K_SMOKE, x, y, cnt(9, t), 60, 190, 1.0, 46, 'rgba(190,228,255,0.6)', -60, 1.6);
+  burst(K_SHARD, x, y, cnt(6, t), 150, 380, 0.6, 6, ['#ffffff', '#bff4ff', '#7fe3ff'], 500, 1, 80);
+  if (t.two) burst(K_GLOW, x, y, cnt(6, t), 80, 240, 0.4, 20, ['#ffb040', '#ff6a1f'], -80, 3);
+  ring(x, y, 8, r * 1.2, 0.4, '#bfeaff', 9);
+  sprPop(starFlash('#7fe3ff'), x, y, 0.4, 0.9 + 0.6 * t.f, 0.22);
+  shk(0.05, t);
 }
-// 낙뢰: 하늘에서 지그재그 볼트 2겹 + 섬광 + 그을음 (초전도면 얼음 파편)
-function strike(x, y, sup, first) {
-  const col = sup ? '#dff8ff' : '#ffe53a', halo = sup ? '#2a78e0' : '#7b5cff';
+// ═════════════ 스킬 레벨 연출 (DESIGN E): Lv1 소박 → Lv2~3 크기·입자·색 → Lv4~5 보조 레이어 → Lv6 완전체 마무리 ═════════════
+// 레벨 = 이벤트 lv(sim) → 없으면 view.spells / view.book(융합이 품은 재료)
+export function skillLv(view, key, ev) {
+  const v = +(ev && ev.lv) || (view && view.spells && view.spells[key]) || (view && view.book && view.book[key]) || 1;
+  return clamp(v | 0, 1, SPELL_MAX_LV);
+}
+// 등급: s 크기 · n 입자 배율 · two 둘째 색 레이어 · sec 보조 레이어(잔상·룬·2차 폭발) · max 완전체 · sh 흔들림(Lv1 = 0)
+function tierOf(lv) {
+  const f = (lv - 1) / Math.max(1, SPELL_MAX_LV - 1);
+  return Object.freeze({ lv, f, s: 0.7 + 0.4 * f, n: 0.35 + 0.75 * f, two: lv >= 2, sec: lv >= 4, max: lv >= SPELL_MAX_LV, sh: lv < 2 ? 0 : 0.4 + 0.6 * f });
+}
+const TIERS = Array.from({ length: SPELL_MAX_LV + 1 }, (_, l) => tierOf(Math.max(1, l))); // 매 프레임 새 객체 대신 미리 구운 표(읽기 전용)
+export const tier = lv => TIERS[clamp(lv | 0, 1, SPELL_MAX_LV)];
+const cnt = (n, t) => Math.max(1, Math.round(n * t.n * (0.4 + 0.6 * glowK))); // 붐비면(glowK↓) 입자 수도 줄인다(LOD)
+const shk = (a, t) => { if (t.sh > 0) shake(a * t.sh); };
+
+// 완전체(Lv6) 마무리 연출: 스킬마다 고유한 한 방. 같은 스킬은 gap초에 한 번, 동시에 2개까지(LOD — 폰 60fps) — 막히면 Lv5 모양으로
+const FIN = pool(6, () => ({ on: false, t: 0, dur: 1, key: '', x: 0, y: 0, r: 0, dir: 1, pts: null, k: 0 }));
+const finAt = new Map();
+const CUT = { t: 9, key: '' };      // Lv6 전용 시전 컷(짧게): 마법사 위 스킬 문장 + 원소 베기
+const MAXFX = { t: 9, key: '' };    // 만렙 도달 'MAX!' 각성 연출(한 번)
+function finale(key, x, y, r, dur, gap = 2.2) {
+  if (RT - (finAt.get(key) ?? -9) < gap) return null;
+  let live = 0;
+  for (const f of FIN) if (f.on) live++;
+  if (live >= 2) return null;
+  finAt.set(key, RT);
+  const f = take(FIN);
+  f.on = true; f.t = 0; f.dur = dur; f.key = key; f.x = x; f.y = y; f.r = r; f.dir = rnd() < 0.5 ? 1 : -1; f.pts = null; f.k = 0;
+  CUT.t = 0; CUT.key = key;
+  const M = MF[0];
+  M.big = 1; M.ground = 1;
+  return f;
+}
+
+// ── 완전체 텍스처 ──
+function gateSpr() { // 망령의 문: 돌기둥 두 개 + 아치 + 룬 + 쐐기돌 해골. 원점 = 문 아래 가운데
+  return bakeO('f:gate', 96, 118, 110, x => {
+    const ink = '#140a22';
+    x.fillStyle = rad(x, 0, -80, 4, 90, [[0, 'rgba(154,61,255,0.55)'], [0.6, 'rgba(58,16,96,0.75)'], [1, 'rgba(18,6,31,0.9)']]);
+    x.beginPath(); x.moveTo(-62, 0); x.lineTo(-62, -96); x.arc(0, -96, 62, Math.PI, 0); x.lineTo(62, 0); x.closePath(); x.fill();
+    for (const s of [-1, 1]) {
+      x.beginPath(); x.rect(s * 62 - 13, -104, 26, 104);
+      fs(x, lin(x, s * 62 - 13, 0, s * 62 + 13, 0, [[0, '#5a4478'], [0.5, '#3a2a58'], [1, '#231838']]), 3, ink);
+      x.beginPath(); x.rect(s * 62 - 17, -112, 34, 12); fs(x, '#4a3868', 3, ink);
+      x.beginPath(); x.rect(s * 62 - 17, -6, 34, 8); fs(x, '#4a3868', 3, ink);
+    }
+    x.beginPath(); x.arc(0, -100, 76, Math.PI, 0); x.arc(0, -100, 58, 0, Math.PI, true); x.closePath();
+    fs(x, lin(x, 0, -176, 0, -100, [[0, '#6a5290'], [1, '#2e2048']]), 3, ink);
+    x.strokeStyle = '#d8b0ff'; x.lineWidth = 2;
+    for (let k = 0; k < 9; k++) { const a = Math.PI + (k + 0.5) * Math.PI / 9; glyph(x, Math.cos(a) * 67, -100 + Math.sin(a) * 67, 4, k); }
+    circ(x, 0, -170, 12); fs(x, '#e8e0f0', 2.5, ink);
+    x.fillStyle = '#9a3dff'; circ(x, -4.5, -171, 3); x.fill(); circ(x, 4.5, -171, 3); x.fill();
+  }, Math.min(S, 1.5));
+}
+function knightSpr() { // 해골 기사 실루엣(반투명 망령): 투구 깃 · 빛나는 눈 · 방패 · 치켜든 검. 원점 = 발
+  return bakeO('f:knight', 30, 44, 40, x => {
+    const ink = '#1a0c2c', body = 'rgba(58,30,96,0.92)', rim = '#c9a8ff';
+    x.beginPath(); x.moveTo(-12, 0); x.lineTo(-9, -30); x.lineTo(9, -30); x.lineTo(12, 0); x.closePath(); fs(x, body, 2.5, ink);
+    x.strokeStyle = rim; x.lineWidth = 1.4;
+    for (let k = 0; k < 3; k++) { x.beginPath(); x.moveTo(-7, -26 + k * 6); x.quadraticCurveTo(0, -23 + k * 6, 7, -26 + k * 6); x.stroke(); }
+    ell(x, -12, -30, 7, 5); fs(x, body, 2.2, ink); ell(x, 12, -30, 7, 5); fs(x, body, 2.2, ink);
+    circ(x, 0, -44, 11); fs(x, body, 2.5, ink);
+    x.beginPath(); x.moveTo(0, -55); x.quadraticCurveTo(10, -66, 18, -58); x.quadraticCurveTo(8, -58, 3, -52); fs(x, '#9a3dff', 1.6, ink);
+    x.fillStyle = '#f2c8ff'; circ(x, -4, -44, 2.4); x.fill(); circ(x, 4, -44, 2.4); x.fill();
+    x.beginPath(); x.moveTo(-26, -34); x.lineTo(-14, -36); x.lineTo(-14, -14); x.quadraticCurveTo(-20, -8, -26, -14); x.closePath(); fs(x, '#3a2a58', 2.2, ink);
+    x.strokeStyle = rim; x.lineWidth = 1.2; x.beginPath(); x.moveTo(-20, -32); x.lineTo(-20, -14); x.stroke();
+    x.beginPath(); x.moveTo(14, -28); x.lineTo(22, -70); x.lineTo(25, -69); x.lineTo(18, -27); x.closePath(); fs(x, '#e8e0ff', 1.8, ink);
+    x.beginPath(); x.moveTo(10, -30); x.lineTo(22, -32); fs(x, rim, 3, ink);
+  }, Math.min(S, 1.5));
+}
+function crystalSpr() { // 초전도 얼음 왕관의 결정 한 개(세로 육각 기둥, 끝 뾰족)
+  return bake('f:crys', 10, 28, x => {
+    poly(x, [0, -28, 9, -12, 9, 14, 0, 28, -9, 14, -9, -12]);
+    fs(x, lin(x, -9, -28, 9, 28, [[0, '#f0fdff'], [0.45, '#9fe8ff'], [1, '#2a78e0']]), 2, '#1e4a8a');
+    x.strokeStyle = 'rgba(255,255,255,0.85)'; x.lineWidth = 1.2;
+    x.beginPath(); x.moveTo(0, -26); x.lineTo(0, 26); x.moveTo(-8, -12); x.lineTo(0, -4); x.lineTo(8, -12); x.stroke();
+  }, Math.min(S, 2));
+}
+function maxSpr() { // 'MAX!' 각성 글자 (Impact 계열 + 금 그라데이션 + 굵은 테)
+  return bake('f:max', 80, 30, x => {
+    x.font = `46px ${NUM_FONT}`; x.textAlign = 'center'; x.textBaseline = 'middle';
+    x.lineJoin = 'round'; x.lineWidth = 10; x.strokeStyle = '#4a1400';
+    x.strokeText('MAX!', 0, 4); x.strokeText('MAX!', 0, 0);
+    x.fillStyle = lin(x, 0, -20, 0, 20, [[0, '#fffbe0'], [0.48, '#ffe066'], [0.52, '#ffa21a'], [1, '#ff7a1a']]);
+    x.fillText('MAX!', 0, 0);
+  }, Math.min(S, 2));
+}
+
+// 거대 수호룡(완전체): 황금 비늘 몸통(+x 방향) · 날개는 어깨(원점) 기준 따로 구워 퍼덕인다
+const GD = { ink: '#3a2008', hi: '#fff0b0', base: '#ffc94a', lo: '#c07a18', mem: '#ffdf80', memLo: '#e8a030' };
+function gDragonBody() {
+  return bake('f:gdb', 190, 80, x => {
+    x.lineJoin = 'round';
+    x.beginPath(); x.moveTo(-60, 4); x.bezierCurveTo(-110, 10, -140, 40, -186, 22); x.bezierCurveTo(-150, 52, -104, 34, -56, 26); x.closePath(); // 꼬리
+    fs(x, cel(x, 0, -10, 0, 40, GD.base), 3.4, GD.ink);
+    poly(x, [-186, 22, -170, 8, -176, 30]); fs(x, GD.lo, 2.4, GD.ink);
+    ell(x, -6, 12, 74, 28, -0.06); fs(x, cel(x, 0, -16, 0, 40, GD.base), 3.6, GD.ink); // 몸통
+    x.beginPath(); x.moveTo(-50, 26); x.quadraticCurveTo(0, 44, 50, 22); x.lineWidth = 9; x.strokeStyle = GD.hi; x.stroke(); // 배 비늘
+    x.strokeStyle = GD.lo; x.lineWidth = 1.6;
+    for (let k = -3; k <= 3; k++) { x.beginPath(); x.moveTo(k * 13 - 3, 22 + Math.abs(k)); x.lineTo(k * 13 + 3, 32 - Math.abs(k)); x.stroke(); }
+    x.beginPath(); x.moveTo(52, 0); x.bezierCurveTo(78, -8, 88, -30, 108, -34); x.lineTo(118, -18); x.bezierCurveTo(96, -12, 84, 10, 58, 22); x.closePath(); // 목
+    fs(x, cel(x, 0, -30, 0, 20, GD.base), 3.4, GD.ink);
+    poly(x, [100, -46, 150, -40, 164, -30, 150, -20, 108, -14, 96, -30]); fs(x, cel(x, 0, -46, 0, -14, GD.base), 3.4, GD.ink); // 머리
+    poly(x, [104, -44, 80, -68, 92, -42]); fs(x, GD.hi, 2.6, GD.ink); poly(x, [116, -44, 100, -72, 118, -46]); fs(x, GD.hi, 2.6, GD.ink); // 뿔
+    circ(x, 130, -34, 4.4); x.fillStyle = '#ffffff'; x.fill(); circ(x, 131.5, -34, 2.4); x.fillStyle = '#2a78e0'; x.fill();
+    x.beginPath(); x.moveTo(150, -24); x.lineTo(128, -22); x.lineWidth = 2; x.strokeStyle = GD.ink; x.stroke();
+    for (const lx of [-40, 30]) { x.beginPath(); x.moveTo(lx, 32); x.quadraticCurveTo(lx - 6, 50, lx + 8, 54); x.lineWidth = 7; x.strokeStyle = GD.ink; x.stroke(); x.lineWidth = 4; x.strokeStyle = GD.lo; x.stroke(); }
+    for (let k = 0; k < 5; k++) poly(x, [-60 + k * 26, -12 + Math.abs(k - 2) * 2, -52 + k * 26, -26 + Math.abs(k - 2) * 2, -44 + k * 26, -12 + Math.abs(k - 2) * 2]), fs(x, GD.hi, 2, GD.ink); // 등 가시
+    shine(x, -20, -2, 22, 5, -0.05, 0.55);
+  }, Math.min(S, 1.5));
+}
+function gDragonWing(far) {
+  return bake('f:gdw|' + far, 120, 130, x => { // 원점 = 어깨, 날개는 위·뒤로 펼쳐진다
+    const m = far ? GD.memLo : GD.mem, pts = [[0, 0], [-40, -60], [-100, -86], [-70, -40], [-110, -40], [-60, -10], [-80, 6]];
+    x.beginPath(); x.moveTo(0, 0); x.quadraticCurveTo(10, -80, 40, -124); x.quadraticCurveTo(0, -100, -100, -86);
+    for (let k = 3; k < pts.length; k++) x.lineTo(pts[k][0], pts[k][1]);
+    x.closePath();
+    fs(x, lin(x, 0, -124, 0, 10, [[0, lite(m, 0.3)], [1, m]]), 3.4, GD.ink);
+    x.strokeStyle = far ? GD.lo : '#b8741a'; x.lineWidth = 3;
+    for (const [px, py] of [[-100, -86], [-110, -40], [-80, 6]]) { x.beginPath(); x.moveTo(34, -118); x.quadraticCurveTo(px * 0.4, py * 0.6 - 30, px, py); x.stroke(); }
+    x.beginPath(); x.moveTo(0, 0); x.quadraticCurveTo(10, -80, 40, -124); x.lineWidth = 7; x.strokeStyle = GD.ink; x.stroke(); x.lineWidth = 4; x.strokeStyle = far ? GD.lo : GD.base; x.stroke();
+  }, Math.min(S, 1.5));
+}
+
+// 낙뢰: 하늘에서 지그재그 볼트 (+ Lv2 가지·헤일로, Lv4 바닥 룬·옆 줄기, Lv6 첫 줄기에 하늘 균열 + 번개 왕관)
+function strike(x, y, sup, first, t = tier(3)) {
+  const col = sup ? '#dff8ff' : '#ffe53a', halo = t.two ? (sup ? '#2a78e0' : '#7b5cff') : (sup ? '#7fe3ff' : '#c8a020');
   const x0 = x + (rnd() - 0.5) * 140, mx = (x + x0) / 2 + (rnd() - 0.5) * 70, my = y * 0.5;
   const b = take(BOLTS);
-  b.pts = [[x0, -40], [mx, my], [x, y]]; b.life = b.max = 0.3; b.col = col; b.halo = halo; b.w = 1.4;
-  const b2 = take(BOLTS);
-  b2.pts = [[mx, my], [mx + (rnd() - 0.5) * 160, my + 90 + rnd() * 80]]; b2.life = b2.max = 0.18; b2.col = col; b2.halo = halo; b2.w = 0.7;
-  part(K_GLOW, x, y, 0, 0, 0.15, 110, '#ffffff');
-  part(K_GLOW, x, y, 0, 0, 0.32, 170, sup ? '#7fe3ff' : '#ffe53a');
-  burst(K_SPARK, x, y, 8, 300, 720, 0.18, 3, [col, '#ffffff'], 0, 6);
-  sprPop(starFlash(sup ? '#7fe3ff' : '#ffe53a'), x, y, 0.4, 1.4, 0.24);
-  ring(x, y, 8, 72, 0.32, col, 5);
-  const d = take(DECALS);
-  d.x = x; d.y = y + 8; d.r = 24; d.life = d.max = 2.5;
-  if (sup) burst(K_SHARD, x, y, 7, 150, 380, 0.6, 7, ['#ffffff', '#bff4ff', '#7fe3ff'], 600, 1, 80);
-  if (first) flash(0.1);
-  shake(0.05);
+  b.pts = [[x0, -40], [mx, my], [x, y]]; b.life = b.max = 0.22 + 0.1 * t.f; b.col = col; b.halo = halo; b.w = 0.8 + 0.9 * t.f;
+  if (t.two) {
+    const b2 = take(BOLTS);
+    b2.pts = [[mx, my], [mx + (rnd() - 0.5) * 160, my + 90 + rnd() * 80]]; b2.life = b2.max = 0.18; b2.col = col; b2.halo = halo; b2.w = 0.7;
+  }
+  part(K_GLOW, x, y, 0, 0, 0.1, 36 + 14 * t.f, '#ffffff'); // 흰 섬광은 작게 — 맞은 적이 빛에 묻히지 않게
+  part(K_GLOW, x, y, 0, 0, 0.26, 95 * t.s, sup ? '#2a78e0' : '#7b5cff'); // 헤일로는 보라/파랑(밝은 바닥에 더해도 하얗게 안 뜬다)
+  burst(K_SPARK, x, y, cnt(8, t), 300, 720, 0.18, 3, [col, '#ffffff'], 0, 6);
+  sprPop(starFlash(sup ? '#7fe3ff' : '#ffe53a'), x, y, 0.3, 0.55 + 0.3 * t.f, 0.18);
+  ring(x, y, 8, 72 * t.s, 0.32, col, 5);
+  if (t.sec) { // 보조: 바닥 룬 + 옆으로 튀는 짧은 줄기 두 개 + 그을음
+    sprPop(runeCircle(sup ? '#7fe3ff' : '#ffd23a'), x, y + 6, 0.4, 1.5, 0.4, Math.PI / 2, 2, 0.36);
+    for (const s of [-1, 1]) { const b3 = take(BOLTS); b3.pts = [[x, y], [x + s * (40 + rnd() * 30), y + 18 + rnd() * 16]]; b3.life = b3.max = 0.16; b3.col = col; b3.halo = halo; b3.w = 0.6; }
+    const d = take(DECALS); d.x = x; d.y = y + 8; d.r = 24; d.life = d.max = 2.5;
+  }
+  if (sup) burst(K_SHARD, x, y, cnt(7, t), 150, 380, 0.6, 7, ['#ffffff', '#bff4ff', '#7fe3ff'], 600, 1, 80);
+  if (first && t.max && !sup && finale('lightningStrike', x, y, 0, 0.5, 1.8)) { // 완전체: 하늘이 갈라지는 가로 번개 + 세 갈래 낙뢰
+    const top = Math.max(hudY(200), 60);
+    const bb = take(BOLTS); bb.pts = [[x - 330, top + 10], [x - 120, top - 14], [x, top + 6], [x + 150, top - 10], [x + 340, top + 12]];
+    bb.life = bb.max = 0.45; bb.col = col; bb.halo = '#7b5cff'; bb.w = 1.3;
+    for (const s of [-1, 0, 1]) { const bf = take(BOLTS); bf.pts = [[x + s * 150, top], [x + s * 90 + (rnd() - 0.5) * 60, (top + y) / 2], [x + s * 40, y]]; bf.life = bf.max = 0.35; bf.col = col; bf.halo = '#7b5cff'; bf.w = 1.1; }
+    part(K_GLOW, x, top, 0, 0, 0.4, 260, '#7b5cff');
+    sprPop(runeCircle('#ffe53a'), x, y + 6, 0.5, 3.4, 0.7, Math.PI / 2, 2.5, 0.36);
+    ring(x, y, 12, 190, 0.45, '#ffe53a', 9);
+  }
+  if (first) flash(0.06 + 0.06 * t.f);
+  shk(0.06, t);
 }
-function judgmentFx(x, w, twi) {
+function judgmentFx(x, w, twi, t = tier(3)) {
   const b = take(LBEAMS);
-  b.x = x; b.w = w; b.y0 = -60; b.y1 = WALL_Y + 10; b.life = b.max = 0.55;
-  b.core = twi ? '#fff0c0' : '#ffffff'; b.halo = twi ? '#9a3dff' : '#e0a72e';
+  b.x = x; b.w = w * (0.35 + 0.6 * t.s); b.y0 = -60 - topExtra; b.y1 = WALL_Y + 10; b.life = b.max = 0.4 + 0.2 * t.f; // Lv1 가는 광선 → Lv6 굵은 광선
+  b.core = twi ? '#fff0c0' : '#fff6d0'; b.halo = twi ? '#9a3dff' : '#e0a72e';
   const sc = twi ? '#e0a0ff' : '#fff0a8';
-  for (let k = 0; k < 6; k++) sprPop(starFlash(sc), x + (rnd() - 0.5) * w, 200 + rnd() * 700, 0.2, 0.7, 0.3);
-  for (let k = 0; k < 14; k++) part(K_GLOW, x + (rnd() - 0.5) * w, 140 + rnd() * 800, 0, 180 + rnd() * 220, 0.5, 18, k % 2 ? sc : '#ffffff', 0, 1);
-  sprPop(runeCircle(twi ? '#c070ff' : '#ffd23a'), x, WALL_Y - 26, 0.5, 1.5, 0.5, Math.PI / 2, 2, 0.35);
-  ring(x, WALL_Y - 26, 10, w * 1.4, 0.4, sc, 6);
-  shake(0.08);
+  for (let k = 0; k < cnt(6, t); k++) sprPop(starFlash(sc), x + (rnd() - 0.5) * w, 200 + rnd() * 700, 0.2, 0.7, 0.3);
+  for (let k = 0; k < cnt(14, t); k++) part(K_GLOW, x + (rnd() - 0.5) * w, 140 + rnd() * 800, 0, 180 + rnd() * 220, 0.5, 18, k % 2 && t.two ? sc : '#ffe07a', 0, 1);
+  if (t.two) sprPop(runeCircle(twi ? '#c070ff' : '#ffd23a'), x, WALL_Y - 26, 0.5, 1.2 + 0.6 * t.f, 0.5, Math.PI / 2, 2, 0.35);
+  ring(x, WALL_Y - 26, 10, w * 1.4 * t.s, 0.4, sc, 6);
+  if (t.sec) { // 보조: 양옆 가는 쌍둥이 광선 + 떨어지는 빛 깃털
+    for (const s of [-1, 1]) lightBeam(x + s * w * 0.9, w * 0.25, 60, WALL_Y, 0.3, sc, twi ? '#9a3dff' : '#e0a72e');
+    for (let k = 0; k < 6; k++) part(K_STAR, x + (rnd() - 0.5) * w * 2, 120 + rnd() * 300, (rnd() - 0.5) * 40, 90 + rnd() * 80, 1, 12, sc, 0, 0.6);
+  }
+  if (t.max && !twi && finale('judgment', x, Math.max(hudY(140), 40), w, 1.1)) { /* 완전체: 천상의 문(날개 + 십자 룬) — drawFinales */ }
+  shk(0.08, t);
 }
 function spellFx(view, ev, n) {
   const fus = view.fusions || [];
-  const x = +ev.x || 0, y = warpY(x, +ev.y || 0);
+  const x = +ev.x || 0, y = warpY(x, +ev.y || 0), t = tier(skillLv(view, ev.key, ev));
   switch (ev.key) {
-    case 'lightningStrike': strike(x, y, fus.includes('superconduct'), n === 0); break;
+    case 'lightningStrike': strike(x, y, fus.includes('superconduct'), n === 0, t); break;
     case 'iceLance': {
       const M = MF[ev.o === 1 ? 1 : 0];
-      ring(M.ox, M.oy, 6, 56, 0.3, '#bff4ff', 4);
-      sprPop(starFlash('#7fe3ff'), M.ox, M.oy, 0.3, 1, 0.22);
-      burst(K_SHARD, M.ox, M.oy, 6, 80, 240, 0.45, 5, ['#ffffff', '#7fe3ff'], 300, 2);
+      ring(M.ox, M.oy, 6, 56 * t.s, 0.3, '#bff4ff', 4);
+      if (!t.max) sprPop(starFlash('#7fe3ff'), M.ox, M.oy, 0.3, 0.6 + 0.3 * t.f, 0.2);
+      burst(K_SHARD, M.ox, M.oy, cnt(6, t), 80, 240, 0.45, 5, t.two ? ['#ffffff', '#7fe3ff'] : '#bff4ff', 300, 2);
+      if (t.sec) sprPop(runeCircle('#7fe3ff'), M.ox, M.oy, 0.4, 1.3, 0.3, 0, 3);
+      if (t.max && finale('iceLance', M.ox, M.oy, 0, 0.6, 1.6)) { // 완전체: 오브 앞 거대한 눈꽃 결정 + 서리 룬 두 겹
+        sprPop(sparkle('#5fc8ff'), M.ox, M.oy - 10, 0.5, 2.6, 0.5, 0, 2);
+        sprPop(runeCircle('#2a9bff'), M.ox, M.oy, 0.5, 2.6, 0.5, 0, -3);
+        burst(K_SHARD, M.ox, M.oy, 14, 200, 520, 0.7, 7, ['#ffffff', '#bff4ff', '#2a78e0'], 400, 1);
+      }
       break;
     }
     case 'tornado': {
       const blaze = fus.includes('blazeTornado');
-      burst(K_SMOKE, x, y + 24, 7, 40, 150, 0.8, 42, blaze ? 'rgba(255,170,90,0.5)' : 'rgba(220,240,230,0.55)', -20, 1.5);
-      ring(x, y + 24, 10, 100, 0.45, blaze ? '#ffb040' : '#d8fff0', 6);
-      sprPop(runeCircle(blaze ? '#ff8a3a' : '#6ff0c0'), x, y + 26, 0.5, 1.8, 0.55, Math.PI / 2, 2, 0.36);
+      burst(K_SMOKE, x, y + 24, cnt(7, t), 40, 150, 0.8, 42, blaze ? 'rgba(255,150,70,0.5)' : 'rgba(170,235,210,0.5)', -20, 1.5);
+      ring(x, y + 24, 10, 100 * t.s, 0.45, blaze ? '#ffb040' : '#8ff0c8', 6);
+      if (t.two) sprPop(runeCircle(blaze ? '#ff8a3a' : '#6ff0c0'), x, y + 26, 0.5, 1.2 + 0.8 * t.f, 0.55, Math.PI / 2, 2, 0.36);
+      if (t.max) finale('tornado', x, y, 0, 0.1); // 완전체 표시는 drawTornadoes(하늘까지 닿는 기둥 + 구름 모자)
       break;
     }
-    case 'judgment': judgmentFx(x, +ev.w || 50, fus.includes('twilight')); break;
-    // ── 융합(합체) 스킬: 재료 둘과 확실히 다른 모양 (DESIGN 3) 융합) ──
+    case 'judgment': judgmentFx(x, +ev.w || 50, fus.includes('twilight'), t); break;
+    // ── 융합(합체) 스킬: 재료 둘과 확실히 다른 모양 (DESIGN 3) 융합) + 레벨 성장 ──
     case 'blazeTornado': { // 불꽃 회오리: 바닥 불꽃 마법진 + 솟구치는 불기둥 (회오리 몸통은 drawTornadoes)
       const r = +ev.r || 90;
-      sprPop(runeCircle('#ff8a3a'), x, y + 20, 0.5, r / 30, 0.6, Math.PI / 2, 2, 0.36);
-      ring(x, y + 20, 10, r * 1.3, 0.45, '#ffb040', 9);
-      burst(K_GLOW, x, y, 14, 80, 320, 0.7, 24, ['#fff2a0', '#ff8a1e', '#ff4a1a'], -260, 2);
-      lightBeam(x, 50, y - 260, y + 20, 0.3, '#fff2a0', '#ff6a1f');
+      sprPop(runeCircle('#ff8a3a'), x, y + 20, 0.5, r / 30 * t.s, 0.6, Math.PI / 2, 2, 0.36);
+      ring(x, y + 20, 10, r * 1.3 * t.s, 0.45, '#ffb040', 9);
+      burst(K_GLOW, x, y, cnt(14, t), 80, 320, 0.7, 24, t.two ? ['#ffd23a', '#ff8a1e', '#ff4a1a'] : '#ff8a1e', -260, 2);
+      lightBeam(x, 50 * t.s, y - 160 - 200 * t.f, y + 20, 0.3, '#ffd080', '#ff6a1f');
+      if (t.sec) { for (const s of [-1, 1]) shapePop(petal(), x + s * r * 0.6, y - 10, 0.5, 1.8, 0.5, s * 0.3); sprPop(runeCircle('#ffd23a'), x, y + 20, 0.4, r / 44, 0.6, Math.PI / 2, -3, 0.36); }
+      if (t.max && finale('blazeTornado', x, y + 20, r, 1.5)) { // 완전체: 하늘까지 닿는 화염 기둥
+        burst(K_GLOW, x, y, 18, 120, 420, 1, 22, ['#ffd23a', '#ff6a1f', '#ff2a1a'], -420, 1.2);
+        shake(0.2);
+      }
+      shk(0.08, t);
       break;
     }
     case 'superconduct': { // 초전도: 얼음 번개 여러 줄기 + 서리 섬광
       const pts = Array.isArray(ev.pts) ? ev.pts : [[x, y]];
-      pts.slice(0, 8).forEach((q, i) => strike(q[0], warpY(q[0], q[1]), true, i === 0));
-      flash(0.12, '#bff4ff');
+      pts.slice(0, 8).forEach((q, i) => strike(q[0], warpY(q[0], q[1]), true, i === 0, t));
+      flash(0.06 + 0.06 * t.f, '#7fe3ff');
+      if (t.sec) for (const q of pts.slice(0, 4)) burst(K_SHARD, q[0], warpY(q[0], q[1]) - 6, 5, 60, 160, 0.9, 9, ['#e8fbff', '#9fe8ff'], -120, 3, 120);
+      if (t.max) { const f = finale('superconduct', x, hudY(250), 0, 1.2); if (f) f.pts = pts.slice(0, 8).map(q => [q[0], warpY(q[0], q[1])]); }
       break;
     }
     case 'steamBurst': { // 증기 폭발: 흰 충격파 + 불·얼음 파편
-      const r = +ev.r || 110;
-      steamFx(x, y, r);
-      ring(x, y, 10, r * 1.6, 0.5, '#d8f6ff', 8);
+      const r = (+ev.r || 110) * (0.85 + 0.15 * t.s);
+      steamFx(x, y, r, t);
+      ring(x, y, 10, r * 1.6, 0.5, '#bfeaff', 8);
       sprPop(runeCircle('#ff8a3a'), x, y + 10, 0.5, r / 34, 0.5, Math.PI / 2, 2, 0.36);
-      sprPop(runeCircle('#7fe3ff'), x, y + 10, 0.4, r / 44, 0.5, Math.PI / 2, -2, 0.36);
-      shake(0.14);
+      if (t.two) sprPop(runeCircle('#7fe3ff'), x, y + 10, 0.4, r / 44, 0.5, Math.PI / 2, -2, 0.36);
+      if (t.sec) for (let k = 0; k < 3; k++) { const a = rnd() * TAU; ring(x + Math.cos(a) * r * 0.6, y + Math.sin(a) * r * 0.4, 6, r * 0.5, 0.35, k % 2 ? '#ffb040' : '#9fe8ff', 5); }
+      if (t.max && finale('steamBurst', x, y, r, 1.4)) { // 완전체: 불·얼음 고리를 두른 증기 간헐천 + 버섯구름
+        for (let k = 0; k < 6; k++) part(K_SMOKE, x + (rnd() - 0.5) * 30, y - k * 30, (rnd() - 0.5) * 30, -160 - k * 40, 1.4, 70 - k * 6, 'rgba(190,225,255,0.5)', 0, 1);
+      }
+      shk(0.12, t);
       break;
     }
     case 'stormEye': { // 폭풍의 눈: 안으로 조여드는 고리 + 보랏빛 섬광 (머무는 폭풍은 drawStorms)
       const r = +ev.r || 130;
-      sprPop(runeCircle('#b8a0ff'), x, y, 0.6, r / 28, 0.6, Math.PI / 2, 2, 0.42);
-      ring(x, y, r * 1.5, 12, 0.5, '#b8a0ff', 7);
-      flash(0.08, '#b8a0ff');
+      sprPop(runeCircle('#b8a0ff'), x, y, 0.6, r / 28 * t.s, 0.6, Math.PI / 2, 2, 0.42);
+      ring(x, y, r * 1.5 * t.s, 12, 0.5, '#b8a0ff', 7);
+      if (t.sec) ring(x, y, r * 1.1, 8, 0.4, '#ffe53a', 5);
+      flash(0.05 + 0.04 * t.f, '#b8a0ff');
+      if (t.max) finale('stormEye', x, y, r, 3.6, 3);
       break;
     }
-    case 'twilight': // 황혼: 금빛 코어 + 보라 헤일로 광선
-      judgmentFx(x, +ev.w || 90, true);
-      burst(K_SMOKE, x, WALL_Y - 40, 6, 30, 120, 0.8, 40, 'rgba(90,40,140,0.5)', -40, 1.5);
+    case 'twilight': { // 황혼: 금빛 코어 + 보라 헤일로 광선
+      judgmentFx(x, +ev.w || 90, true, t);
+      burst(K_SMOKE, x, WALL_Y - 40, cnt(6, t), 30, 120, 0.8, 40, 'rgba(90,40,140,0.5)', -40, 1.5);
+      if (t.max && finale('twilight', x, hudY(230), +ev.w || 150, 1.4)) { // 완전체: 광선 위에 일식 — 검은 해 + 금빛 코로나
+        lightBeam(x - 30, 40, -topExtra, WALL_Y, 0.9, '#ffe07a', '#e0a72e');
+        lightBeam(x + 30, 40, -topExtra, WALL_Y, 0.9, '#e0a0ff', '#6a1fb0');
+      }
+      break;
+    }
+    case 'plasma': // 플라즈마 구체: 날아가는 구체는 FIREBALLS(events), 착탄은 fireballBoom
+      if (t.max) finale('plasma', x, y, +ev.r || 120, 1.1);
       break;
     case 'ghostLegion': // 망령 군단: 성벽 앞 망령의 문
-      sprPop(runeCircle('#9a3dff'), x, y + 10, 0.6, 3, 0.8, Math.PI / 2, 2, 0.38);
-      burst(K_SMOKE, x, y, 8, 40, 160, 0.9, 40, 'rgba(60,20,90,0.55)', -40, 1.5);
-      ring(x, y, 10, 160, 0.5, '#d8b0ff', 8);
+      sprPop(runeCircle('#9a3dff'), x, y + 10, 0.6, 2 + t.f * 1.5, 0.8, Math.PI / 2, 2, 0.38);
+      burst(K_SMOKE, x, y, cnt(8, t), 40, 160, 0.9, 40, 'rgba(60,20,90,0.55)', -40, 1.5);
+      ring(x, y, 10, 160 * t.s, 0.5, '#c8a0ff', 8);
+      if (t.sec) sprPop(runeCircle('#d8b0ff'), x, y + 10, 0.5, 1.6, 0.8, Math.PI / 2, -2, 0.38);
+      if (t.max && finale('ghostLegion', x, y + 10, 0, 2.2, 3.2)) shake(0.18);
       break;
     case 'guardianDragon': // 수호룡: 금빛 드래곤이 한 줄을 가로질러 강하 + 성벽 치유 파동
-      dive(y - 10);
-      ring(x, y, 10, 200, 0.5, '#fff0a8', 8);
-      lightBeam(360, 900 + sideX * 2, WALL_Y - 30, WALL_Y + 10, 0.4, '#ffffff', '#9dff9a');
+      if (t.max && finale('guardianDragon', x, y - 10, 0, 1.3, 2.6)) { lightBeam(360, 900 + sideX * 2, WALL_Y - 40, WALL_Y + 10, 0.8, '#fff0a8', '#5fe06e'); shake(0.2); }
+      else dive(y - 10, t.s);
+      ring(x, y, 10, 200 * t.s, 0.5, '#fff0a8', 8);
+      lightBeam(360, 900 + sideX * 2, WALL_Y - 30, WALL_Y + 10, 0.4, '#fff0a8', '#9dff9a');
       break;
     case 'babyDragon': {
       const holy = fus.includes('guardianDragon');
-      ring(x, y, 10, 80, 0.35, holy ? '#fff0a8' : '#ffb040', 5);
-      burst(K_GLOW, x, y + 10, 8, 60, 200, 0.4, 18, holy ? ['#ffffff', '#fff0a8'] : ['#ffe45a', '#ff8a1e'], 200, 2);
+      ring(x, y, 10, 80 * t.s, 0.35, holy ? '#fff0a8' : '#ffb040', 5);
+      burst(K_GLOW, x, y + 10, cnt(8, t), 60, 200, 0.4, 18, holy ? ['#ffffff', '#fff0a8'] : ['#ffe45a', '#ff8a1e'], 200, 2);
+      if (t.max && finale('babyDragon', x, y, 0, 0.1)) sprPop(rays(holy ? '#ffe07a' : '#ff8a1e'), x, y, 0.5, 2.6, 0.6, 0, 2);
       break;
     }
   }
 }
+
 function fireballBoom(fb) {
-  const { x1: x, y1: y, r } = fb;
-  const C = fb.plasma ? ['#ffffff', '#e07aff', '#7b5cff', '#ffb0ff'] : ['#fff2a0', '#ff8a1e', '#ff4a1a', '#ffe45a'];
-  part(K_GLOW, x, y, 0, 0, 0.13, r * 1.5, '#ffffff');
-  part(K_GLOW, x, y, 0, 0, 0.38, r * 2.6, C[1]);
-  burst(K_GLOW, x, y, 16, 70, 340, 0.6, 26, [C[0], C[1], C[2]], -140, 3);
-  burst(K_SPARK, x, y, 9, 400, 900, 0.2, 3.2, [C[3], '#ffffff'], 0, 6);
-  burst(K_SMOKE, x, y, 5, 20, 90, 1.1, 54, fb.plasma ? 'rgba(80,30,110,0.5)' : 'rgba(60,36,30,0.55)', -90, 1);
-  for (let k = 0; k < 4; k++) part(K_SMOKE, x + (rnd() - 0.5) * 16, y - k * 16, (rnd() - 0.5) * 20, -70 - k * 25, 1.1, 46 - k * 6, fb.plasma ? 'rgba(120,60,160,0.45)' : 'rgba(80,50,40,0.5)', 0, 1); // 버섯구름 기둥
-  burst(K_DEBRIS, x, y, 5, 150, 380, 0.8, 6, ['#3a2a28', '#6a5552', C[1]], 900, 0.5, 150);
+  const { x1: x, y1: y, r } = fb, t = tier(fb.lv || 3);
+  const C = fb.plasma ? ['#f0b0ff', '#c860ff', '#6a3aff', '#e090ff'] : ['#fff2a0', '#ff8a1e', '#ff4a1a', '#ffe45a'];
+  part(K_GLOW, x, y, 0, 0, 0.12, Math.min(60, r * (0.35 + 0.2 * t.f)), '#ffffff');
+  part(K_GLOW, x, y, 0, 0, 0.38, r * (1.6 + 0.8 * t.f), C[1]);
+  burst(K_GLOW, x, y, cnt(16, t), 70, 340, 0.6, 26, t.two ? [C[0], C[1], C[2]] : C[1], -140, 3);
+  burst(K_SPARK, x, y, cnt(9, t), 400, 900, 0.2, 3.2, [C[3], '#ffffff'], 0, 6);
+  if (t.two) { // 연기 + 버섯구름 기둥
+    burst(K_SMOKE, x, y, cnt(5, t), 20, 90, 1.1, 54, fb.plasma ? 'rgba(80,30,110,0.5)' : 'rgba(60,36,30,0.55)', -90, 1);
+    for (let k = 0; k < 4; k++) part(K_SMOKE, x + (rnd() - 0.5) * 16, y - k * 16, (rnd() - 0.5) * 20, -70 - k * 25, 1.1, 46 - k * 6, fb.plasma ? 'rgba(120,60,160,0.45)' : 'rgba(80,50,40,0.5)', 0, 1);
+    burst(K_DEBRIS, x, y, cnt(5, t), 150, 380, 0.8, 6, ['#3a2a28', '#6a5552', C[1]], 900, 0.5, 150);
+  }
   ring(x, y, 10, r, 0.35, C[3], 9);
-  ring(x, y, 6, r * 0.7, 0.3, '#ffffff', 4);
-  sprPop(starFlash(C[1]), x, y, 0.5, r / 45, 0.24);
-  sprPop(runeCircle(C[1]), x, y, 0.4, r / 30, 0.4, Math.PI / 2, 2, 0.4);
+  if (t.two) ring(x, y, 6, r * 0.7, 0.3, C[0], 4);
+  sprPop(starFlash(C[1]), x, y, 0.5, r / 45 * t.s, 0.24);
+  if (t.two) sprPop(runeCircle(C[1]), x, y, 0.4, r / 30, 0.4, Math.PI / 2, 2, 0.4);
+  if (t.sec) { // 보조: 2차 작은 폭발 셋 + 불꽃 잔상 고리
+    for (let k = 0; k < 3; k++) { const a = k * TAU / 3 + rnd(), d = r * 0.55; part(K_GLOW, x + Math.cos(a) * d, y + Math.sin(a) * d * 0.6, 0, 0, 0.3, r * 0.7, C[2]); ring(x + Math.cos(a) * d, y + Math.sin(a) * d * 0.6, 4, r * 0.4, 0.3, C[3], 5); }
+    ring(x, y, r * 0.5, r * 1.35, 0.5, C[2], 6);
+  }
+  if (t.max && finale(fb.plasma ? 'plasmaBall' : 'fireball', x, y, r, 0.1)) { // 완전체: 태양 꽃잎 — 불꽃 혀 10장이 방사형으로 피어난다 + 짧은 불기둥
+    for (let k = 0; k < 10; k++) { const a = k * TAU / 10, d = r * 0.5; shapePop(petal(), x + Math.cos(a) * d, y + Math.sin(a) * d * 0.7, 0.5, 1.9, 0.55, a + Math.PI / 2); }
+    lightBeam(x, 60, y - 280, y + 10, 0.45, C[0], C[2]);
+    sprPop(runeCircle(C[2]), x, y, 0.5, r / 20, 0.6, Math.PI / 2, -2, 0.4);
+  }
   const d = take(DECALS);
   d.x = x; d.y = y; d.r = r * 0.7; d.life = d.max = 3;
   fb.kills.forEach((kv, i) => killFx(kv, i < 4, lastMode));
   fb.kills.length = 0;
-  shake(0.13);
+  shk(0.13, t);
 }
 // 영웅 원거리 투사체
 function shot(cls, x0, y0, x1, y1, crit, speed, delay = 0) {
@@ -922,7 +1126,7 @@ const LINES = pool(8, () => ({ life: 0, max: 0.3, x0: 0, y0: 0, x1: 0, y1: 0, co
 const REVIVE = { t: 9, hero: false };                                                             // 부활 결계(성벽 방패 폭발)
 export const SUMMON_COL = { wolf: '#8fe8ff', shadow: '#b04dff', arcane: '#c08aff' };
 let fbBooms = 0, frags = 0, berserkRT = -9;
-export let warcryUntil = -9; // 전군 강화 함성: 두 마법사·영웅 금빛 오라(units)
+export let warcryUntil = -9; // 전군 강화 함성: 마법사·영웅 금빛 오라(units)
 
 // 불꽃 산탄: 화염구 파편이 가까운 적들에게 흩어진다
 function shardsFx(ev) {
@@ -946,7 +1150,7 @@ function castLaunch(ev) {
   const o = ev.o === 1 ? 1 : 0, M = MF[o], [col, col2] = skillCols(ev.spell), ox = M.ox, oy = M.oy, fused = !!FUSION_BY_KEY[ev.spell];
   const tx = +ev.tx || 360, ty = warpY(tx, +ev.ty || 500);
   // 지팡이 섬광: 오브 크기 정도로(마법사를 하얗게 덮지 않게), 같은 마법사는 0.3초에 한 번만(분당 160회 시전에 계속 번쩍이지 않게)
-  if (RT - castFlashAt[o] > 0.3 || ev.linked) { castFlashAt[o] = RT; sprPop(starFlash(col), ox, oy, 0.3, fused ? 1.05 : 0.8, 0.2); }
+  if (RT - castFlashAt[o] > 0.3 || ev.linked) { castFlashAt[o] = RT; sprPop(starFlash(col), ox, oy, 0.3, fused ? 0.8 : 0.6, 0.18); }
   if (fused) { // 합체 스킬: 두 원소 마법진이 겹쳐 돈다 + 두 줄기가 꼬여 표적으로
     sprPop(runeCircle(col), ox, oy, 0.5, 1.5, 0.35, 0, 3);
     sprPop(runeCircle(col2), ox, oy, 0.5, 1.2, 0.35, 0.4, -3);
@@ -975,6 +1179,285 @@ function castLaunch(ev) {
   }
 }
 
+// ═════════════ 완전체(Lv6) 마무리 · Lv6 시전 컷 · MAX! 각성 — 갱신/그리기 ═════════════
+// 스킬 레벨이 만렙에 닿는 순간(spellPick level = 만렙) 한 번: 마법사 자리 금빛 기둥 + 스킬 문장 + 'MAX!'
+function maxFx(key) {
+  const M = MF[0];
+  MAXFX.t = 0; MAXFX.key = key;
+  ring(M.cx, MAGE_FEET - 60, 10, 190, 0.6, '#ffd23a', 10);
+  burst(K_STAR, M.cx, MAGE_FEET - 150, 22, 120, 380, 0.9, 16, ['#fff6c8', '#ffd23a', ...skillCols(key)], 80, 1.6);
+  flash(0.14, '#ffb020');
+  shake(0.14);
+}
+function updateFinales(da) {
+  CUT.t += da; MAXFX.t += da;
+  for (const f of FIN) {
+    if (!f.on) continue;
+    const u0 = f.t / f.dur;
+    f.t += da;
+    const u = f.t / f.dur;
+    if (u >= 1) { f.on = false; continue; }
+    switch (f.key) {
+      case 'blazeTornado': // 기둥을 타고 솟는 불티
+        if (rnd() < da * 30) part(K_GLOW, f.x + (rnd() - 0.5) * f.r * 0.6, f.y - rnd() * 500, (rnd() - 0.5) * 60, -220 - rnd() * 200, 0.7, 14, rnd() < 0.5 ? '#ffd23a' : '#ff6a1f', 0, 1);
+        break;
+      case 'superconduct': // 얼음 왕관이 뜬 뒤 결정마다 표적으로 얼음 번개
+        if (u0 < 0.15 && u >= 0.15 && f.pts) f.pts.forEach((p, i) => {
+          const cx = crownX(f) + (i - (f.pts.length - 1) / 2) * 34, b = take(BOLTS);
+          b.pts = [[cx, f.y + 20], [(cx + p[0]) / 2 + (rnd() - 0.5) * 60, (f.y + p[1]) / 2], [p[0], p[1]]];
+          b.life = b.max = 0.4; b.col = '#dff8ff'; b.halo = '#2a78e0'; b.w = 0.9;
+          burst(K_SHARD, p[0], p[1], 6, 120, 360, 0.7, 8, ['#ffffff', '#bff4ff', '#2a78e0'], 500, 1, 90);
+          sprPop(sparkle('#e8fbff'), p[0], p[1], 0.4, 2.2, 0.4, rnd() * TAU, 3);
+        });
+        break;
+      case 'stormEye': // 구름 벽에서 쉴 새 없이 벼락
+        if (rnd() < da * 12) {
+          const a = rnd() * TAU, b = take(BOLTS), cy = f.y - f.r * 1.7;
+          b.pts = [[f.x + Math.cos(a) * f.r * 1.8, cy + Math.sin(a) * f.r * 0.45], [f.x + (rnd() - 0.5) * f.r * 1.4, f.y + (rnd() - 0.5) * f.r * 0.5]];
+          b.life = b.max = 0.16; b.col = '#ece4ff'; b.halo = '#7b5cff'; b.w = 0.9;
+        }
+        break;
+      case 'plasma': // 조여들던 전기 고리가 터지며 번개 8갈래가 화면 끝까지
+        if (u0 < 0.62 && u >= 0.62) {
+          for (let k = 0; k < 8; k++) {
+            const a = k * TAU / 8 + rnd() * 0.3, b = take(BOLTS);
+            b.pts = [[f.x, f.y], [f.x + Math.cos(a) * 220 + (rnd() - 0.5) * 60, f.y + Math.sin(a) * 220], [f.x + Math.cos(a) * 760, f.y + Math.sin(a) * 760]];
+            b.life = b.max = 0.3; b.col = '#ffc8ff'; b.halo = '#9a3dff'; b.w = 1.1;
+          }
+          ring(f.x, f.y, 10, f.r * 2.2, 0.5, '#e07aff', 10);
+          flash(0.12, '#c040ff');
+          shake(0.22);
+        }
+        break;
+      case 'ghostLegion': // 문 안에서 새어 나오는 망령 불빛
+        if (rnd() < da * 18) part(K_GLOW, f.x + (rnd() - 0.5) * 110, f.y - rnd() * 170, (rnd() - 0.5) * 30, -50, 0.9, 16, rnd() < 0.5 ? '#b48aff' : '#7a3aff', 0, 1);
+        break;
+      case 'guardianDragon': { // 날개 끝에서 떨어지는 금빛 불씨
+        const p = dragonAt(f, u);
+        if (rnd() < da * 40) part(K_GLOW, p[0] - f.dir * 80 + (rnd() - 0.5) * 120, p[1] + 30 + (rnd() - 0.5) * 60, (rnd() - 0.5) * 50, 80 + rnd() * 90, 0.8, 18, rnd() < 0.5 ? '#ffe07a' : '#9dff9a', 0, 1);
+        break;
+      }
+    }
+  }
+}
+const crownX = f => clamp(f.x, 200, 520);
+const dragonAt = (f, u) => [lerp(-sideX - 300, WORLD_W + sideX + 300, f.dir > 0 ? u : 1 - u), f.y - 150 + Math.sin(u * 6) * 22];
+// back = 적 아래 층(drawUltGround 에서): 기둥·문·구름·일식 / front = 이펙트 위 층(drawCollab 에서): 행렬·드래곤·구체·컷·MAX
+export function drawFinales(back) { // 가장 눈에 띄어야 할 빛 = 우선 빛(예산에 덜 눌림)
+  setLightPrio(true);
+  drawFinales0(back);
+  setLightPrio(false);
+}
+function drawFinales0(back) {
+  for (const f of FIN) {
+    if (!f.on) continue;
+    const u = f.t / f.dur, a = Math.min(1, u * 6) * Math.min(1, (1 - u) * 4), e = easeOut(Math.min(1, u * 3));
+    if (back) switch (f.key) {
+      case 'blazeTornado': { // 하늘까지 닿는 화염 기둥
+        const top = -topExtra - 20, H = f.y - top, w = f.r * 0.8 * (0.85 + 0.15 * Math.sin(T * 22)) * e;
+        additive(true);
+        ctx.globalAlpha = 0.45 * a; spr(hu('#ff3a1a'), f.x, top + H / 2, f.r * 2 * e, H * 1.05);
+        ctx.globalAlpha = 0.8 * a; ctx.drawImage(beamSpr('#ff6a1f'), f.x - w / 2, top + H * (1 - e), w, H * e);
+        groundRune(runeCircle('#ff6a1f'), f.x, f.y, f.r / 26, T * 3, 0.8 * a);
+        ctx.globalAlpha = 0.5 * a; spr(hu('#ffb040'), f.x, top + 60, f.r * 2.6, 160);
+        additive(false);
+        const fl = petal(); // 기둥을 휘감고 솟는 불꽃 혀(형태로 읽히게 일반 합성)
+        for (let k = 0; k < 16; k++) {
+          const v = (k / 16 + T * 0.9) % 1, py = f.y - v * H * e, px = f.x + Math.sin(v * 14 - T * 8) * f.r * 0.45 * (1 - 0.5 * v), s = 1.9 - 1.1 * v;
+          ctx.globalAlpha = a * (1 - v * 0.7);
+          place(px, py, Math.sin(v * 9 + T * 5) * 0.35, s, s);
+          ctx.drawImage(fl, -fl.hw, -fl.hh, fl.hw * 2, fl.hh * 2);
+        }
+        wt();
+        break;
+      }
+      case 'superconduct': { // 하늘의 얼음 왕관
+        const X = crownX(f), cr = crystalSpr();
+        additive(true);
+        ctx.globalAlpha = 0.5 * a; spr(hu('#2a78e0'), X, f.y, 420 * e, 170);
+        ctx.globalAlpha = 0.6 * a; spr(hu('#7fe3ff'), X, f.y, 260 * e, 90);
+        additive(false);
+        for (let k = -3; k <= 3; k++) {
+          const s = (1.5 - Math.abs(k) * 0.22) * e;
+          ctx.globalAlpha = a;
+          place(X + k * 34, f.y + Math.abs(k) * 9 - 6 + Math.sin(T * 4 + k) * 3, k * 0.12, s, s);
+          ctx.drawImage(cr, -cr.hw, -cr.hh, cr.hw * 2, cr.hh * 2);
+        }
+        wt();
+        break;
+      }
+      case 'steamBurst': { // 불·얼음 고리를 두른 증기 간헐천: 솟는 증기 기둥 + 올라가는 불·얼음 고리 + 버섯 머리
+        const H = 440 * e, top = f.y - H, sm = soft('rgba(185,222,255,0.6)');
+        additive(true);
+        ctx.globalAlpha = 0.5 * a; spr(hu('#ff6a1f'), f.x, f.y - 10, f.r * 1.6, f.r * 0.7);
+        ctx.globalAlpha = 0.35 * a; spr(hu('#5fb8ff'), f.x, f.y - H / 2, f.r * 1.1, H * 1.1);
+        ctx.globalAlpha = 0.7 * a; ctx.drawImage(beamSpr('#7fd0ff'), f.x - 22, top, 44, H);
+        groundRune(runeCircle('#ff8a3a'), f.x, f.y + 8, f.r / 26, T * 2.5, 0.8 * a);
+        groundRune(runeCircle('#7fe3ff'), f.x, f.y + 8, f.r / 34, -T * 3, 0.8 * a);
+        ctx.lineWidth = 4;
+        for (let k = 0; k < 4; k++) { // 기둥을 타고 올라가는 고리(불·얼음 번갈아)
+          const v = (k / 4 + T * 0.7) % 1, ry = f.y - v * H, rr = f.r * (0.35 + 0.25 * v);
+          ctx.globalAlpha = a * (1 - v) * 0.9; ctx.strokeStyle = k % 2 ? '#ff8a3a' : '#7fe3ff';
+          ctx.beginPath(); ctx.ellipse(f.x, ry, rr, rr * 0.3, 0, 0, TAU); ctx.stroke();
+        }
+        additive(false);
+        for (let k = 0; k < 9; k++) { // 소용돌이치며 솟는 증기(아래 가늘고 위로 퍼진다)
+          const v = ((k / 9) + T * 0.35) % 1, s2 = 50 + 110 * v;
+          ctx.globalAlpha = 0.6 * a * Math.sin(v * Math.PI);
+          spr(sm, f.x + Math.sin(T * 4 + k * 1.3) * 22 * v, f.y - v * H, s2 * 1.4, s2);
+        }
+        ctx.globalAlpha = 0.6 * a; spr(sm, f.x - 60 * e, top, 200 * e, 110 * e); spr(sm, f.x + 60 * e, top, 200 * e, 110 * e); spr(sm, f.x, top - 40 * e, 240 * e, 130 * e);
+        break;
+      }
+      case 'stormEye': { // 하늘을 덮는 폭풍 구름 벽(도는 먹구름 고리) + 가운데 금빛 눈 + 땅까지 이어진 깔때기
+        const cy = f.y - f.r * 1.7, cl = soft('rgba(44,30,92,0.85)');
+        additive(true);
+        ctx.globalAlpha = 0.25 * a; spr(hu('#7b5cff'), f.x, (cy + f.y) / 2, f.r * 1.3, f.y - cy + f.r);
+        additive(false);
+        for (let k = 0; k < 12; k++) { // 먹구름 고리(뒤쪽 반은 옅게)
+          const an = T * 0.9 + k * TAU / 12, rx = f.r * 2 * e, s2 = f.r * (0.9 + 0.25 * Math.sin(k * 2.3));
+          ctx.globalAlpha = a * (Math.sin(an) > 0 ? 0.85 : 0.55);
+          spr(cl, f.x + Math.cos(an) * rx, cy + Math.sin(an) * rx * 0.28, s2 * 1.5, s2 * 0.8);
+        }
+        additive(true);
+        ctx.lineWidth = 4;
+        for (let k = 0; k < 3; k++) {
+          const rr = f.r * (1.1 + k * 0.5) * e, a0 = T * (1.6 - k * 0.35) + k * 2;
+          ctx.globalAlpha = 0.6 * a; ctx.strokeStyle = k % 2 ? '#7b5cff' : '#c8b8ff';
+          ctx.beginPath(); ctx.ellipse(f.x, cy, rr, rr * 0.3, 0, a0, a0 + 4.2); ctx.stroke();
+        }
+        ctx.globalAlpha = a * (0.75 + 0.25 * Math.sin(T * 12)); spr(hu('#ffe53a'), f.x, cy, 110, 46);
+        spr(gl('#ffe53a'), f.x, cy, 30, 18);
+        additive(false);
+        break;
+      }
+      case 'twilight': { // 일식: 검은 해 + 금빛 코로나 + 보랏빛 번짐
+        const R = 52 * e;
+        additive(true);
+        ctx.globalAlpha = 0.35 * a; spr(hu('#9a3dff'), f.x, f.y, R * 7, R * 7);
+        ctx.globalAlpha = 0.6 * a; spr(hu('#e0a72e'), f.x, f.y, R * 4, R * 4);
+        ctx.globalAlpha = 0.85 * a; place(f.x, f.y, T * 0.6, R / 26, R / 26); ctx.drawImage(rays('#ffd23a'), -60, -60, 120, 120); wt();
+        additive(false);
+        ctx.globalAlpha = a; circ(ctx, f.x, f.y, R); ctx.fillStyle = '#14061f'; ctx.fill();
+        additive(true);
+        ctx.lineWidth = 3; ctx.strokeStyle = '#ffe07a'; ctx.stroke();
+        ctx.globalAlpha = a * 0.9; spr(sparkle('#fff0a8'), f.x - R * 0.72, f.y - R * 0.72, 30 * e, 30 * e);
+        additive(false);
+        break;
+      }
+      case 'ghostLegion': { // 거대한 망령의 문 + 걸어 나오는 해골 기사
+        const g = gateSpr(), kn = knightSpr(), sc = 1.75;
+        ctx.globalAlpha = 0.9 * a;
+        place(f.x, f.y, 0, sc, sc * e);
+        put(g);
+        wt();
+        additive(true);
+        ctx.globalAlpha = a * (0.5 + 0.15 * Math.sin(T * 6)); spr(hu('#9a3dff'), f.x, f.y - 110 * sc * e, 150, 200 * e);
+        ctx.globalAlpha = 0.7 * a; place(f.x, f.y - 100 * sc * e, 0, 1, 1); ctx.rotate(T * 2); ctx.drawImage(runeCircle('#c890ff'), -60, -60, 120, 120); wt();
+        additive(false);
+        for (let k = 0; k < 4; k++) {
+          const kt = clamp((u - 0.12 - k * 0.07) / 0.62, 0, 1);
+          if (kt <= 0) continue;
+          const kx = f.x + (k - 1.5) * 46 * (1 + kt), ky = f.y - 10 - kt * 280, bob = Math.abs(Math.sin(T * 9 + k)) * 5;
+          additive(true); ctx.globalAlpha = 0.45 * a; spr(hu('#7a3aff'), kx, ky - 40, 70, 90); additive(false);
+          ctx.globalAlpha = a * Math.min(1, kt * 4) * 0.9;
+          place(kx, ky - bob, Math.sin(T * 9 + k) * 0.05, 1.3, 1.3);
+          put(kn);
+          wt();
+        }
+        break;
+      }
+      case 'judgment': { // 천상의 문: 광선 꼭대기에 거대한 빛의 날개 + 십자 룬
+        const lw = lightWings('#ffd23a');
+        additive(true);
+        ctx.globalAlpha = 0.4 * a; spr(hu('#e0a72e'), f.x, f.y, 320 * e, 200 * e);
+        ctx.globalAlpha = 0.6 * a; place(f.x, f.y, 0, 3.4 * e, 3.4 * e); ctx.drawImage(lw, -lw.hw, -lw.hh, lw.hw * 2, lw.hh * 2); wt();
+        ctx.globalAlpha = 0.8 * a; place(f.x, f.y, 0, 1, 1); ctx.rotate(-T); ctx.drawImage(runeCircle('#ffd23a'), -70 * e, -70 * e, 140 * e, 140 * e); wt();
+        additive(false);
+        break;
+      }
+    }
+    else switch (f.key) {
+      case 'plasma': { // 조여드는 전기 고리 세 겹
+        const R = f.r * 0.6 * (u < 0.62 ? 1.2 - 0.6 * (u / 0.62) : 0.6 + 1.4 * ((u - 0.62) / 0.38));
+        additive(true);
+        ctx.globalAlpha = 0.6 * a; spr(hu('#c040ff'), f.x, f.y, R * 2.6, R * 2.6);
+        ctx.lineWidth = 3.5;
+        ['#e07aff', '#ffb0ff', '#7b5cff'].forEach((c, k) => {
+          ctx.globalAlpha = 0.85 * a; ctx.strokeStyle = c;
+          ctx.beginPath(); ctx.ellipse(f.x, f.y, R, R * 0.34, T * (2 + k) + k * 1.05, 0, TAU); ctx.stroke();
+        });
+        ctx.globalAlpha = a; spr(gl('#e07aff'), f.x, f.y, 40, 40);
+        additive(false);
+        break;
+      }
+      case 'ghostLegion': { // 화면을 가로지르는 유령 행렬
+        const gs = ghostSpr('#d8c0ff');
+        for (let k = 0; k < 12; k++) {
+          const p = clamp(u * 1.5 - k * 0.04, 0, 1);
+          if (p <= 0 || p >= 1) continue;
+          const x = lerp(-sideX - 80, WORLD_W + sideX + 80, f.dir > 0 ? p : 1 - p), y = hudY(400) + 60 + Math.sin(k * 1.7) * 80 + Math.sin(T * 5 + k) * 12;
+          additive(true); ctx.globalAlpha = 0.45 * a; spr(hu('#9a3dff'), x - f.dir * 30, y + 4, 90, 36); additive(false);
+          ctx.globalAlpha = 0.85 * a;
+          place(x, y, Math.sin(T * 6 + k) * 0.12, f.dir * 1.25, 1.25);
+          ctx.drawImage(gs, -gs.hw, -gs.hh, gs.hw * 2, gs.hh * 2);
+          wt();
+        }
+        break;
+      }
+      case 'guardianDragon': { // 하늘을 가르는 거대한 황금 수호룡 + 금·초록 빛의 꼬리
+        const [x, y] = dragonAt(f, u), body = gDragonBody(), wn = gDragonWing(false), wf = gDragonWing(true), sc = 1.5;
+        const flap = Math.sin(RT * 7), d = f.dir;
+        additive(true);
+        for (let k = 1; k <= 6; k++) { ctx.globalAlpha = 0.3 * a * (1 - k / 7); spr(hu(k % 2 ? '#ffe07a' : '#5fe06e'), x - d * (k * 70 + 120), y + 20, 220 - k * 18, 90 - k * 8); }
+        ctx.globalAlpha = 0.4 * a; spr(hu('#ffc94a'), x, y - 20, 480, 300);
+        additive(false);
+        ctx.globalAlpha = 0.97 * a;
+        place(x, y, 0.06 * d + 0.04 * flap, d * sc, sc);
+        ctx.save(); ctx.translate(-4, -6); ctx.scale(1.35, 1.35 * (0.55 + 0.45 * flap)); ctx.rotate(-0.15); ctx.drawImage(wf, -wf.hw, -wf.hh, wf.hw * 2, wf.hh * 2); ctx.restore();
+        ctx.drawImage(body, -body.hw, -body.hh, body.hw * 2, body.hh * 2);
+        ctx.save(); ctx.translate(14, -4); ctx.scale(1.45, 1.45 * (0.6 + 0.4 * flap)); ctx.drawImage(wn, -wn.hw, -wn.hh, wn.hw * 2, wn.hh * 2); ctx.restore();
+        wt();
+        break;
+      }
+    }
+  }
+  ctx.globalAlpha = 1;
+  if (back) { // MAX 각성 기둥·발밑 룬은 마법사 뒤로(마법사를 하얗게 덮지 않게)
+    if (MAXFX.t < 1.8 && MAXFX.key) {
+      const x = MF[0].cx, feet = MAGE_FEET, t = MAXFX.t, al = Math.min(1, (1.8 - t) / 0.4), h = 520 * Math.min(1, t * 4);
+      additive(true);
+      ctx.globalAlpha = 0.5 * al; spr(hu('#ffb020'), x, feet - 260, 130, 560);
+      ctx.globalAlpha = 0.6 * al; ctx.drawImage(beamSpr('#ffc94a'), x - 22, feet - h, 44, h);
+      groundRune(runeCircle('#ffd23a'), x, feet - 2, 2.6, T * 2.5, 0.9 * al);
+      additive(false);
+      ctx.globalAlpha = 1;
+    }
+    return;
+  }
+  if (CUT.t < 0.7 && CUT.key) { // Lv6 전용 시전 컷: 마법사 위로 스킬 문장이 톡 + 원소 두 색 빛살
+    const M = MF[0], x = M.ox, y = M.oy - 92, e = easeBack(Math.min(1, CUT.t / 0.2)), al = Math.min(1, (0.7 - CUT.t) / 0.25), [c1, c2] = skillCols(CUT.key);
+    additive(true);
+    ctx.globalAlpha = 0.5 * al; place(x, y, T * 1.2, e * 1.5, e * 1.5); ctx.drawImage(rays(c1), -60, -60, 120, 120); wt();
+    ctx.globalAlpha = 0.35 * al; place(x, y, -T * 0.8 + 0.26, e * 1.1, e * 1.1); ctx.drawImage(rays(c2), -60, -60, 120, 120); wt();
+    additive(false);
+    const em = emblem(CUT.key, 1.2);
+    if (em) { ctx.globalAlpha = al; spr(em, x, y, 64 * e, 64 * e); }
+    ctx.globalAlpha = 1;
+  }
+  if (MAXFX.t < 1.8 && MAXFX.key) { // 만렙 각성: 금빛 기둥 + 발밑 룬 + 스킬 문장 + MAX!
+    const x = MF[0].cx, feet = MAGE_FEET, t = MAXFX.t, al = Math.min(1, (1.8 - t) / 0.4), e = easeBack(Math.min(1, t / 0.28));
+    const em = emblem(MAXFX.key, 1.4), my = feet - 200 - 20 * Math.min(1, t);
+    ctx.globalAlpha = al;
+    if (em) spr(em, x, my, 78 * e, 78 * e);
+    const mt = maxSpr(), ms = e * (1 + 0.08 * Math.sin(RT * 10));
+    place(x, my - 64, -0.06, ms, ms);
+    ctx.drawImage(mt, -mt.hw, -mt.hh, mt.hw * 2, mt.hh * 2);
+    wt();
+    ctx.globalAlpha = 1;
+  }
+}
+
 // ═════════════ 스킬 중심 개편: 융합 합체 · 협공 · 합동 필살 · 지원 사격 (drawCollab 층) ═════════════
 // 스킬(기본 14 + 융합 8) → [원소 메인색, 둘째 색]
 export function skillCols(key) {
@@ -987,7 +1470,7 @@ const COLLAB_COL = ['#ff8ae8', '#ffd23a'];                                   // 
 const LINKS = pool(8, () => ({ life: 0, max: 0.45, x0: 0, y0: 0, x1: 0, y1: 0, col: '#fff' })); // 지원 사격 조준선
 const TETHERS = pool(4, () => ({ life: 0, max: 1, w: 1, c0: '#fff', c1: '#fff' }));             // 영웅 ↔ 내 마법사 빛줄기
 const STREAMS = pool(4, () => ({ on: false, t: 0, dur: 0.6, x0: 0, y0: 0, col: '#fff', arc: 1 })); // 융합 합체: 스택 → 마법사
-const DIVES = pool(3, () => ({ on: false, t: 0, dur: 0.75, y: 500, dir: 1 }));                  // 수호룡 강하
+const DIVES = pool(3, () => ({ on: false, t: 0, dur: 0.75, y: 500, dir: 1, s: 1 }));                  // 수호룡 강하
 const MERGE = { t: 9, cols: ['#fff', '#fff'], key: '' };
 const emPop = new Map(); // 협공 엠블럼 톡(키별 2.5초에 한 번 — 연타 협공이 화면을 도배하지 않게)
 function supportLink(x0, y0, x1, y1, col) {
@@ -1110,7 +1593,7 @@ function updateCollab(da) {
     ring(M.ox, M.oy, 10, 220, 0.55, ca, 10);
     ring(M.ox, M.oy, 6, 150, 0.45, cb, 8);
     sprPop(starFlash('#ffffff'), M.ox, M.oy, 0.5, 2.6, 0.35);
-    sprPop(runeCircle(ca), CANNONS[0].x, MAGE_FEET - 2, 0.6, 2.6, 0.8, Math.PI / 2, 2, 0.38);
+    sprPop(runeCircle(ca), MF[0].cx, MAGE_FEET - 2, 0.6, 2.6, 0.8, Math.PI / 2, 2, 0.38);
     burst(K_STAR, M.ox, M.oy, 24, 120, 420, 0.8, 18, ['#ffffff', ca, cb], 0, 2);
     const em = emblem(MERGE.key, 1.4);
     if (em) sprPop(em, M.ox, M.oy - 90, 0.4, 1.3, 1.1);
@@ -1129,9 +1612,9 @@ function streamAt(st, u) {
   const a = (1 - e) * (1 - e), b = 2 * (1 - e) * e, c = e * e;
   return [a * st.x0 + b * cx + c * M.ox, a * st.y0 + b * cy + c * M.oy];
 }
-function dive(y) {
+function dive(y, s = 1) {
   const d = take(DIVES);
-  d.on = true; d.t = 0; d.y = y; d.dir = rnd() < 0.5 ? 1 : -1;
+  d.on = true; d.t = 0; d.y = y; d.dir = rnd() < 0.5 ? 1 : -1; d.s = s;
 }
 // 층: 파티클·운석·영혼 위 (render.js). 빛줄기 · 조준선 · 합체 줄기 · 수호룡
 export function drawCollab(view) {
@@ -1199,12 +1682,13 @@ export function drawCollab(view) {
     if (!d.on) continue;
     const u = d.t / d.dur, x = lerp(-sideX - 120, WORLD_W + sideX + 120, d.dir > 0 ? u : 1 - u), img = babyDragon(true);
     ctx.globalAlpha = Math.min(1, Math.sin(u * Math.PI) * 3);
-    additive(true); spr(gl('#fff0a8'), x, d.y, 260, 160); additive(false);
-    place(x, d.y + Math.sin(u * 9) * 8, 0.1 * d.dir, 2.4 * d.dir, 2.4);
+    additive(true); spr(hu('#ffe07a'), x, d.y, 260 * d.s, 160 * d.s); additive(false);
+    place(x, d.y + Math.sin(u * 9) * 8, 0.1 * d.dir, 2.4 * d.dir * d.s, 2.4 * d.s);
     ctx.drawImage(img, -img.hw, -img.hh, img.hw * 2, img.hh * 2);
     wt();
   }
   ctx.globalAlpha = 1;
+  drawFinales(false); // 완전체 앞층(유령 행렬·거대 수호룡·플라즈마 고리) + Lv6 시전 컷 + MAX!
 }
 // 폭풍의 눈(머무는 폭풍): 끌어당기는 소용돌이 구름 + 바닥 번개 룬 — drawTornadoes가 부른다
 function drawStorms(view) {
@@ -1251,10 +1735,10 @@ function heroProcFx(view, ev) {
       shake(0.06);
       break;
     }
-    case 'warcry': { // 전군 강화 함성: 영웅에서 금빛 파동 3겹 → 두 마법사에게 번짐
+    case 'warcry': { // 전군 강화 함성: 영웅에서 금빛 파동 3겹 → 마법사에게 번짐
       warcryUntil = RT + (+ev.t || 8);
       for (let k = 0; k < 3; k++) ring(x, y - 30, 10 + k * 20, 160 + k * 90, 0.5 + k * 0.12, k === 1 ? '#ffffff' : '#ffb03a', 8 - k * 2);
-      for (const M of MF) mote(x, y - 40, M.ox, M.oy, '#ffc94a', 0.35, 90);
+      for (const M of MF) if (M === MF[0] || mageOn(view, 1)) mote(x, y - 40, M.ox, M.oy, '#ffc94a', 0.35, 90);
       stamp('전군 강화!', '#ffc23a', 390, 56, 1);
       break;
     }
@@ -1300,6 +1784,12 @@ function heroProcFx(view, ev) {
       for (const r2 of [-0.8, 0.8]) sprPop(slashArc('#ff3a4a'), x, y, 0.5, 0.9, 0.18, r2 + Math.PI / 2, 0);
       sprPop(starFlash('#ff5a6a'), x, y, 0.3, 0.9, 0.2);
       break;
+    case 'nova': { // [특성 트랙] 핵심 노드 발동(talents.js ks): 색 고리 + 불꽃 몇 개 — 짧고 하얗게 덮지 않는다
+      const col = { bash: '#8fd0ff', critBurst: '#ffe07a', holyNova: '#ffd23a', shadowStrike: '#b04dff', grace: '#fff0a8', surge: '#c07aff', ultRefresh: '#7cf0ff' }[ev.sub] || '#ffe07a';
+      ring(x, y, 8, r, 0.28, col, 5);
+      burst(K_SPARK, x, y, 6, 200, 480, 0.18, 2.4, [col, '#ffffff'], 0, 6);
+      break;
+    }
     case 'cardBless': { // 카드 축복: 영웅 → 내 마법사로 금빛 구슬 + 알림
       const h = view.heroUnit, M = MF[0];
       if (h) mote(h.x, h.y - 50, M.ox, M.oy, '#ffe07a', 0.45, 120, 1.4);
@@ -1454,7 +1944,7 @@ export function killFx(ev, full, mode) {
 function boom(view, ev) {
   const x = ev.x, y = ev.y, r = +ev.r || 60;
   switch (ev.kind) {
-    case 'steam': steamFx(x, y, r); break; // 증기 폭발(융합)
+    case 'steam': steamFx(x, y, r, tier(skillLv(view, 'steamBurst'))); break; // 증기 폭발(융합)
     case 'fireball': { // 화염구 명중: 작은 폭발(반경 r) — 불꽃 링 + 불티 + 가끔 연기. 연사 중엔 예산 안에서만 크게
       const fy = warpY(x, y);
       if (fbBooms++ < 7) {
@@ -1735,19 +2225,22 @@ export function drawBeams() {
 // 가산 빛 밀도 감쇠: 스킬이 겹치는 붐비는 층에서 빛 스프라이트·빛 입자·광선이 전부 더해져 화면 가운데가 하얗게 타고
 // 적·보스·영웅이 사라지던 문제 → 한꺼번에 떠 있는 가산 빛이 많을수록 각각을 옅게(적을 땐 그대로). 매 프레임 drawSprs가 센다
 let glowK = 1;
+const NORMS = [false, true];
 export function drawSprs() {
   let live = 0;
   for (const s of SPRS) if (s.life > 0) live++;
   for (const b of LBEAMS) if (b.life > 0) live += 6;
   glowK = clamp(1.2 - live / 70, 0.45, 1);
-  additive(true);
-  for (const s of SPRS) {
-    if (s.life <= 0) continue;
-    const u = 1 - s.life / s.max, k = s.s0 + (s.s1 - s.s0) * easeOut(u);
-    ctx.globalAlpha = Math.min(1, (1 - u) * 1.8) * glowK;
-    place(s.x, s.y, s.ang, k * s.sq, k);
-    ctx.rotate(s.vs + s.spin * u);
-    ctx.drawImage(s.img, -s.img.hw, -s.img.hh, s.img.hw * 2, s.img.hh * 2);
+  for (const norm of NORMS) { // 빛(가산) 먼저, 그 위에 형태(일반 합성)
+    additive(!norm);
+    for (const s of SPRS) {
+      if (s.life <= 0 || s.norm !== norm) continue;
+      const u = 1 - s.life / s.max, k = s.s0 + (s.s1 - s.s0) * easeOut(u);
+      ctx.globalAlpha = Math.min(1, (1 - u) * 1.8) * (norm ? 1 : glowK);
+      place(s.x, s.y, s.ang, k * s.sq, k);
+      ctx.rotate(s.vs + s.spin * u);
+      ctx.drawImage(s.img, -s.img.hw, -s.img.hh, s.img.hw * 2, s.img.hh * 2);
+    }
   }
   wt();
   ctx.globalAlpha = 1;
@@ -1834,15 +2327,18 @@ export function drawTornadoes(view) {
   if (!fx || !fx.tornadoes.length) return;
   const fus = view.fusions || [];
   const blaze = fus.includes('blazeTornado'), storm = fus.includes('stormEye');
-  const C = blaze ? ['#ffe45a', '#ff8a2a', '#ff4a1a'] : ['#f0fff8', '#9ff0d8', '#6ff0c0'];
   for (const tn of fx.tornadoes) {
-    const r = tn.r, base = tn.y + r * 0.5, hgt = r * 2.5, top = base - hgt;
+    const hot = tn.fire || blaze, t = tier(skillLv(view, hot ? 'blazeTornado' : 'tornado'));
+    const C = hot ? ['#ffe45a', '#ff8a2a', '#ff4a1a'] : ['#d8fff0', '#8ff0d0', '#3fd8a8'];
+    // Lv6 완전체: 깔때기가 하늘까지 닿고 꼭대기에 폭풍 구름 모자
+    const r = tn.r, base = tn.y + r * 0.5, hgt = t.max ? base + topExtra + 20 : r * (1.9 + 0.6 * t.s), top = base - hgt, streaks = 4 + Math.round(7 * t.f);
     const a = Math.min(1, tn.t * 3) * clamp((6 - tn.t) / 0.5, 0, 1) * clamp((tn.y + 40) / 80, 0, 1);
     ctx.globalAlpha = 0.55 * a;
-    spr(soft(blaze ? 'rgba(90,40,20,0.6)' : 'rgba(190,220,200,0.55)'), tn.x, base, r * 2.4, r * 0.7);
+    spr(soft(hot ? 'rgba(90,40,20,0.6)' : 'rgba(190,220,200,0.55)'), tn.x, base, r * 2.4, r * 0.7);
     if (storm) { ctx.globalAlpha = 0.6 * a; spr(soft('rgba(60,50,110,0.7)'), tn.x, top, r * 3.2, r * 1.1); }
     // 깔때기 몸통 (반투명, 휘청임)
     const sw = Math.sin(T * 3) * r * 0.18;
+    if (t.max) { ctx.globalAlpha = 0.6 * a; spr(soft(hot ? 'rgba(110,40,20,0.75)' : 'rgba(60,90,100,0.7)'), tn.x + sw, top + 20, r * 4, r * 1.2); }
     ctx.globalAlpha = 0.42 * a;
     ctx.beginPath();
     ctx.moveTo(tn.x - r * 0.22, base);
@@ -1851,25 +2347,26 @@ export function drawTornadoes(view) {
     ctx.bezierCurveTo(tn.x + r * 1.05 + sw, top + hgt * 0.2, tn.x + r * 0.4 + sw * 0.3, base - hgt * 0.45, tn.x + r * 0.22, base);
     ctx.closePath();
     const fg = ctx.createLinearGradient(tn.x - r, 0, tn.x + r, 0);
-    fg.addColorStop(0, blaze ? 'rgba(255,90,30,0.15)' : 'rgba(160,230,210,0.12)');
-    fg.addColorStop(0.35, blaze ? 'rgba(255,190,90,0.75)' : 'rgba(235,255,248,0.7)');
-    fg.addColorStop(1, blaze ? 'rgba(200,50,20,0.25)' : 'rgba(120,200,180,0.2)');
+    fg.addColorStop(0, hot ? 'rgba(255,90,30,0.15)' : 'rgba(120,220,190,0.12)'); // 몸통은 채도 있는 반투명(흰 기둥 금지)
+    fg.addColorStop(0.35, hot ? 'rgba(255,150,60,0.6)' : 'rgba(170,245,215,0.5)');
+    fg.addColorStop(1, hot ? 'rgba(200,50,20,0.25)' : 'rgba(60,170,140,0.2)');
     ctx.fillStyle = fg;
     ctx.fill();
     additive(true);
     ctx.globalAlpha = 0.3 * a;
-    spr(gl(storm ? '#7b5cff' : C[2]), tn.x, (top + base) / 2, r * 1.9, hgt * 1.1);
-    for (let k = 0; k < 11; k++) { // 회전하는 바람 줄기 (길이가 제각각)
-      const u = k / 10, ry = base - u * hgt, rx = r * (0.22 + 0.98 * u);
+    spr(hu(storm ? '#7b5cff' : C[2]), tn.x, (top + base) / 2, r * 1.9, hgt * 1.1);
+    for (let k = 0; k < streaks; k++) { // 회전하는 바람 줄기 (레벨만큼 늘어난다, Lv1 = 한 색)
+      const u = k / (streaks - 1), ry = base - u * hgt, rx = r * (0.22 + 0.98 * Math.min(1, u * (t.max ? 1.6 : 1)));
       const off = sw * u, ph0 = T * 9 * (1 + u) + k * 2.3;
       ctx.globalAlpha = (0.3 + 0.4 * u) * a;
       ctx.lineWidth = 2 + u * 2.5;
-      ctx.strokeStyle = C[k % 3];
+      ctx.strokeStyle = t.two ? C[k % 3] : C[1];
       ctx.beginPath(); ctx.ellipse(tn.x + off, ry, rx, rx * 0.26, 0, ph0, ph0 + 1.6 + (k % 3) * 0.7); ctx.stroke();
     }
     additive(false);
     // 휘말린 잎·돌 (불꽃 회오리는 불씨)
-    for (let j = 0; j < 8; j++) {
+    if (t.sec) { additive(true); groundRune(runeCircle(C[1]), tn.x, base, r / 30, T * 3, 0.5 * a); additive(false); } // 보조: 발밑 룬
+    for (let j = 0; j < cnt(8, t); j++) {
       const uj = (j * 0.37 + T * 0.45) % 1, rx = r * (0.22 + 0.95 * uj), ang = T * 7 + j * 2.1;
       const px = tn.x + Math.cos(ang) * rx, py = base - uj * hgt + Math.sin(ang) * rx * 0.28;
       ctx.globalAlpha = a;
@@ -1888,18 +2385,25 @@ export function drawTornadoes(view) {
 export function drawLances(view) {
   const ls = view.spellFx && view.spellFx.lances;
   if (!ls || !ls.length) return;
+  const t = tier(skillLv(view, 'iceLance')), k = 0.8 + 0.35 * t.s; // Lv1 가는 창 → Lv6 빙하 창
   for (const l of ls) {
-    const a = Math.atan2(l.vy, l.vx);
+    const a = Math.atan2(l.vy, l.vx), sp = iceSpear();
+    if (t.sec) { // 보조: 뒤따르는 얼음 잔상 셋
+      ctx.globalAlpha = 0.35;
+      for (let j = 1; j <= 3; j++) { place(l.x - l.vx * 0.022 * j, l.y - l.vy * 0.022 * j, a, k * (1 - j * 0.15), k * (1 - j * 0.15)); ctx.drawImage(sp, -38, -11, 76, 22); ctx.globalAlpha *= 0.6; }
+      wt();
+    }
     additive(true);
-    place(l.x, l.y, a, 2.4, 1.5);
-    ctx.drawImage(comet('#7fe3ff'), -66, -10, 72, 20);
+    place(l.x, l.y, a, 2.4 * k, 1.5 * k);
+    ctx.drawImage(comet(t.two ? '#7fe3ff' : '#bff4ff'), -66, -10, 72, 20);
     wt();
     ctx.globalAlpha = 0.6;
-    spr(gl('#7fe3ff'), l.x, l.y, 56, 56);
+    spr(gl('#7fe3ff'), l.x, l.y, 56 * k, 56 * k);
+    if (t.max) { ctx.globalAlpha = 0.5; place(l.x, l.y, T * 6, 1, 1); ctx.drawImage(sparkle('#e8fbff'), -26, -26, 52, 52); wt(); }
     ctx.globalAlpha = 1;
     additive(false);
-    place(l.x, l.y, a, 1.25, 1.25);
-    ctx.drawImage(iceSpear(), -38, -11, 76, 22);
+    place(l.x, l.y, a, 1.25 * k, 1.25 * k);
+    ctx.drawImage(sp, -38, -11, 76, 22);
     wt();
   }
 }
@@ -1909,12 +2413,12 @@ export function drawFireballs() {
   for (const fb of FIREBALLS) {
     if (!fb.on) continue;
     const u = fb.t / fb.dur;
-    const C = fb.plasma ? ['#ffffff', '#e07aff', '#7b5cff'] : ['#fff2a0', '#ff8a1e', '#ff3a1a'];
+    const C = fb.plasma ? ['#ffe0ff', '#e07aff', '#7b5cff'] : ['#fff2a0', '#ff8a1e', '#ff3a1a'], fs2 = tier(fb.lv || 3).s;
     additive(true);
-    for (let k = 8; k >= 0; k--) {
+    for (let k = fb.lv >= 2 ? 8 : 4; k >= 0; k--) { // Lv1 = 짧은 꼬리
       const p = bez(fb, Math.max(0, u - k * 0.04));
       ctx.globalAlpha = 1 - k / 9;
-      const s = 96 - k * 8;
+      const s = (96 - k * 8) * fs2;
       spr(gl(k < 2 ? C[0] : k < 5 ? C[1] : C[2]), p[0], p[1], s, s);
     }
     const p = bez(fb, u), q = bez(fb, Math.max(0, u - 0.08));
@@ -1962,14 +2466,15 @@ export function drawLBeams() {
   for (const b of LBEAMS) {
     if (b.life <= 0) continue;
     const u = b.life / b.max, hgt = b.y1 - b.y0, w = b.w * (0.55 + 0.6 * u);
+    // 굵은 기둥도 흰 심은 가늘게(≤ 20) — 폭은 원소색 헤일로가 맡는다(E 백색 과부하)
     ctx.globalAlpha = Math.min(1, u * 1.5) * 0.55 * bk;
-    spr(gl(b.halo), b.x, b.y0 + hgt / 2, w * 2.2, hgt + 60);
-    ctx.globalAlpha = Math.min(1, u * 2) * 0.9 * bk;
+    spr(hu(b.halo), b.x, b.y0 + hgt / 2, w * 2.2, hgt + 60);
+    ctx.globalAlpha = Math.min(1, u * 2) * (w > 60 ? 0.6 : 0.9) * bk;
     ctx.drawImage(beamSpr(b.halo), b.x - w * 0.55, b.y0, w * 1.1, hgt);
     ctx.globalAlpha = Math.min(1, u * 2) * 0.7 * bk;
-    spr(gl(b.core), b.x, b.y0 + hgt / 2, w * 0.45, hgt);
+    spr(gl(b.core), b.x, b.y0 + hgt / 2, Math.min(20, w * 0.45), hgt);
     ctx.globalAlpha = u * 0.55 * bk;
-    spr(gl(b.halo), b.x, b.y1 - 6, w * 2.6, w * 0.8);
+    spr(hu(b.halo), b.x, b.y1 - 6, w * 2.6, w * 0.8);
   }
   ctx.globalAlpha = 1;
   additive(false);
@@ -2042,7 +2547,8 @@ export function drawParticles() {
     if (p.k === K_GLOW) { // 큰 빛일수록 옅게(화면이 우윳빛으로 덮이지 않게 — 반경 220 넘으면 비례 감쇠) · 붐비면 glowK
       ctx.globalAlpha = Math.min(1, u * 1.6) * (p.size > 220 ? Math.max(0.3, 220 / p.size) : 1) * glowK;
       const s = p.size * (0.4 + 0.6 * u);
-      spr(gl(p.col), p.x, p.y, s, s);
+      if (s > 80) { if (p.col === '#ffffff') ctx.globalAlpha *= Math.min(1, 120 / s); spr(p.col === '#ffffff' ? gl(p.col) : hu(p.col), p.x, p.y, s, s); } // 큰 빛은 흰 심 없이 색으로만(흰 섬광은 클수록 옅게)
+      else spr(gl(p.col), p.x, p.y, s, s);
     } else if (p.k === K_SPARK) {
       ctx.globalAlpha = Math.min(1, u * 2);
       ctx.strokeStyle = p.col;
@@ -2191,8 +2697,9 @@ export function drawOverlays(view) {
   }
   if (view.frenzyT > 0) { // 광란: 가장자리 붉은 비네트 + 양옆 속도선(가산) — 전장 가운데는 깨끗하게
     const fa = Math.min(1, view.frenzyT / 0.5);
-    additive(true); // 두 마법사 불꽃 오라(지팡이 끝 + 발밑)
+    additive(true); // 마법사 불꽃 오라(지팡이 끝 + 발밑)
     for (const M of MF) {
+      if (M !== MF[0] && !mageOn(view, 1)) continue;
       ctx.globalAlpha = fa * (0.45 + 0.2 * Math.sin(RT * 14 + M.ox));
       spr(gl('#ff5a1a'), M.ox, M.oy, 80, 80);
       if (rnd() < 0.5) part(K_GLOW, M.ox + (rnd() - 0.5) * 50, MAGE_FEET - rnd() * 80, (rnd() - 0.5) * 30, -140 - rnd() * 100, 0.5, 12, rnd() < 0.5 ? '#ffb030' : '#ff5a1a', 0, 1);
@@ -2269,7 +2776,7 @@ export function events(view, evs, opts) {
       const fb = take(FIREBALLS), M = MF[ev.o === 1 ? 1 : 0];
       fb.on = true; fb.t = 0; fb.x0 = M.ox; fb.y0 = M.oy; fb.x1 = +ev.x || 360; fb.y1 = +ev.y || 400; fb.r = +ev.r || 100;
       fb.dur = clamp(Math.hypot(fb.x1 - fb.x0, fb.y1 - fb.y0) / 2600, 0.16, 0.3);
-      fb.plasma = ev.key === 'plasma' || fus.includes('plasma'); fb.kills.length = 0;
+      fb.plasma = ev.key === 'plasma' || fus.includes('plasma'); fb.kills.length = 0; fb.lv = skillLv(view, ev.key, ev);
       fbFrame.push(fb);
     }
   }
@@ -2389,8 +2896,9 @@ export function events(view, evs, opts) {
         break;
       case 'spell': spellFx(view, ev, strikes++); break;
       case 'spellPick': {
-        const sp = SPELL_BY_KEY[ev.spell];
-        PICKORB.on = true; PICKORB.t = 0; PICKORB.col = EL[sp ? sp.element : 'holy'][1];
+        PICKORB.on = true; PICKORB.t = 0; PICKORB.col = skillCols(ev.spell)[0];
+        // 만렙 도달: MAX! 각성(한 번). 같은 순간 융합으로 사라진 재료면 생략 — 합체 컷인이 주인공
+        if (ev.spell && (ev.level | 0) >= SPELL_MAX_LV && view.spells?.[ev.spell]) maxFx(ev.spell);
         break;
       }
       case 'pickOffer':
@@ -2454,7 +2962,7 @@ export function events(view, evs, opts) {
         if (!Array.isArray(ev.pts) || ev.pts.length < 2) break;
         const b = take(BOLTS);
         const plasma = ev.o === 0 && fus.includes('plasma');
-        b.pts = ev.pts; b.life = b.max = 0.22; b.w = 1;
+        b.pts = ev.pts; b.life = b.max = 0.22; b.w = 0.6 + 0.12 * skillLv(view, 'chainLightning');
         b.col = plasma ? '#ffb0ff' : ev.o === 1 ? '#8ff8ff' : '#ffe53a';
         b.halo = plasma ? '#c040ff' : ev.o === 1 ? '#2a78e0' : '#7b5cff';
         for (const pt of ev.pts) part(K_GLOW, pt[0], pt[1], 0, 0, 0.2, 44, b.col);
@@ -2563,6 +3071,7 @@ export function update(view, da, dt) {
 
 function updateMagic(view, da, dt) {
   updateProcs(da);
+  updateFinales(da);
   updateCollab(da);
   for (const s of SPRS) if (s.life > 0) s.life -= da;
   for (const b of LBEAMS) if (b.life > 0) b.life -= da;
@@ -2658,12 +3167,13 @@ function updateMagic(view, da, dt) {
   }
   // 판타지 스킬 지속 연출
   const sp = view.spells || {}, fx = view.spellFx;
-  if (sp.holyLight && rnd() < dt * [6, 11, 18][sp.holyLight - 1]) {
+  const bk = view.book || sp, lvHoly = bk.holyLight || sp.holyLight || 0, lvGale = bk.gale || sp.gale || 0;
+  if (lvHoly && rnd() < dt * (4 + 3 * lvHoly)) { // 수호의 빛: 레벨만큼 빛 입자가 늘어난다
     part(K_GLOW, rnd() * WORLD_W, WALL_Y + rnd() * 30 - 10, (rnd() - 0.5) * 20, -50 - rnd() * 70, 1.3, 11, rnd() < 0.3 ? '#ffffff' : '#ffe89a', -15, 0.3);
   }
-  if (sp.gale && rnd() < dt * 14) {
+  if (lvGale && rnd() < dt * (6 + 3 * lvGale)) {
     const a = rnd() * TAU;
-    part(K_GLOW, CANNONS[0].x + Math.cos(a) * 46, MAGE_FEET - 50 + Math.sin(a) * 30, -Math.sin(a) * 160, Math.cos(a) * 60 - 60, 0.4, 9, '#9fffe0', 0, 2);
+    part(K_GLOW, MF[0].cx + Math.cos(a) * 46, MAGE_FEET - 50 + Math.sin(a) * 30, -Math.sin(a) * 160, Math.cos(a) * 60 - 60, 0.4, 9, '#9fffe0', 0, 2);
   }
   if (!fx) return;
   if (fx.frostWard && rnd() < dt * 10) part(K_SHARD, rnd() * WORLD_W, WALL_Y - rnd() * fx.frostWard.r, (rnd() - 0.5) * 20, -20 - rnd() * 20, 1.4, 4, rnd() < 0.5 ? '#ffffff' : '#bff4ff', -8, 0.5);
@@ -2722,6 +3232,7 @@ export function drawFlash() {
 
 // 영웅 궁극기 바닥 마법진 (마법사·궁수·성직자) — 영웅 바닥 연출(units.drawGroundFx) 바로 뒤에 그린다
 export function drawUltGround() {
+  drawFinales(true); // 완전체 연출 뒤층(기둥·문·구름·일식) — 적 아래
   additive(true);
   for (const u of ULTS) {
     if (!u.on) continue;

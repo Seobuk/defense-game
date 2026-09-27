@@ -7,7 +7,7 @@ import {
 import { toInt } from './util.js';
 import { newHero, HERO_CLASS_KEYS, MAX_HERO_LV, SLOTS, RARITY_KEYS, SUBSTATS, BAG_SIZE } from './hero.js';
 import { normalizeRun } from './sim.js';
-import { normalizeTalents } from './talents.js';
+import { migrateTalents, TALENT_VER, recommendNext, allocateTalent } from './talents.js';
 
 export const STORAGE_KEY = 'wallDefense.save.v1'; // 키는 그대로, 안의 스키마가 v:3
 export const SAVE_VERSION = 3;
@@ -56,7 +56,7 @@ export function normalize(d) {
   else for (const k of TRAIN_KEYS) training[k] = toInt(obj(d.training)[k], 0, trainMax(k));
   const refund = ver < 3 ? oldStartGoldGems(toInt(src.startGold, 0, 15)) : 0;
   const lo = obj(d.lastLoadout);
-  return {
+  const out = {
     v: SAVE_VERSION,
     name: typeof d.name === 'string' && d.name.trim() ? d.name.trim().slice(0, 16) : '나',
     best,
@@ -64,13 +64,15 @@ export function normalize(d) {
     gold: ver === 3 ? Math.floor(num(d.gold)) : 0, // 영구 골드(마법사 수련 재화)
     metaLv,
     training,                                       // 마법사 수련 레벨 {atk, rate, crit, multi, wall}
-    auto: bool(d.auto, false),
     settings: {
       dmgNumbers: DMG_MODES.includes(s.dmgNumbers) ? s.dmgNumbers : 'full',
       sound: bool(s.sound, true),
       shake: bool(s.shake, true),
       speed: SPEEDS.includes(s.speed) ? s.speed : 1,
+      // '자동 진행' 하나(다음 층 자동 · 영웅 궁극기 자동 — sim players[0].auto). 카드는 늘 직접 고른다. 옛 '자동 전투'(최상위 auto)는 버리고
+      // 기존 저장은 autoNext 값을 따른다. 새 저장은 ON(카드는 어차피 직접 고르므로)
       autoNext: bool(s.autoNext, true),
+      autoPick: bool(s.autoPick, false), // 카드 화면의 '자동 선택'(자동 진행과 별개, 기본 OFF) — sim players[0].autoPick
     },
     hero: hero(d.hero),
     discovered: keys(d.discovered, SYN_KEYS),
@@ -83,6 +85,11 @@ export function normalize(d) {
     run: ver > 1 && d.run && typeof d.run === 'object' ? normalizeRun(ver === 2 ? migrateRun(d.run) : d.run) : null, // 이어하기(스테이지 시작 시점)
     lastSeen: num(d.lastSeen),
   };
+  // 특성 개편 환불 + 진행 중 도전: 그 도전의 클래스는 추천 빌드로 한 번 다시 찍어 전력을 지킨다(정비에서 무료 초기화 가능)
+  const c = out.run?.loadout?.cls;
+  if (c && out.hero.talentNotice && obj(d.hero).talentVer !== TALENT_VER)
+    for (let n = recommendNext(out.hero, c); n && allocateTalent(out.hero, c, n.key); n = recommendNext(out.hero, c));
+  return out;
 }
 
 // 영웅(클래스·레벨·장비·가방). 없거나 깨졌으면 새 영웅(이전 버전 저장 마이그레이션 포함)
@@ -107,7 +114,11 @@ function hero(h) {
   n.level = toInt(h.level, 1, MAX_HERO_LV);
   n.xp = num(h.xp);
   n.autoEquip = bool(h.autoEquip, true);
-  n.talents = normalizeTalents(h.talents, n.level); // 특성이 없던 저장 → 전 클래스 빈 배분(포인트는 레벨로 계산)
+  // 특성: 구조 버전(talentVer)이 다르면(v0.0.7까지 = 없음) 모든 클래스 배분을 비워 포인트를 돌려주고 정비 화면에서 1회 안내
+  const tm = migrateTalents(h.talents, h.talentVer, n.level);
+  n.talents = tm.talents;
+  n.talentVer = TALENT_VER;
+  n.talentNotice = tm.notice || (h.talentVer === TALENT_VER && bool(h.talentNotice, false));
   n.autoTalent = bool(h.autoTalent, false);
   const eq = obj(h.equip);
   for (const slot of SLOTS) { const it = item(eq[slot]); n.equip[slot] = it && it.slot === slot ? it : null; }

@@ -1,10 +1,10 @@
-// 판타지 스킬 14종(Lv1~5) + 원소 융합(합체) 스킬 8종의 런타임 효과 (sim.js가 호출). DOM 없음.
-// 성벽 마법사는 기본 주문(약한 견제) + 주문서의 스킬을 쿨타임대로 자동 시전한다. P1 주문서 = g.spells(카드 빌드),
-// 실제 발동 레벨은 g.book(융합 스킬이 품은 재료 두 스킬 포함). P2 주문서 = g.allySpells(보스 처치로 익힘).
-// 쿨타임 ÷ 시전자 stats.cdMul(시전 속도), stats.echo 확률로 연속 시전.
+// 판타지 스킬 14종(Lv1~6) + 원소 융합(합체) 스킬 8종의 런타임 효과 (sim.js가 호출). DOM 없음.
+// 성벽 마법사(솔로 = 나 한 명)는 기본 주문(약한 견제) + 주문서의 스킬을 쿨타임대로 자동 시전한다. 주문서 = g.spells(카드 빌드),
+// 실제 발동 레벨은 g.book(융합 스킬이 품은 재료 두 스킬은 만렙). 쿨타임 ÷ stats.cdMul(시전 속도), stats.echo 확률로 연속 시전.
+// cast/spell 이벤트의 lv = 그 스킬의 레벨(렌더러가 연출 크기를 키운다)
 // api = sim.js가 넘겨주는 { damage, killEnemy, damageWall, emit, chainArc, frontMost, spellHit, aimTarget, collabProc }
 import {
-  WORLD_W, WORLD_H, WALL_Y, CANNONS, SPELL_BY_KEY, FUSION_BY_KEY, FUSION_KEYS, FUSION_FX, SPELL_CAST,
+  WORLD_W, WORLD_H, WALL_Y, mageAt, SPELL_BY_KEY, FUSION_BY_KEY, FUSION_KEYS, FUSION_FX, SPELL_CAST,
   COLLAB_FX, collabOn, collabPow, FRONT_Y, inReach,
 } from './config.js';
 import { heroBonuses } from './hero.js';
@@ -16,11 +16,10 @@ const timers = () => {
   return t;
 };
 
-// 스테이지마다 전장 효과·쿨타임만 새로 (주문서 g.spells · g.allySpells 는 런 전체 유지 — sim.js 소유)
+// 스테이지마다 전장 효과·쿨타임만 새로 (주문서 g.spells 는 런 전체 유지 — sim.js 소유)
 export function initSpells(g) {
   g.spellFx = { tornadoes: [], lances: [], beams: [], ghosts: [], storms: [], dragon: null, golem: null, frostWard: null };
-  g.spellT = timers();     // P1 (렌더러가 judgment 예고·스킬 스택 쿨타임 링에 읽는다)
-  g.allySpellT = timers(); // P2
+  g.spellT = timers();     // 렌더러가 judgment 예고·스킬 스택 쿨타임 링에 읽는다
   g._emp = 1;              // 합동 필살 위력(시전 한 번 동안만 2)
 }
 
@@ -56,9 +55,10 @@ export function golemAbsorb(g, dmg) {
 
 const burnOn = (e, amt, t, o) => { e.burn += amt; e.burnT = Math.max(e.burnT, t); e.burnO = o; e.burnSk = true; };
 
-// 주문(기본 주문·스킬, 지속 피해 제외)이 적을 맞췄을 때: 불꽃 마탄 화상 · 연쇄 번개 확률 전이(주문서에 있는 마법사)
+// 주문(기본 주문·스킬, 지속 피해 제외)이 적을 맞췄을 때: 불꽃 마탄 화상 · 연쇄 번개 확률 전이(내 주문서)
 export function onSpellHit(g, e, raw, o, api) {
-  const s = o === 0 ? g.book : g.allySpells;
+  if (o !== 0) return; // ponytail: 협동 동료(잠듦)는 주문서가 없다
+  const s = g.book;
   if (s.flameBullet && !e.dead) {
     const p = SPELL_BY_KEY.flameBullet.lv[s.flameBullet - 1];
     burnOn(e, raw * p.burn, p.dur, o);
@@ -75,7 +75,7 @@ export function onKill(g, e, o, gold, api) {
   if (s.soulHarvest) {
     const p = SPELL_BY_KEY.soulHarvest.lv[s.soulHarvest - 1];
     const bonus = Math.ceil(gold * p.goldMul);
-    for (const pl of g.players) pl.gold += bonus;
+    for (let i = 0; i < (g.coop ? 2 : 1); i++) g.players[i].gold += bonus; // 솔로 = 나만
     g.wall.hp = Math.min(g.wall.max, g.wall.hp + g.wall.max * p.heal);
   }
   if (g.fusions.includes('twilight') && e.cursed) {
@@ -98,11 +98,10 @@ export function onKill(g, e, o, gold, api) {
 // ── 매 프레임 (phase === 'play' 일 때만 호출) ──
 export function updateSpells(g, dt, api) {
   const fx = g.spellFx;
-  // 쿨타임 주문 로테이션: 마법사마다 자기 주문서를 각자 쿨타임대로. P1은 융합 스킬의 전용 시전도
-  for (const [o, s, T] of [[0, g.book, g.spellT], [1, g.allySpells, g.allySpellT]]) {
-    for (const key of COOLDOWN) if (s[key]) tick(g, api, o, T, key, SPELL_BY_KEY[key].lv[s[key] - 1], dt, CAST[key]);
-    if (o === 0) for (const key of g.fusions) tick(g, api, 0, T, key, FUSION_BY_KEY[key].lv[g.spells[key] - 1], dt, FCAST[key]);
-  }
+  // 쿨타임 주문 로테이션: 주문서의 스킬을 각자 쿨타임대로 + 융합 스킬의 전용 시전
+  const s0 = g.book, T = g.spellT;
+  for (const key of COOLDOWN) if (s0[key]) tick(g, api, 0, T, key, s0[key], SPELL_BY_KEY[key].lv[s0[key] - 1], dt, CAST[key]);
+  for (const key of g.fusions) tick(g, api, 0, T, key, g.spells[key], FUSION_BY_KEY[key].lv[g.spells[key] - 1], dt, FCAST[key]);
   moveLances(g, dt, api, fx);
   moveTornadoes(g, dt, api, fx);
   updateStorms(g, dt, api, fx);
@@ -118,12 +117,15 @@ export function updateSpells(g, dt, api) {
   updateGhosts(g, dt, api, fx);
 }
 
-// 쿨타임이 다 되면 시전. 합동 필살: 영웅 궁극기 3초 안의 첫 P1 시전은 2배 위력 + 슬로 모션
-function tick(g, api, o, T, key, p, dt, fn) {
+// 쿨타임이 다 되면 시전. 합동 필살: 영웅 궁극기 3초 안의 첫 시전은 2배 위력 + 슬로 모션.
+// 이 시전이 낸 cast/spell 이벤트에 스킬 레벨 lv를 붙인다(렌더러: Lv1 소박 → Lv6 완전체)
+function tick(g, api, o, T, key, lv, p, dt, fn) {
   if ((T[key] -= dt) > 0) return;
   const link = o === 0 && g.linkT > 0;
   if (link) g._emp = COLLAB_FX.linkMul;
+  const n0 = g.events.length;
   const cd = fn(g, api, o, p);
+  for (let i = n0; i < g.events.length; i++) { const ev = g.events[i]; if (ev.type === 'cast' || ev.type === 'spell') ev.lv = lv; }
   g._emp = 1;
   if (cd == null) { T[key] = 0.3; return; } // 표적 없음: 잠시 뒤 다시
   if (link) {
@@ -156,9 +158,9 @@ export function spellCooldown(g, key) {
 // 스킬 피해 기준 = 시전자 마력 × 장비 스킬 피해% × 합동 필살
 function pd(g, o) { return g.players[o].stats.dmg * (g.hero ? heroBonuses(g.hero).spellMul : 1) * g._emp; }
 
-// 시전 연출 이벤트(마법진·지팡이 섬광·주문별 시전 동작). 시전 위치 = 성벽 위 마법사. support = 영웅이 싸우는 적을 노린 지원 사격
+// 시전 연출 이벤트(마법진·지팡이 섬광·주문별 시전 동작). 시전 위치 = 성벽 위 마법사(솔로 = 성벽 중앙). support = 영웅이 싸우는 적을 노린 지원 사격
 function cast(g, api, o, spell, tx, ty, support = false) {
-  const c = CANNONS[o];
+  const c = mageAt(g, o);
   api.emit(g, { type: 'cast', o, spell, basic: false, x: c.x, y: c.y, tx, ty, support, linked: g._emp > 1 });
 }
 const isSupport = (g, t) => !!g.heroUnit && g.heroUnit.state !== 'down' && g.heroUnit.fightE === t;
@@ -218,7 +220,7 @@ const CAST = {
   iceLance(g, api, o, p) {
     const tgt = api.aimTarget(g); // 지원 사격
     if (!tgt) return null;
-    const c = CANNONS[o], a = Math.atan2(tgt.y - c.y, tgt.x - c.x);
+    const c = mageAt(g, o), a = Math.atan2(tgt.y - c.y, tgt.x - c.x);
     cast(g, api, o, 'iceLance', tgt.x, tgt.y, isSupport(g, tgt));
     g.spellFx.lances.push({ x: c.x, y: c.y, vx: Math.cos(a) * 1000, vy: Math.sin(a) * 1000, dmg: pd(g, o) * p.mul, hit: [], life: 0, o });
     api.emit(g, { type: 'spell', key: 'iceLance', o, x: c.x, y: c.y });
@@ -399,7 +401,7 @@ function updateStorms(g, dt, api, fx) {
     s.zapT = FUSION_FX.stormZap;
     const e = inside[Math.floor(g.rng() * inside.length)];
     sHit(g, api, e, s.dmg * (chilled(g, e) && g.fusions.includes('superconduct') ? FUSION_FX.superconduct : 1), 0, 'lightning');
-    api.emit(g, { type: 'spell', key: 'lightningStrike', o: 0, x: e.x, y: e.y, storm: true });
+    api.emit(g, { type: 'spell', key: 'lightningStrike', o: 0, x: e.x, y: e.y, storm: true, lv: g.spells.stormEye || 1 });
   }
 }
 
@@ -438,7 +440,7 @@ function updateDragon(g, dt, api, T, fx) {
   if (T.dragon <= 0) {
     T.dragon = p.cd / (g.players[0].stats.cdMul * spellRateMul(g));
     d.breathT = p.breathT;
-    api.emit(g, { type: 'spell', key: 'babyDragon', o: 0, x: d.x, y: d.y });
+    api.emit(g, { type: 'spell', key: 'babyDragon', o: 0, x: d.x, y: d.y, lv: g.book.babyDragon });
   }
 }
 

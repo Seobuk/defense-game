@@ -1,5 +1,5 @@
 // 부팅 · 게임 루프 · 저장/업데이트 배선 — 로그라이트: 타이틀 → (이어하기 | 정비) → 도전 → 결과 → 정비 (docs/DESIGN.md '로그라이트 구현 계약')
-// 1차: 싱글 플레이, 슬롯 1 = AI 동료
+// 솔로: 성벽 위 마법사는 나 한 명(players[1]은 협동 모드 자리 — 잠들어 있다)
 import { startStage, step, act, drainEvents, tickPick, refreshFusion, reofferPick } from './sim.js';
 import { DT, SPEED3_UNLOCK, SPELL_KEYS, SPELL_MAX_LV, SYNERGIES, WALL_Y, WORLD_W, MAX_STAGE } from './config.js';
 import { MAX_HERO_LV, RARITY_KEYS, rollItem, addToBag } from './hero.js';
@@ -48,23 +48,28 @@ const persistOk = ok => { if (ok) persist(true); return !!ok; };
 
 const ui = createUI(document.getElementById('app'), {
   onStart: () => { audio.unlock(); showCamp(); },
-  onContinueRun: () => startRun(restoreRun(data)),
+  onContinueRun: () => {
+    startRun(restoreRun(data));
+    if (inRun() && data.hero.talentNotice) setTimeout(() => ui.toast('특성 개편! 이번 도전은 추천 빌드로 다시 찍어 두었어요', 'hero'), 600); // save.js normalize
+  },
   onAbandonRun,
   onResultDone: () => { if (mode === 'result') showCamp(); },
   onCampAct: a => { const ok = campAct(data, a); if (ok && a.type === 'train') audio.play('upgrade'); return persistOk(ok); },
   onBuyMeta: k => { const ok = buyMeta(data, k); if (ok) audio.play('upgrade'); return persistOk(ok); },
   onStartRun: lo => startRun(newRun(data, lo)),
   onOpenHero: ({ tab } = {}) => (inRun() ? heroUI.open(game.hero, runCtx(), { tab }) : heroUI.open(data.hero, campCtx(), { tab })),
-  onToggleAuto: on => { if (inRun() && act(game, 0, { type: 'auto', on })) data.auto = !!on; },
   onSkill: skill => inRun() && act(game, 0, { type: 'skill', skill }),
   onSpeed,
-  onToggleAutoNext: on => { data.settings.autoNext = !!on; nextAt = performance.now() + NEXT_DELAY; persist(); },
+  onToggleAutoNext: on => setAuto(on),
+  onToggleAutoPick: on => setAutoPick(on),
   onNext: () => nextStage(),
   onPick: index => inRun() && act(game, 0, { type: 'pick', index }),
   onReroll: () => inRun() && act(game, 0, { type: 'reroll' }),
   onHeroUlt: () => inRun() && act(game, 0, { type: 'heroUlt' }),
   onSettings: s => {
+    const pickChanged = !!s.autoPick !== !!data.settings.autoPick;
     data.settings = { ...data.settings, ...s };
+    if (pickChanged && inRun()) act(game, 0, { type: 'autoPick', on: !!data.settings.autoPick }); // 설정 화면의 '카드 자동 선택'
     audio.setEnabled(data.settings.sound);
     persist();
   },
@@ -152,7 +157,6 @@ function onAbandonRun() {
 // 정산은 도전이 끝난 '즉시' + 바로 기록: 결과 화면 중에 앱을 꺼도 죽은 층이 이어하기로 살아나지 않게.
 // endRun 뒤엔 game.run.checkpoint 를 data.run 에 다시 쓰지 않는다(syncData 가 run.ended 를 본다)
 function finishRun(g) {
-  data.auto = g.players[0].auto;
   const sum = endRun(g, data);
   if (!sum) return null;
   mode = 'result';
@@ -177,8 +181,10 @@ function nextStage() {
 // ── 디버그 (브라우저 전용) ──
 function grantDebugSpells() {
   if (!dbgSpells || !game) return;
-  Object.assign(game.spells, dbgSpells);
+  const fused = Object.values(game.fusionParts).flat(); // 이미 합체된 재료는 다시 넣지 않는다(융합 + 재료가 함께 슬롯에 남던 문제)
+  for (const [k, v] of Object.entries(dbgSpells)) if (!fused.includes(k)) game.spells[k] = v;
   refreshFusion(game);
+  if (game.pick) reofferPick(game, game.pick); // 이미 떠 있는 카드(시작 무료 카드)는 바뀐 빌드로 다시 뽑는다(합체된 재료 카드 방지)
 }
 // 지정 등급 장비를 전장에 떨어뜨린다(빛기둥 연출 확인용). 'all' = 등급별 1개씩
 function dropLoot(r) {
@@ -192,6 +198,23 @@ function dropLoot(r) {
     game.events.push({ type: 'loot', item, x: 120 + i * 120, y: 640 });
   });
   return list.length > 0;
+}
+
+// '자동 진행' 하나 = 다음 층 자동(settings.autoNext) + 영웅 궁극기 자동(sim players[0].auto). 카드는 늘 직접 고른다.
+// 새 도전·이어하기는 run.js가 settings.autoNext로 players[0].auto를 만든다
+function setAuto(on) {
+  on = !!on;
+  data.settings.autoNext = on;
+  if (inRun()) act(game, 0, { type: 'auto', on });
+  nextAt = performance.now() + (inRun() && game.phase === 'clear' ? 1200 : NEXT_DELAY); // 클리어 화면에서 켜면 곧 다음 층
+  persist();
+}
+
+// 카드 화면 '자동 선택'(자동 진행과 별개, 기본 OFF): 선택 중이면 sim이 카운트다운을 바로 켜고 끈다
+function setAutoPick(on) {
+  data.settings.autoPick = !!on;
+  if (inRun()) act(game, 0, { type: 'autoPick', on: !!on });
+  persist();
 }
 
 const allowedSpeed = s => (s >= 3 && data.best < SPEED3_UNLOCK ? 1 : s);
@@ -241,7 +264,6 @@ function onRestoreSave(code, preview) {
 function syncData() {
   if (!game || game.run.ended || game.run.over) return; // 끝난 도전은 이어하기로 되살리지 않는다
   data.run = game.run.checkpoint;
-  data.auto = game.players[0].auto;
   data.discovered = [...new Set([...data.discovered, ...game.discovered])];
   data.seenSpells = SPELL_KEYS.filter(k => data.seenSpells.includes(k) || game.seenSpells.has(k));
   if (game.hero) data.hero = game.hero; // 같은 객체(sim이 제자리 변경)
@@ -257,6 +279,13 @@ function checkOffline() {
   const r = store.computeOffline(data);
   data.lastSeen = Date.now(); // 복귀 이벤트가 두 번 와도 한 번만 지급
   if (!(r.gems > 0 || r.xp > 0)) return;
+  if (!(r.gems > 0) || r.minutes < 10) { // 잠깐 비운 정도(보석 0)는 창 없이 조용히 지급 — 카드 선택 위로 팝업하지 않는다
+    applyOffline(data, r);
+    persist(true);
+    if (r.xp > 0) ui.toast(`돌아오셨네요! 영웅 경험치 +${r.xp}`, 'hero');
+    if (mode === 'title' && data.run) ui.showContinue(data.run, data.hero);
+    return;
+  }
   ui.showOfflineReward(r, () => {
     applyOffline(data, r);
     audio.play('coin');
@@ -307,7 +336,7 @@ function handleEvents(events, now) {
         break;
       case 'spellPick': audio.play('pickConfirm', ev.rarity); break;
       case 'spell': audio.play('spell', ev.key); break;
-      case 'allySpell': case 'revive': audio.play('synergy'); break;
+      case 'revive': audio.play('synergy'); break;
       case 'talent': audio.play('upgrade'); persist(true); break;
       // 영웅
       case 'heroUlt': audio.play('big'); break;
@@ -363,7 +392,9 @@ function holdPicks(events, now) {
   }
   if (game.phase !== 'play') heldPicks.length = 0; // 클리어·패배 순간 떠 있던 카드는 sim도 버린다
   else if (!game.pick && heldPicks.length && now >= pickHoldUntil) {
-    if (reofferPick(game, heldPicks.shift())) events.push({ type: 'pickOffer' }); // 카드는 지금 빌드로 새로 뽑는다(그사이 다른 카드를 골랐을 수 있다)
+    if (reofferPick(game, heldPicks.shift())) { // 카드는 지금 빌드로 새로 뽑는다(그사이 다른 카드를 골랐을 수 있다)
+      events.push({ type: 'pickOffer' });
+    }
   }
   return events;
 }
@@ -487,9 +518,9 @@ function frame(now) {
     return;
   }
 
-  // 카드 선택 중: 전투 정지(sim도 스스로 멈춤), 자동 강화면 실시간 카운트다운
+  // 카드 선택 중: 전투 정지(sim도 스스로 멈춤). 카드 화면 '자동 선택'을 켰을 때만 실시간 카운트다운(sim이 판단), 아니면 고를 때까지 기다린다
   const picking = !!game.pick;
-  if (picking && game.players[0].auto && !heroUI.isOpen()) tickPick(game, dt);
+  if (picking && !heroUI.isOpen() && ui.isPickShown()) tickPick(game, dt);
   // 모달(메뉴·영웅 화면·결과 등)이 열리면 일시정지
   const paused = picking || ui.isBusy() || heroUI.isOpen();
   const holding = now < stopUntil;

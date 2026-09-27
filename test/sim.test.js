@@ -2,19 +2,20 @@
 //   기본: 단위 테스트 + 캠페인 1회(시드 1) + 클래스 동등성(추천 특성, 최고 50층 시점) + 협공 강도
 //   --full: 캠페인 3시드 + 동등성 50·80층 + 무작위 특성 동등성
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { Worker } from 'node:worker_threads';
 import { fmt, mulberry32 } from '../public/js/util.js';
 import {
-  DT, cannonStats, floorPower, CRIT_MULT, ALLY_SPELLS, BASIC_SPELLS, SKILLS, SPELL_KEYS, FUSIONS, FUSION_KEYS, FUSION_BY_KEY, SPELL_SLOTS, SPELL_MAX_LV,
+  DT, cannonStats, floorPower, CRIT_MULT, SOLO_MAGE, PICK_AUTO_T, BASIC_SPELLS, SKILLS, SPELL_KEYS, FUSIONS, FUSION_KEYS, FUSION_BY_KEY, SPELL_SLOTS, SPELL_MAX_LV,
   AWAKEN_KEYS, META_KEYS, metaCost, metaMax, metaFx, RUN_GEMS, MAX_STAGE, TRAIN_KEYS, MAGE_TRAINING, trainCost, trainMax, trainDisplay,
-  goldPerKill, EARLY_FLOORS, START_CARDS, COLLABS, COLLAB_KEYS, COLLAB_FX, SYNERGIES, SKILL_BY_KEY,
+  goldPerKill, EARLY_FLOORS, START_CARDS, COLLABS, COLLAB_KEYS, COLLAB_FX, SYNERGIES, SKILL_BY_KEY, CODEX_SYN, codexFound,
 } from '../public/js/config.js';
-import { createGame, startStage, step, act, drainEvents, setPlayer, tickPick, refreshFusion, serializeRun, normalizeRun, cardCount, slotsUsed, collabSlots, reofferPick } from '../public/js/sim.js';
+import { createGame, startStage, step, act, drainEvents, setPlayer, tickPick, refreshFusion, serializeRun, normalizeRun, cardCount, slotsUsed, collabSlots, reofferPick, STARTER } from '../public/js/sim.js';
 import { pickCard, botSpendGems, botSpendGold, botLoadout, botTalents, randomTalents, TALENT_BUILDS, ultWorth, autoHero } from '../public/js/bot.js';
 import { newRun, restoreRun, endRun, buyMeta, buyTraining, validLoadout, startSpellChoices, campAct, applyOffline } from '../public/js/run.js';
 import { defaults } from '../public/js/save.js';
 import { spellCooldown } from '../public/js/spells.js';
-import { campaign, playRun, playStage, resolvePick, earlyPacing, HERO_CLASS_KEYS as CLASS_KEYS } from './harness.js';
+import { campaign, playRun, playStage, resolvePick, earlyPacing, humanPlayer, HERO_CLASS_KEYS as CLASS_KEYS } from './harness.js';
 import {
   newHero, HERO_CLASSES, HERO_CLASS_KEYS, unlockedClasses, xpToNext, heroTier, hasMilestone, MILESTONES,
   rollItem, itemPower, heroPower, sellValue, equipItem, sellItem, sellItemsByRarity, autoEquipAll, addToBag,
@@ -22,7 +23,8 @@ import {
 } from '../public/js/hero.js';
 import {
   TALENTS, TALENT_FX_KEYS, CAPSTONES, talentPoints, canAllocate, allocateTalent, resetTalents, talentBonus, talentSpent,
-  talentMaxRanks, talentLeft, talentNode, normalizeTalents, branchSpent,
+  talentMaxRanks, talentLeft, talentNode, normalizeTalents, branchSpent, branchMax, talentBlock, talentCap, nextTierNeed, talentRank,
+  TALENT_HYBRIDS, migrateTalents, TALENT_VER,
 } from '../public/js/talents.js';
 
 const FULL = process.argv.includes('--full');
@@ -48,6 +50,10 @@ function runUntilEnd(g, maxT = 600, collect = null) {
 // ── 1) 스모크 ──
 function smoke() {
   assert.equal(fmt(0), '0');
+  // 도감(솔로): 협동 전용 4종은 목록·분모에서 뺀다(발견 불가라 100% 불가능하던 문제)
+  assert.equal(CODEX_SYN.length, SYNERGIES.length - 4);
+  assert.ok(!CODEX_SYN.some(s => s.kind === 'duo') && CODEX_SYN.some(s => s.kind === 'fusion') && CODEX_SYN.some(s => s.kind === 'collab'));
+  assert.equal(codexFound(['flame', 'twin', 'plasma']), 2);
   assert.equal(fmt(999), '999');
   assert.equal(fmt(999.9), '999');
   assert.equal(fmt(1000), '1.00K');
@@ -91,16 +97,16 @@ function smoke() {
   // 운석: 잡몹 전멸 + 골드, 쿨타임
   const mg = createGame({ stage: 5, players: [{}, {}], seed: 4 });
   for (let k = 0; k < 60 * 20; k++) step(mg, DT);
-  const alive = mg.enemies.length, gold0 = mg.players[1].gold, killed0 = mg.progress.killed;
+  const alive = mg.enemies.length, gold0 = mg.players[0].gold, sleep0 = mg.players[1].gold, killed0 = mg.progress.killed;
   assert.ok(alive > 0);
   assert.ok(act(mg, 0, { type: 'skill', skill: 'meteor' }));
   assert.ok(mg.enemies.every(e => e.dead));
   assert.equal(mg.progress.killed, killed0 + alive);
-  assert.ok(mg.players[1].gold > gold0, '운석 처치 골드는 두 명 모두');
+  assert.ok(mg.players[0].gold > gold0 && mg.players[1].gold === sleep0, '운석 처치 골드는 나만(솔로: 잠든 협동 자리는 안 받는다)');
   while (mg.pick) resolvePick(mg); // 대량 처치로 마나가 찼을 수 있음 — 다른 조작 전에 해소
   assert.ok(!act(mg, 0, { type: 'skill', skill: 'meteor' }), '쿨타임');
   assert.equal(mg.players[0].cd.meteor, SKILLS.meteor.cd);
-  assert.ok(act(mg, 1, { type: 'skill', skill: 'freeze' }) && mg.freezeT > 0);
+  assert.ok(act(mg, 0, { type: 'skill', skill: 'freeze' }) && mg.freezeT > 0);
   step(mg, DT);
   assert.ok(mg.enemies.every(e => e.frozen || e.dead));
 
@@ -131,8 +137,8 @@ function smoke() {
   assert.ok(dg.run.over && !dg.run.victory);
   assert.equal(dg.result, null);
 
-  // 슬롯 교체
-  const sg = createGame({ players: [bot('P1'), bot('AI')], seed: 7 });
+  // 슬롯 교체(협동 모드 자리 — 솔로 게임은 늘 1인)
+  const sg = createGame({ players: [bot('P1'), bot('AI')], seed: 7, coop: true });
   setPlayer(sg, 1, { name: '친구', kind: 'remote', gold: 50, lv: { wall: 3 } });
   assert.equal(sg.players[1].name, '친구');
   assert.equal(sg.players[1].kind, 'remote');
@@ -192,7 +198,7 @@ function addiction() {
   lg.combo.count = 99; lg.combo.tier = 3; lg.combo.timer = 1;
   const lgold = lg.enemies[0].gold;
   drainEvents(lg);
-  act(lg, 1, { type: 'skill', skill: 'meteor' });
+  act(lg, 0, { type: 'skill', skill: 'meteor' });
   const lev = drainEvents(lg);
   assert.ok(lev.some(e => e.type === 'combo' && e.tier === 4 && e.label === '전설!' && e.count === 100));
   assert.ok(lev.some(e => e.type === 'synergy' && e.key === 'legend'));
@@ -270,8 +276,9 @@ function addiction() {
   pev = drainEvents(pg);
   assert.ok(pev.some(e => e.type === 'synergy' && e.key === 'pierce' && !e.first), '재활성은 first:false');
 
-  // 협동 레벨 조합: 쌍둥이 포화, 황금비
-  const tg = createGame({ stage: 25, players: [{ lv: { multi: 3, atk: 10 } }, { lv: { multi: 3, atk: 10 } }], seed: 11, run: WALL });
+  // 협동 레벨 조합(협동 모드에서만): 쌍둥이 포화, 황금비 — 솔로에선 꺼져 있다
+  assert.deepEqual(createGame({ stage: 25, players: [{ lv: { multi: 3, atk: 10 } }, { lv: { multi: 3, atk: 10 } }], seed: 11 }).duo, [], '솔로: 협동 조합 없음');
+  const tg = createGame({ stage: 25, players: [{ lv: { multi: 3, atk: 10 } }, { lv: { multi: 3, atk: 10 } }], seed: 11, run: WALL, coop: true });
   const tev = drainEvents(tg);
   assert.deepEqual([...tg.duo].sort(), ['golden', 'twin']);
   assert.ok(tev.some(e => e.type === 'synergy' && e.key === 'twin' && e.o === -1));
@@ -280,14 +287,14 @@ function addiction() {
   act(tg, 0, { type: 'skill', skill: 'meteor' });
   const tk = of(drainEvents(tg), 'kill');
   assert.equal(tk[0].gold, Math.ceil(tb[0] * 1.5), '황금비 +50%');
-  const hg = createGame({ stage: 5, players: [{ lv: { multi: 3, atk: 10 } }, { lv: { multi: 3, atk: 10 } }], seed: 5 });
+  const hg = createGame({ stage: 5, players: [{ lv: { multi: 3, atk: 10 } }, { lv: { multi: 3, atk: 10 } }], seed: 5, coop: true });
   const hev = [];
   run(hg, 15, hev);
   const hd = hg.players[0].stats.dmg;
   assert.ok(of(hev, 'hit').some(e => Math.abs(e.dmg - hd * BASIC_SPELLS[0].dmg * 1.25) < 1e-6), '쌍둥이 +25%');
 
   // 빙하 운석: 한쪽 빙결 → 3초 안 다른 쪽 운석 → 보스 운석 피해 3배
-  const bg = createGame({ stage: 10, players: [{}, {}], seed: 8, run: WALL });
+  const bg = createGame({ stage: 10, players: [{}, {}], seed: 8, run: WALL, coop: true });
   run(bg, 50);
   const boss = bg.enemies.find(e => e.named);
   assert.ok(boss, '보스 등장');
@@ -300,14 +307,14 @@ function addiction() {
   assert.ok(of(gev, 'shatter').length >= 1);
   assert.ok(Math.abs(hp0 - boss.hp - boss.maxHp * SKILLS.meteor.bossPct * 3) < boss.maxHp * 1e-9, '보스 3배');
   // 같은 사람의 빙결 → 운석은 조합 아님
-  const sg2 = createGame({ stage: 10, players: [{}, {}], seed: 8, run: WALL });
+  const sg2 = createGame({ stage: 10, players: [{}, {}], seed: 8, run: WALL, coop: true });
   run(sg2, 20);
   act(sg2, 0, { type: 'skill', skill: 'freeze' });
   act(sg2, 0, { type: 'skill', skill: 'meteor' });
   assert.ok(!drainEvents(sg2).some(e => e.key === 'glacier'));
 
   // 이중 필살: 1.5초 안에 같은 스킬 → 운석 2번, 빙결 10초
-  const wg = crowd(10, 50);
+  const wg = crowd(10, 50, { coop: true });
   const bossW = wg.enemies.find(e => e.named);
   act(wg, 0, { type: 'skill', skill: 'freeze' });
   run(wg, 1);
@@ -392,35 +399,59 @@ function addiction() {
   console.log('중독성 레이어 통과');
 }
 
-// ── 2) 성벽 마법사 = 주문만 시전 (기본 공격 없음) ──
+// ── 2) 성벽 마법사 = 주문만 시전 (기본 공격 없음) · 솔로 = 성벽 중앙의 나 한 명 ──
 function mageSpells() {
-  // 기본 주문: P1 화염구(작은 폭발), P2 서리 화살(관통·둔화). 발사체 kind·caster, 시전마다 cast 이벤트
-  const g = createGame({ stage: 5, players: [{ lv: { atk: 5 } }, { lv: { atk: 5 } }], seed: 60 });
+  // 솔로: 성벽 중앙(SOLO_MAGE)의 나만 시전(화염구). players[1]은 잠든 협동 자리 — 시전·비상 스킬·조합·성벽에 영향 없음
+  const g = createGame({ stage: 5, players: [{ lv: { atk: 5 } }, { lv: { atk: 5, wall: 20 } }], seed: 60 });
   const ev = [];
   const kinds = new Set();
-  let slowed = false;
   for (let t = 0; t < 20 && g.phase === 'play'; t += DT) {
     if (g.pick) { resolvePick(g, ev); continue; }
     step(g, DT);
     ev.push(...drainEvents(g));
     for (const b of g.bullets) kinds.add(`${b.caster}:${b.kind}:${b.pierce}`);
-    slowed ||= g.enemies.some(e => !e.dead && e.slowT > 0);
   }
-  assert.deepEqual([...kinds].sort(), ['0:fireball:1', '1:frostbolt:2'], '발사체 = 화염구(P1) · 서리 화살(P2, 2마리 관통)');
+  assert.deepEqual([...kinds], ['0:fireball:1'], '솔로: 발사체 = 내 화염구뿐');
   const casts = of(ev, 'cast');
   const ok = e => [e.x, e.y, e.tx, e.ty].every(Number.isFinite);
-  assert.ok(casts.some(e => e.o === 0 && e.spell === 'fireball' && e.basic && ok(e)), '화염구 시전 이벤트');
-  assert.ok(casts.some(e => e.o === 1 && e.spell === 'frostbolt' && e.basic && ok(e)), '서리 화살 시전 이벤트');
+  assert.ok(casts.length && casts.every(e => e.o === 0 && e.x === SOLO_MAGE.x && e.y === SOLO_MAGE.y && ok(e)), '시전 위치 = 성벽 중앙의 나');
+  assert.ok(SOLO_MAGE.x === 360, '성벽 중앙');
+  assert.ok(casts.some(e => e.spell === 'fireball' && e.basic), '화염구 시전 이벤트');
   assert.ok(of(ev, 'boom').some(e => e.kind === 'fireball' && e.o === 0), '화염구 폭발');
-  assert.ok(slowed, '서리 화살 둔화');
-  const hits = of(ev, 'hit');
-  assert.ok(hits.every(e => (e.o !== 0 || e.kind === 'fireball') && (e.o !== 1 || e.kind === 'frostbolt')), '기본 공격(매직 미사일) 없음');
+  assert.ok(of(ev, 'hit').every(e => e.o !== 1) && g.dmgDone[1] === 0, '동료 피해 없음');
+  assert.equal(g.wall.max, createGame({ stage: 5, players: [{ lv: { atk: 5 } }, {}], seed: 60 }).wall.max, '동료 수련은 성벽에 영향 없음');
+  assert.ok(!act(g, 1, { type: 'skill', skill: 'meteor' }) && !act(g, 1, { type: 'auto', on: true }), '솔로: 동료 조작 불가');
+  // 네임드 보스를 잡아도 동료 주문(옛 allySpells)은 없다 · 옛 저장의 allySpells는 버린다
+  const strong = { lv: TR_MAX };
+  const ag = createGame({ stage: 10, players: [strong, strong], seed: 5, run: buff(150, 20) });
+  const aev = [];
+  runUntilEnd(ag, 600, aev);
+  assert.equal(ag.phase, 'clear');
+  assert.ok(!aev.some(e => e.type === 'allySpell') && !('allySpells' in ag.run.checkpoint), '동료 주문 없음');
+  assert.ok(!('allySpells' in normalizeRun({ allySpells: { iceLance: 3 }, spells: { fireball: 2 } })), '옛 동료 주문 저장은 버림');
 
-  // 카드 스킬은 P1 주문서에서 각자 쿨타임대로 시전(cast basic:false) + 주문 치명타
+  // 협동 모드(g.coop — 후일을 위한 자리): 동료가 깨어나 서리 화살(2마리 관통·둔화)
+  const cg0 = createGame({ stage: 5, players: [{ lv: { atk: 5 } }, { lv: { atk: 5 } }], seed: 60, coop: true });
+  const ev0 = [], kinds0 = new Set();
+  let slowed = false;
+  for (let t = 0; t < 20 && cg0.phase === 'play'; t += DT) {
+    if (cg0.pick) { resolvePick(cg0, ev0); continue; }
+    step(cg0, DT);
+    ev0.push(...drainEvents(cg0));
+    for (const b of cg0.bullets) kinds0.add(`${b.caster}:${b.kind}:${b.pierce}`);
+    slowed ||= cg0.enemies.some(e => !e.dead && e.slowT > 0);
+  }
+  assert.deepEqual([...kinds0].sort(), ['0:fireball:1', '1:frostbolt:2'], '협동: 화염구(나) · 서리 화살(동료)');
+  assert.ok(of(ev0, 'cast').some(e => e.o === 1 && e.spell === 'frostbolt' && e.basic && ok(e)) && slowed, '협동: 서리 화살 시전·둔화');
+
+  // 카드 스킬은 내 주문서에서 각자 쿨타임대로 시전(cast basic:false, 스킬 레벨 lv) + 주문 치명타
   const cg = createGame({ stage: 5, players: [{ lv: TR_MAX }, {}], seed: 61, run: buff(20, 999, { spells: { judgment: 3, iceLance: 3 } }) });
   const cev = [];
   run(cg, 8, cev);
-  for (const k of ['judgment', 'iceLance']) assert.ok(of(cev, 'cast').some(e => e.o === 0 && e.spell === k && !e.basic && ok(e)), `${k} 시전 이벤트`);
+  for (const k of ['judgment', 'iceLance']) {
+    assert.ok(of(cev, 'cast').some(e => e.o === 0 && e.spell === k && !e.basic && ok(e) && e.lv === 3), `${k} 시전 이벤트(lv)`);
+    assert.ok(of(cev, 'spell').filter(e => e.key === k).every(e => e.lv === 3), `${k} spell 이벤트 lv`);
+  }
   assert.ok(of(cev, 'hit').some(e => e.o === 3 && e.caster === 0 && e.crit), '스킬 피해도 치명타');
 
   // 시전 속도 = 쿨타임 단축(상한), 다중 시전 = 연속 시전 확률
@@ -432,33 +463,7 @@ function mageSpells() {
   const base = casts60({}), fast = casts60({ rate: 15 }), echo = casts60({ multi: 5 });
   assert.ok(fast > base * 1.2 && echo > base * 1.1, `심판 광선 시전 ${base} → 시전 속도 ${fast} · 다중 시전 ${echo}`);
   assert.ok(cannonStats({ rate: 15 }, { rateMul: 9 }).cdMul <= 1 / 0.6 + 1e-9, '쿨타임 단축 상한');
-
-  // AI 동료: 네임드 보스를 잡을 때마다 냉기·번개 주문 1개(런당 최대 3), 이어하기에 남는다
-  const strong = { lv: TR_MAX };
-  const ag = createGame({ stage: 10, players: [strong, strong], seed: 5, run: buff(150, 20) });
-  const aev = [];
-  runUntilEnd(ag, 600, aev);
-  assert.equal(ag.phase, 'clear');
-  assert.deepEqual(ag.allySpells, { [ALLY_SPELLS[0]]: 1 });
-  assert.ok(aev.some(e => e.type === 'allySpell' && e.spell === ALLY_SPELLS[0] && e.level === 1));
-  startStage(ag, 11);
-  assert.deepEqual(ag.run.checkpoint.allySpells, ag.allySpells, '체크포인트에 저장');
-  const lev = [];
-  run(ag, 10, lev);
-  assert.ok(of(lev, 'cast').some(e => e.o === 1 && e.spell === ALLY_SPELLS[0]), 'AI 동료가 익힌 주문 시전');
-  ag.allySpells = Object.fromEntries(ALLY_SPELLS.map(k => [k, 2]));
-  while (ag.pick) resolvePick(ag);
-  ag.enemies.push({ id: 99999, named: true, isBoss: true, dead: false, hp: 1, maxHp: 1, shield: 0, x: 300, y: 300, r: 30, reduce: 1, gold: 1, beh: 'walk', type: 'slime' });
-  assert.ok(act(ag, 0, { type: 'skill', skill: 'meteor' }), '운석으로 네임드 처치');
-  assert.equal(Object.keys(ag.allySpells).length, 3, '최대 3개');
-  // 다 익힌 뒤의 네임드 처치는 익힌 주문을 그 층 레벨까지 올린다
-  ag.stage = 60;
-  ag.enemies.push({ id: 99998, named: true, isBoss: true, dead: false, hp: 0.1, maxHp: 1, shield: 0, x: 300, y: 300, r: 30, reduce: 1, gold: 1, beh: 'walk', type: 'slime' });
-  ag.players[1].cd.meteor = 0;
-  assert.ok(act(ag, 1, { type: 'skill', skill: 'meteor' }));
-  assert.deepEqual(ag.allySpells, Object.fromEntries(ALLY_SPELLS.map(k => [k, 3])), '동료 주문 레벨 상승');
-  assert.deepEqual(normalizeRun({ allySpells: { iceLance: 9, fireball: 2 } }).allySpells, { iceLance: 5 }, '동료 주문 검증');
-  console.log('성벽 마법사 주문 시전 통과');
+  console.log('성벽 마법사 주문 시전(솔로) 통과');
 }
 
 // ── 3) 판타지 스킬 선택 (런 전체 누적 빌드: 슬롯 6 · Lv1~5 · 각성) ──
@@ -506,7 +511,7 @@ function fantasyPick() {
   assert.ok(g.book[key] >= 1, '다음 층에도 빌드 유지(합체됐으면 융합 스킬 안에)');
   assert.equal(g.mana.cur, 0);
 
-  // 슬롯 6칸: 차면 보유 스킬 강화 카드만. 모자라는 자리는 각성 카드
+  // 슬롯 6칸: 차면 보유 스킬 강화 카드만. 각성 카드는 강화할 것도 새로 넣을 것도 없을 때만
   const sg = createGame({ stage: 5, players: [{}, {}], seed: 22 });
   const six = SPELL_KEYS.slice(0, SPELL_SLOTS);
   six.forEach(k => { sg.spells[k] = 2; });
@@ -516,13 +521,17 @@ function fantasyPick() {
   six.forEach(k => { sg.spells[k] = SPELL_MAX_LV; });
   sg.spells[six[0]] = SPELL_MAX_LV - 1;
   let cards = genOffer(sg);
-  assert.equal(cards.length, 3);
-  assert.equal(cards.filter(c => c.spell === six[0]).length, 1, '남은 강화 1장');
-  assert.equal(cards.filter(c => c.awaken).length, 2, '나머지는 각성 카드');
-  assert.ok(cards.every(c => !c.spell || c.level <= SPELL_MAX_LV), 'Lv5 최대');
+  assert.deepEqual(cards.map(c => [c.spell, c.level]), [[six[0], SPELL_MAX_LV]], '남은 강화 1장뿐(각성 카드로 채우지 않는다)');
   sg.spells[six[0]] = SPELL_MAX_LV;
   cards = genOffer(sg);
-  assert.ok(cards.every(c => c.awaken && AWAKEN_KEYS.includes(c.awaken)), '모든 슬롯 최대 → 각성 카드만');
+  assert.ok(cards.length === 3 && cards.every(c => c.awaken && AWAKEN_KEYS.includes(c.awaken)), '모든 슬롯 만렙 → 각성 카드만');
+  assert.ok(!cards.fixed, '각성 4종 중 3장 = 새로고침하면 달라질 수 있다');
+  sg.fx.choices += 1; // 4장 = 각성 4종 전부 → 새로고침해도 같은 카드: 새로고침 막음(횟수 보존)
+  cards = genOffer(sg);
+  assert.ok(cards.length === 4 && cards.fixed);
+  sg.pick = { cards, autoLeft: null }; sg.rerollLeft = 1;
+  assert.ok(!act(sg, 0, { type: 'reroll' }) && sg.rerollLeft === 1, '같은 카드로 새로고침 금지');
+  sg.pick = null; sg.fx.choices -= 1;
   // 각성 선택: 런 동안 스탯 누적
   const d0 = sg.players[0].stats.dmg;
   sg.pick = { cards: [{ spell: null, awaken: 'power', level: 1, rarity: 'common', fusionHint: false }], autoLeft: null };
@@ -536,15 +545,52 @@ function fantasyPick() {
   act(sg, 0, { type: 'pick', index: 0 });
   assert.ok(sg.wall.max > w0 && sg.wall.hp === sg.wall.max, '각성: 성벽 결계 → 최대치·현재치 증가');
 
-  // 자동 선택: auto 켜져 있으면 tickPick 3초 뒤 봇 휴리스틱으로 자동 선택
+  // 카드는 기본적으로 직접 고른다 — 자동 진행(auto) ON이어도 카운트다운·자동 선택 없음
   const ag = createGame({ stage: 2, players: [{ lv: { atk: 20 }, auto: true }, {}], seed: 23, run: buff(20, 20) });
   for (let n = 0; !ag.pick && n < 60 * 60; n++) { step(ag, DT); drainEvents(ag); }
-  assert.ok(ag.pick && ag.pick.autoLeft === 3, 'auto면 카드에 3초 카운트다운');
+  assert.ok(ag.pick && ag.pick.autoLeft === null, '자동 진행 ON이어도 카드는 직접(카운트다운 없음)');
+  tickPick(ag, 999); step(ag, 1);
+  assert.ok(ag.pick, '자동 진행 ON: 고를 때까지 기다린다');
+  // 카드 화면 '자동 선택'(autoPick, 자동 진행과 별개): 켜면 PICK_AUTO_T초 뒤 추천 카드
+  assert.ok(act(ag, 0, { type: 'autoPick', on: true }) && ag.pick.autoLeft === PICK_AUTO_T && PICK_AUTO_T === 2, '선택 중 자동 선택 ON → 2초 카운트다운');
   tickPick(ag, 1.5);
-  assert.ok(ag.pick, '3초 전엔 그대로');
-  tickPick(ag, 1.6);
-  assert.ok(!ag.pick, '3초 지나면 자동 선택');
+  assert.ok(ag.pick, '2초 전엔 그대로');
+  tickPick(ag, 0.6);
+  assert.ok(!ag.pick, '2초 지나면 추천 카드 자동 선택');
   assert.equal(Object.keys(ag.spells).length, 1);
+  // 자동 선택 OFF(기본): 카운트다운도 자동 선택도 없이 고를 때까지 기다린다 · 선택 중 토글은 즉시 반영
+  const mg = createGame({ stage: 2, players: [{ lv: { atk: 20 } }, {}], seed: 23, run: buff(20, 20) });
+  for (let n = 0; !mg.pick && n < 60 * 60; n++) { step(mg, DT); drainEvents(mg); }
+  assert.ok(mg.pick && mg.pick.autoLeft === null, 'OFF: 카운트다운 없음');
+  const frozen = mg.phaseT;
+  tickPick(mg, 999); step(mg, 1);
+  assert.ok(mg.pick && mg.phaseT === frozen, 'OFF: 몇 초가 지나도 전투를 멈춘 채 기다린다');
+  assert.ok(act(mg, 0, { type: 'auto', on: true }) && mg.pick.autoLeft === null, '선택 중 자동 진행 ON → 카드는 그대로 직접');
+  assert.ok(act(mg, 0, { type: 'autoPick', on: true }) && mg.pick.autoLeft === PICK_AUTO_T, '선택 중 자동 선택 ON → 카운트다운 시작');
+  assert.ok(act(mg, 0, { type: 'autoPick', on: false }) && mg.pick.autoLeft === null, '선택 중 자동 선택 OFF → 카운트다운 사라짐');
+  tickPick(mg, 999);
+  assert.ok(mg.pick, 'OFF면 그대로');
+  assert.ok(act(mg, 0, { type: 'pick', index: 0 }) && !mg.pick, '직접 선택');
+  // 이어하기로 선택 중 상태가 복원돼도(자동 진행 ON) 기다린다
+  const rm = defaults();
+  rm.settings.autoNext = true;
+  const rg = newRun(rm, { cls: 'knight' }, 1);
+  assert.ok(rg.pick && rg.pick.autoLeft === null, '새 도전 무료 카드: 기다린다');
+  const rr = restoreRun(rm, rm.run, 2);
+  assert.ok(rr.pick && rr.pick.autoLeft === null && rr.players[0].auto, '이어하기(자동 진행 ON): 카드는 기다린다');
+  // 저장값: settings.autoNext(자동 진행, 새 저장 ON) · settings.autoPick(카드 자동 선택, 새 저장 OFF)
+  const dm = defaults();
+  assert.equal(dm.settings.autoNext, true, '새 저장 = 자동 진행 ON');
+  assert.equal(dm.settings.autoPick, false, '새 저장 = 카드 자동 선택 OFF');
+  assert.equal(newRun(dm, { cls: 'knight' }, 1).players[0].auto, true);
+  dm.settings.autoNext = false;
+  assert.equal(newRun(dm, { cls: 'knight' }, 1).players[0].auto, false);
+  dm.settings.autoPick = true;
+  const ap = newRun(dm, { cls: 'knight' }, 1);
+  assert.ok(ap.players[0].autoPick && ap.pick.autoLeft === PICK_AUTO_T, '자동 선택 저장값 → 카운트다운');
+  // 영웅 궁극기: 자동 진행 ON일 때만 자동(OFF면 버튼으로 직접)
+  const ults = auto => { const u = createGame({ stage: 3, seed: 5, players: [{ auto }, {}], hero: { ...newHero(), cls: 'knight', level: 20 }, run: WALL }); const e = []; run(u, 30, e); return of(e, 'heroUlt').length; };
+  assert.ok(ults(true) > 0 && ults(false) === 0, '궁극기 자동은 자동 진행 ON일 때만');
 
   // 선택지 수: 3 + 영웅 Lv15(+1) + 영구 강화 '카드 선택지'(+1)
   const hero15 = () => ({ ...newHero(), cls: 'knight', level: 15 });
@@ -632,95 +678,107 @@ function fantasySpellEffects() {
   console.log('판타지 스킬(14종 효과) 통과');
 }
 
-// 원소 융합 8종 = 합체: 두 재료를 모두 가지면 둘이 융합 스킬 하나로 합쳐지고 슬롯 1칸이 열린다
-// (레벨 = 평균 내림, 재료 효과는 융합 레벨로 계속 발동 + 전용 시전) · 첫 발견만 first:true · 카드로 Lv5까지
+// 원소 융합 8종 = 합체: 두 재료가 모두 만렙(Lv6)이 되는 순간 융합 스킬 Lv1 하나로 합쳐지고 슬롯 1칸이 열린다
+// (재료 효과는 만렙 그대로 + 전용 시전) · 첫 발견만 first:true · 카드로 Lv6까지 · ✦는 이 카드가 합체를 완성할 때만
+const noPick = (g, secs) => { for (let t = 0; t < secs && g.phase === 'play'; t += DT) { if (g.pick) { g.pick = null; continue; } step(g, DT); drainEvents(g); } };
 function fantasyFusions() {
-  const pairOf = f => f.groups.map(gr => gr[0]);
+  const M = SPELL_MAX_LV;
+  const CD = ['fireball', 'lightningStrike', 'iceLance', 'tornado', 'judgment', 'babyDragon'];
+  const pairOf = f => f.groups.map(gr => gr.find(k => CD.includes(k)) || gr[0]);
   const rows = [];
   for (const f of FUSIONS) {
     const [a, b] = pairOf(f);
-    assert.ok(f.test({ [a]: 1, [b]: 1 }) && !f.test({ [a]: 1 }), `${f.key}: 재료 조합`);
-    assert.ok(SKILL_BY_KEY[f.key].desc.length === 5 && f.lv.length === 5 && f.shape, `${f.key}: Lv1~5 수치·문구·시전 모양`);
+    assert.ok(f.test({ [a]: 1, [b]: 1 }) && !f.test({ [a]: M }), `${f.key}: 재료 짝`);
+    assert.ok(f.ready({ [a]: M, [b]: M }) && !f.ready({ [a]: M, [b]: M - 1 }), `${f.key}: 합체 조건 = 둘 다 만렙`);
+    assert.ok(SKILL_BY_KEY[f.key].desc.length === M && f.lv.length === M && f.shape, `${f.key}: Lv1~6 수치·문구·시전 모양`);
     const g = createGame({ stage: 5, players: [{}, {}], seed: 50, run: WALL });
-    g.spells[a] = 2;
-    g.spells.gale = 1; // 다른 슬롯
+    Object.assign(g.spells, { [a]: M, [b]: M - 2, gale: 1 });
     refreshFusion(g);
     drainEvents(g);
-    assert.ok(!g.fusions.includes(f.key) && slotsUsed(g) === 2, `${f.key}: 한 쪽만으로는 미합체`);
-    // 두 번째 재료 카드에는 ✦ 힌트
-    g.pick = { cards: [], autoLeft: null };
-    g.rerollLeft = 99;
-    let hinted = false;
-    for (let k = 0; k < 40 && !hinted; k++) { act(g, 0, { type: 'reroll' }); hinted = g.pick.cards.some(c => c.spell === b && c.fusionHint); }
-    assert.ok(hinted, `${f.key}: 융합 완성 카드에 ✦ 힌트`);
-    g.pick = { cards: [{ spell: b, level: 4, rarity: 'common', fusionHint: true }], autoLeft: null }; // Lv4 재료가 들어온다고 치고
+    assert.ok(!g.fusions.includes(f.key) && slotsUsed(g) === 3, `${f.key}: 한쪽만 만렙이면 미합체`);
+    // 진행도(스택 금빛 연결선·툴팁): 도감에 오른 융합만
+    assert.ok(!g.fusionProgress.some(p => p.key === f.key), `${f.key}: 미발견 융합은 진행도에 없다`);
+    g.discovered.add(f.key); refreshFusion(g);
+    assert.deepEqual(g.fusionProgress.find(p => p.key === f.key), { key: f.key, parts: [a, b], lv: [M, M - 2], max: M }, `${f.key}: 진행도`);
+    // ✦: 짝이 만렙이고 이 카드가 만렙을 만들 때만
+    const cardFor = () => { g.pick = { cards: [], autoLeft: null }; g.rerollLeft = 99; let c = null; for (let k = 0; k < 80 && !c; k++) { act(g, 0, { type: 'reroll' }); c = g.pick.cards.find(x => x.spell === b); } g.pick = null; return c; };
+    let c = cardFor();
+    assert.ok(c && c.level === M - 1 && !c.fusionHint, `${f.key}: 아직 만렙이 안 되는 카드엔 ✦ 없음`);
+    g.spells[b] = M - 1;
+    c = cardFor();
+    assert.ok(c && c.level === M && c.fusionHint, `${f.key}: 합체를 완성하는 카드에 ✦`);
+    g.pick = { cards: [c], autoLeft: null };
     drainEvents(g);
     assert.ok(act(g, 0, { type: 'pick', index: 0 }));
     const ev = drainEvents(g);
-    const lvl = Math.floor((2 + 4) / 2);
-    assert.deepEqual(g.spells, { gale: 1, [f.key]: lvl }, `${f.key}: 두 재료 → 융합 스킬 1칸`);
+    assert.deepEqual(g.spells, { gale: 1, [f.key]: 1 }, `${f.key}: 두 재료 → 융합 스킬 Lv1 1칸`);
     assert.equal(slotsUsed(g), 2, `${f.key}: 슬롯 1칸 해제(3 → 2)`);
-    assert.ok(ev.some(e => e.type === 'fusionMerge' && e.fusion === f.key && e.level === lvl && e.slotFreed && e.from.includes(a) && e.from.includes(b)), `${f.key}: fusionMerge 이벤트`);
-    assert.ok(ev.some(e => e.type === 'synergy' && e.key === f.key && e.first) && ev.some(e => e.type === 'hitstop' && e.ms === 350), `${f.key}: 첫 발견 + 히트스톱`);
-    assert.ok(g.discovered.has(f.key) && g.fusions.includes(f.key));
-    assert.equal(g.book[a], lvl, `${f.key}: 재료 효과는 융합 레벨로`);
-    assert.equal(g.book[b], lvl);
+    assert.ok(ev.some(e => e.type === 'fusionMerge' && e.fusion === f.key && e.level === 1 && e.slotFreed && e.from.includes(a) && e.from.includes(b)), `${f.key}: fusionMerge 이벤트`);
+    assert.ok(ev.some(e => e.type === 'synergy' && e.key === f.key && !e.first), `${f.key}: 도감에 있던 융합은 first:false`);
+    assert.ok(g.fusions.includes(f.key) && !g.fusionProgress.some(p => p.key === f.key));
+    assert.ok(g.book[a] === M && g.book[b] === M, `${f.key}: 재료 효과는 만렙 그대로`);
     assert.deepEqual(g.fusionParts[f.key], [a, b]);
-    // 전용 시전(모양이 다르다)
+    // 전용 시전(모양이 다르다) + 레벨(lv)
     const cev = [];
     run(g, 12, cev);
-    assert.ok(of(cev, 'spell').some(e => e.key === f.key && e.shape === f.shape) && of(cev, 'cast').some(e => e.spell === f.key && !e.basic), `${f.key}: 전용 시전 ${f.shape}`);
-    // 강화 카드로 Lv5까지(새 카드로는 나오지 않는다)
-    g.spells[f.key] = lvl; // 위 전투 중 카드로 올랐을 수 있다
+    assert.ok(of(cev, 'spell').some(e => e.key === f.key && e.shape === f.shape && e.lv >= 1) && of(cev, 'cast').some(e => e.spell === f.key && !e.basic && e.lv >= 1), `${f.key}: 전용 시전 ${f.shape}`);
+    // 강화 카드로 Lv6까지(새 카드로는 나오지 않는다)
+    g.spells[f.key] = 1;
     refreshFusion(g);
     let up = null;
-    for (let k = 0; k < 300 && !up; k++) up = genOffer(g).find(c => c.spell === f.key);
-    assert.ok(up && up.fusion && up.level === lvl + 1, `${f.key}: 융합 스킬 강화 카드`);
-    for (let k = 0; k < 60; k++) assert.ok(genOffer(g).every(c => c.spell !== a && c.spell !== b), `${f.key}: 합체된 재료는 새 카드로 다시 나오지 않는다`);
+    for (let k = 0; k < 300 && !up; k++) up = genOffer(g).find(x => x.spell === f.key);
+    assert.ok(up && up.fusion && up.level === 2, `${f.key}: 융합 스킬 강화 카드`);
+    for (let k = 0; k < 60; k++) assert.ok(genOffer(g).every(x => x.spell !== a && x.spell !== b), `${f.key}: 합체된 재료는 새 카드로 다시 나오지 않는다`);
     const fresh = createGame({ stage: 5, players: [{}, {}], seed: 52 });
-    for (let k = 0; k < 30; k++) assert.ok(genOffer(fresh).every(c => !c.fusion), '융합 스킬은 합체로만 생긴다');
+    for (let k = 0; k < 30; k++) assert.ok(genOffer(fresh).every(x => !x.fusion), '융합 스킬은 합체로만 생긴다');
     // 런 안에서 유지 + 이어하기 저장
     startStage(g, 6);
-    assert.ok(g.fusions.includes(f.key) && g.book[a] === lvl, `${f.key}: 다음 층에도 유지`);
+    assert.ok(g.fusions.includes(f.key) && g.book[a] === M, `${f.key}: 다음 층에도 유지`);
     const back = createGame({ players: [{}, {}], seed: 53, run: normalizeRun(JSON.parse(JSON.stringify(serializeRun(g)))) });
     assert.deepEqual([back.spells, back.book, back.fusionParts], [g.spells, g.book, g.fusionParts], `${f.key}: 이어하기`);
-    // 다음 도전(발견 기록 유지)에서 시작 스킬 두 개로 바로 합체 → first:false
+    // 시작 스킬(Lv1)은 바로 합체하지 않는다 · 만렙 두 개로 시작하면(이어하기 등) 바로 합체
     const g2 = createGame({ stage: 1, players: [{}, {}], seed: 51, discovered: [...g.discovered], run: { spells: { [a]: 1, [b]: 1 } } });
-    assert.deepEqual(g2.spells, { [f.key]: 1 });
-    assert.ok(drainEvents(g2).some(e => e.type === 'synergy' && e.key === f.key && !e.first), `${f.key}: 재발견은 first:false`);
-    // 강도: 같은 레벨의 두 재료를 따로 가질 때보다 확실히 세다(마법사 스킬 피해)
-    const dmgOf = merged => {
-      const t = createGame({ stage: 20, players: [{}, {}], seed: 54, run: WALL });
-      t.spells = { [a]: 3, [b]: 3 };
-      if (merged) refreshFusion(t);
-      else t.book = { [a]: 3, [b]: 3 }; // 합체 없이 두 스킬 그대로
-      run(t, 30);
-      return t.dmgSkill[0];
+    assert.deepEqual(g2.spells, { [a]: 1, [b]: 1 }, `${f.key}: Lv1 두 개는 미합체`);
+    const g3 = createGame({ stage: 1, players: [{}, {}], seed: 51, run: { spells: { [a]: M, [b]: M } } });
+    assert.deepEqual(g3.spells, { [f.key]: 1 });
+    assert.ok(drainEvents(g3).some(e => e.type === 'synergy' && e.key === f.key && e.first), `${f.key}: 첫 발견`);
+    // 강도: 재료 둘 만렙(따로) 대비 — Lv1은 조금 세고(합체가 손해가 아니다), Lv6은 확실히 세다
+    const dmgOf = lv => {
+      let sum = 0;
+      for (const seed of [54, 55]) {
+        const t = createGame({ stage: 20, players: [{}, {}], seed, run: WALL });
+        t.spells = { [a]: M, [b]: M };
+        if (lv) { refreshFusion(t); t.spells[f.key] = lv; refreshFusion(t); } else t.book = { [a]: M, [b]: M }; // 합체 없이 두 스킬 그대로
+        noPick(t, 30);
+        sum += t.dmgSkill[0];
+      }
+      return sum;
     };
-    const on = dmgOf(true), off = dmgOf(false);
-    rows.push(`${f.key} ×${(on / off).toFixed(2)}`);
-    assert.ok(on > off * 1.2, `${f.key}: 융합 스킬이 재료 둘보다 강하다 (${on.toExponential(2)} vs ${off.toExponential(2)})`);
+    const off = dmgOf(0), l1 = dmgOf(1) / off, l6 = dmgOf(M) / off;
+    rows.push(`${f.key} Lv1 ×${l1.toFixed(2)} Lv6 ×${l6.toFixed(2)}`);
+    assert.ok(l1 > 1.03 && l1 < 1.8, `${f.key}: 융합 Lv1은 재료 둘 만렙보다 조금 세다 (×${l1.toFixed(2)})`);
+    assert.ok(l6 > 1.7, `${f.key}: 융합 Lv6은 확실히 세다 (×${l6.toFixed(2)})`);
   }
   // 슬롯이 꽉 찬 상태에서는 새 스킬 카드가 없다 — 합체로 칸이 열리면 다시 나온다
   const s = createGame({ stage: 5, players: [{}, {}], seed: 55 });
-  s.spells = { fireball: 2, lightningStrike: 2, iceLance: 2, tornado: 2, holyLight: 2, curseMark: 2 };
+  s.spells = { fireball: M, lightningStrike: M, iceLance: M, tornado: M, holyLight: 2, curseMark: 2 };
   s.book = { ...s.spells };
-  for (let k = 0; k < 20; k++) assert.ok(genOffer(s).every(c => c.awaken || s.spells[c.spell]), '6칸이 차면 보유 스킬 강화만');
-  refreshFusion(s); // 가진 조합이 모두 합체된다
+  for (let k = 0; k < 20; k++) assert.ok(genOffer(s).every(c => s.spells[c.spell]), '6칸이 차면 보유 스킬 강화만');
+  refreshFusion(s); // 만렙 짝이 모두 합체된다
   assert.ok(slotsUsed(s) < SPELL_SLOTS && s.fusions.length >= 2, `합체로 칸이 열린다: ${JSON.stringify(s.spells)}`);
   let fresh = false;
   for (let k = 0; k < 20 && !fresh; k++) fresh = genOffer(s).some(c => c.spell && !s.spells[c.spell]);
   assert.ok(fresh, '열린 칸에 새 스킬 카드');
   // 스킬 스택 쿨타임 링: 쿨타임 스킬·융합 스킬은 { left, total }, 지속형·없는 스킬은 null
   {
-    const g = createGame({ stage: 3, seed: 1, players: [{}, {}], run: { spells: { fireball: 2, iceLance: 1, gale: 1 } } });
+    const g = createGame({ stage: 3, seed: 1, players: [{}, {}], run: { spells: { fireball: M, iceLance: M, gale: 1 } } });
     run(g, 10);
     const cd = spellCooldown(g, 'steamBurst');
     assert.ok(g.spells.steamBurst && cd && cd.total > 0 && cd.left >= 0 && cd.left <= cd.total, '융합 스킬 쿨타임');
     assert.equal(spellCooldown(g, 'gale'), null);
     assert.equal(spellCooldown(g, 'fireball'), null, '합쳐진 재료는 슬롯에 없다');
   }
-  console.log('판타지 스킬(융합 합체 8종) 통과: ' + rows.join(' · '));
+  console.log('판타지 스킬(융합 합체 8종) 통과 — 융합 강도(재료 둘 만렙 대비): ' + rows.join(' · '));
 }
 
 // ── 4) 영웅: 클래스 · 필드 유닛 ──
@@ -851,7 +909,7 @@ function heroXpAndMilestones() {
   assert.ok(!hasMilestone(4, 'reroll1') && hasMilestone(5, 'reroll1'));
   assert.ok(hasMilestone(15, 'choose4') && hasMilestone(30, 'extraCard') && hasMilestone(50, 'legendBoost'));
 
-  const g = createGame({ stage: 1, players: [{}, {}], seed: 205, hero: newHero(), run: buff(20, 20) });
+  const g = createGame({ stage: 1, players: [{}, {}], seed: 205, hero: newHero(), run: buff(60, 60) }); // 스킬 없는 솔로 마법사라 마력을 올려 둔다
   act(g, 0, { type: 'heroClass', cls: 'knight' });
   const api = { emit: (gg, ev) => gg.events.push(ev) };
   heroGainXp(g, xpToNext(1), api);
@@ -949,71 +1007,115 @@ function heroJsonRoundtrip() {
   console.log('영웅 JSON 라운드트립 통과');
 }
 
-// ── 4b) 영웅 특성 트리 ──
+// ── 4b) 영웅 특성 트리 ── 갈래 3개 × 6단(단은 그 갈래 포인트로 열림) · 택1 · 핵심 노드 · 궁극 특성 하나 · 혼합 노드
 const KO = /[가-힣]/;
 function talentTable() {
   assert.deepEqual(Object.keys(TALENTS).sort(), [...HERO_CLASS_KEYS].sort());
-  const caps = new Set();
+  const caps = new Set(), hooked = new Set(Object.keys(talentBonus({ level: 1 }, 'knight')));
   for (const cls of HERO_CLASS_KEYS) {
     const bs = TALENTS[cls];
     assert.equal(bs.length, 3, `${cls}: 3갈래`);
     const keys = new Set();
     for (const b of bs) {
       assert.ok(KO.test(b.name) && KO.test(b.desc), `${cls}.${b.key} 이름·설명`);
-      assert.equal(b.nodes.length, 6, `${cls}.${b.key}: 6노드`);
-      b.nodes.forEach((n, i) => {
+      const tiers = [...new Set(b.nodes.map(n => n.tier))].sort();
+      assert.ok(tiers.length >= 5 && tiers.length <= 6 && tiers[0] === 0, `${cls}.${b.key}: 5~6단`);
+      for (const t of tiers) { const k = b.nodes.filter(n => n.tier === t).length; assert.ok(k >= 2 && k <= 3, `${b.key} ${t + 1}단 노드 ${k}개`); }
+      const cap = b.nodes.filter(n => n.cap), ks = b.nodes.filter(n => n.ks);
+      assert.ok(cap.length === 1 && cap[0].tier === tiers[tiers.length - 1] && cap[0].max === 1, `${b.key}: 마지막 단에 궁극 특성 1개`);
+      assert.ok(ks.length >= 1 && ks.length <= 2 && ks.every(n => n.max === 1 && n.tier >= 1 && n.tier <= 4), `${b.key}: 중간 단 핵심 노드 1~2개`);
+      const ors = {};
+      for (const n of b.nodes) if (n.or) (ors[n.or] ||= []).push(n);
+      assert.ok(Object.keys(ors).length >= 1 && Object.values(ors).every(g => g.length === 2 && g[0].tier === g[1].tier), `${b.key}: 같은 단 택1 묶음`);
+      assert.ok(b.nodes.some(n => n.max === 1) && b.nodes.some(n => n.max >= 2), `${b.key}: 랭크형 + 1랭크 섞임`);
+      assert.ok(b.nodes.every(n => n.max <= 5));
+      for (const n of b.nodes) {
         assert.ok(!keys.has(n.key), `${n.key} 중복`);
         keys.add(n.key);
-        assert.ok(KO.test(n.name) && KO.test(n.desc), `${n.key} 한국어 이름·설명`);
-        assert.ok(Number.isInteger(n.max) && n.max >= 1 && n.max <= 3, `${n.key} 랭크 1~3`);
-        for (const k of Object.keys(n.fx)) assert.ok(TALENT_FX_KEYS.includes(k), `${n.key}: 모르는 효과 ${k}`);
-        if (i === 5) {
-          assert.ok(n.cap && n.max === 1, `${n.key}: 마지막 노드 = 궁극 특성(1랭크)`);
-          assert.ok(!caps.has(n.cap), `${n.cap} 중복`);
-          caps.add(n.cap);
-        } else assert.ok(!n.cap && Object.keys(n.fx).length > 0, `${n.key}: 일반 노드는 효과가 있다`);
+        assert.ok(KO.test(n.name) && KO.test(n.desc) && /\d/.test(n.desc), `${n.key} 한국어 이름·숫자 있는 설명`);
+        for (const k of Object.keys(n.fx)) assert.ok(TALENT_FX_KEYS.includes(k) && hooked.has(k), `${n.key}: 모르는 효과 ${k}`);
+        if (n.cap) { assert.ok(!caps.has(n.cap), `${n.cap} 중복`); caps.add(n.cap); } else assert.ok(Object.keys(n.fx).length > 0, `${n.key}: 효과가 있다`);
         assert.equal(talentNode(cls, n.key).node, n);
-      });
+      }
     }
-    // 선행 조건은 갈래 안 일직선(순환 없음) — 포인트만 충분하면 앞에서부터 전부 찍힌다
-    const hero = { ...newHero(), level: MAX_HERO_LV };
-    assert.ok(talentPoints(hero) >= talentMaxRanks(cls), `${cls}: 만렙이면 전부 찍을 수 있다`);
-    for (const b of bs) for (const n of b.nodes) for (let r = 0; r < n.max; r++) assert.ok(allocateTalent(hero, cls, n.key), `${cls}.${n.key} 도달`);
-    assert.equal(talentSpent(hero, cls), talentMaxRanks(cls));
-    assert.equal(Object.keys(talentBonus(hero, cls).cap).length, 3);
-    assert.ok(talentMaxRanks(cls) >= 36 && talentMaxRanks(cls) <= 44, `${cls} 총 랭크 ${talentMaxRanks(cls)}`);
+    const hy = TALENT_HYBRIDS[cls];
+    assert.ok(hy.length >= 1 && hy.length <= 2 && hy.every(n => n.req.length === 2 && n.req.every(k => bs.some(b => b.key === k)) && KO.test(n.name) && Object.keys(n.fx).length), `${cls}: 혼합 노드`);
   }
   assert.equal(caps.size, 15);
   assert.deepEqual([...caps].sort(), [...CAPSTONES].sort());
-  // 포인트 = 레벨 + 10레벨마다 1
-  assert.deepEqual([1, 9, 10, 25, 99].map(level => talentPoints({ level })), [1, 9, 11, 27, 108]);
+  // 효과 키는 전투 코드가 실제로 읽는다(hero.js / sim.js / config.js에 tb.키 참조)
+  const src = ['hero.js', 'sim.js', 'config.js'].map(f => readFileSync(new URL(`../public/js/${f}`, import.meta.url), 'utf8')).join('\n');
+  for (const k of TALENT_FX_KEYS) assert.ok(new RegExp(`(\\btb|heroTb\\(g\\))\\??\\.${k}\\b`).test(src), `효과 키 ${k}: 전투 코드 훅 없음`);
   console.log('특성 테이블 통과');
 }
 
 function talentRules() {
-  const hero = { ...newHero(), cls: 'knight', level: 5 }; // 5포인트
-  assert.ok(!canAllocate(hero, 'knight', 'crusade2'), '앞 노드부터');
-  assert.ok(allocateTalent(hero, 'knight', 'crusade1'));
-  assert.ok(!allocateTalent(hero, 'knight', 'crusade2'), '앞 노드를 최대 랭크까지 찍어야 열린다');
-  assert.ok(allocateTalent(hero, 'knight', 'crusade1') && allocateTalent(hero, 'knight', 'crusade1'));
-  assert.ok(!allocateTalent(hero, 'knight', 'crusade1'), '최대 랭크');
-  assert.ok(allocateTalent(hero, 'knight', 'crusade2') && allocateTalent(hero, 'knight', 'crusade2'));
+  // 예산: Lv20까지 레벨당 1점, 이후 0.44점. Lv99 = 한 갈래 전부 + 나머지 두 갈래 절반 정도(= 두 갈래 분량)
+  assert.deepEqual([1, 10, 20, 40, 76, 99].map(level => talentPoints({ level })), [1, 10, 20, 28, 44, 54]);
+  for (const cls of HERO_CLASS_KEYS) {
+    const P = talentPoints({ level: MAX_HERO_LV }), bm = TALENTS[cls].map(b => branchMax(cls, b.key)).sort((a, b) => b - a);
+    assert.ok(P >= bm[0] + (bm[1] + bm[2]) * 0.4 && P <= bm[0] + (bm[1] + bm[2]) * 0.6 + 4, `${cls}: 예산 ${P} (갈래 ${bm})`);
+    assert.ok(P < talentMaxRanks(cls), `${cls}: 만렙이어도 다 못 찍는다`);
+  }
+  const hero = { ...newHero(), cls: 'knight', level: 12 }; // 12포인트
+  // 단 해금: 2단 = 그 갈래 3점(앞 노드를 만렙 찍을 필요 없음 — 두 노드에 나눠도 된다)
+  assert.equal(talentBlock(hero, 'knight', 'crusade3').code, 'tier');
+  assert.ok(allocateTalent(hero, 'knight', 'crusade1') && allocateTalent(hero, 'knight', 'crusade2') && !canAllocate(hero, 'knight', 'crusade3'));
+  assert.equal(nextTierNeed(hero, 'knight', 'crusade'), 1);
+  assert.ok(allocateTalent(hero, 'knight', 'crusade2') && allocateTalent(hero, 'knight', 'crusade3'), '갈래 3점 → 2단');
+  assert.equal(talentBlock(hero, 'knight', 'guard3').code, 'tier', '다른 갈래 포인트는 이 갈래 단을 열지 않는다');
+  // 택1: 같은 or 묶음은 하나만(찍은 쪽은 계속 랭크업)
+  assert.ok(allocateTalent(hero, 'knight', 'crusade4'));
+  assert.equal(talentBlock(hero, 'knight', 'crusade5').code, 'or');
+  assert.ok(allocateTalent(hero, 'knight', 'crusade4'), '찍은 쪽은 랭크업 가능');
+  assert.equal(branchSpent(hero, 'knight', 'crusade'), 6);
+  assert.ok(allocateTalent(hero, 'knight', 'crusade6'), '3단 핵심 노드');
+  assert.equal(talentBonus(hero, 'knight').critBurst, 0.6);
+  while (allocateTalent(hero, 'knight', 'guard1'));
+  assert.equal(talentLeft(hero, 'knight'), 2);
+  while (allocateTalent(hero, 'knight', 'guard2'));
   assert.equal(talentLeft(hero, 'knight'), 0);
-  assert.ok(!allocateTalent(hero, 'knight', 'crusade2') && !allocateTalent(hero, 'knight', 'guard1'), '포인트 부족');
-  assert.equal(talentLeft(hero, 'ranger'), 5, '포인트는 클래스마다 따로(레벨 공유)');
+  assert.equal(talentBlock(hero, 'knight', 'crusade7').code, 'points');
+  assert.equal(talentLeft(hero, 'ranger'), 12, '포인트는 클래스마다 따로(레벨 공유)');
   assert.ok(!allocateTalent(hero, 'knight', 'nope') && !allocateTalent(hero, 'nope', 'crusade1') && !allocateTalent(hero, 'ranger', 'crusade1'));
   assert.ok(resetTalents(hero, 'knight'), '무료 초기화');
-  assert.equal(talentLeft(hero, 'knight'), 5);
+  assert.equal(talentLeft(hero, 'knight'), 12);
   assert.ok(!resetTalents(hero, 'knight'), '초기화할 것이 없음');
+  // 궁극 특성은 하나만(다른 갈래 궁극은 잠김) · 혼합 노드는 두 갈래 각각 8점 · 저장 검증
+  const top = { ...newHero(), cls: 'knight', level: MAX_HERO_LV };
+  top.talents = { knight: branchAlloc('knight', 'crusade', true) };
+  assert.equal(talentCap(top, 'knight'), 'judgeBolt');
+  assert.equal(talentBlock(top, 'knight', 'oath').code, 'hybrid');
+  assert.equal(talentBlock(top, 'knight', 'guard13').code, 'cap', '단이 안 열렸어도 궁극 잠김이 먼저(점수를 더 찍어도 소용없다)');
+  for (const k of ['guard1', 'guard1', 'guard1', 'guard2', 'guard2', 'guard2', 'guard3', 'guard3']) assert.ok(allocateTalent(top, 'knight', k));
+  assert.ok(allocateTalent(top, 'knight', 'oath'), '혼합: 수호 8 + 성전사 8');
+  assert.ok(!canAllocate(top, 'knight', 'field'), '혼합: 지휘관 0점');
+  top.talents.knight = { ...top.talents.knight, ...branchAlloc('knight', 'guard', false) };
+  assert.equal(talentBlock(top, 'knight', 'guard13').code, 'cap', '궁극 특성은 하나만');
+  assert.deepEqual(normalizeTalents(top.talents, top.level).knight, top.talents.knight, '합법 배분은 저장 검증을 통과');
+  assert.equal(normalizeTalents({ knight: { ...top.talents.knight, guard13: 1 } }, 99).knight, undefined, '궁극 특성 2개 = 무효(비움)');
+  assert.equal(normalizeTalents({ knight: { crusade4: 1, crusade5: 1, crusade1: 3 } }, 99).knight, undefined, '택1 둘 다 = 무효');
+  assert.equal(normalizeTalents({ knight: { crusade3: 1 } }, 99).knight, undefined, '단 조건 위반 = 무효');
+  assert.equal(normalizeTalents({ knight: { oath: 1 } }, 99).knight, undefined, '혼합 조건 위반 = 무효');
+  assert.equal(normalizeTalents({ knight: { crusade1: 3, bogus: 1 } }, 99).knight, undefined, '모르는 노드 = 무효');
+  // 저장 이전: 옛 구조(버전 없음) = 모든 클래스 환불 + 안내 1회
+  assert.deepEqual(migrateTalents({ knight: { guard1: 3 }, ranger: { rapid1: 2 } }, undefined, 30), { talents: {}, notice: true });
+  assert.deepEqual(migrateTalents({}, undefined, 30), { talents: {}, notice: false }, '찍은 게 없던 저장은 안내 없음');
+  assert.deepEqual(migrateTalents({ knight: { crusade1: 2 } }, TALENT_VER, 30), { talents: { knight: { crusade1: 2 } }, notice: false });
 
-  // 정비 화면(campAct): 찍기 · 초기화 · 자동 배분 토글, 미해금 클래스 불가
+  // 정비 화면(campAct): 찍기 · 초기화 · 자동 배분 토글 · 안내 닫기, 미해금 클래스 불가
   const m = defaults();
   m.hero.level = 12;
   assert.ok(campAct(m, { type: 'talent', cls: 'knight', key: 'guard1' }));
   assert.ok(!campAct(m, { type: 'talent', cls: 'cleric', key: 'heal1' }), '미해금 클래스');
   assert.ok(campAct(m, { type: 'talentReset', cls: 'knight' }) && talentSpent(m.hero, 'knight') === 0);
-  assert.ok(campAct(m, { type: 'autoTalent', on: true }) && m.hero.autoTalent);
+  assert.ok(campAct(m, { type: 'autoTalent', on: true, cls: 'knight' }) && m.hero.autoTalent);
+  assert.ok(talentSpent(m.hero, 'knight') > 0 && talentLeft(m.hero, 'knight') === 0, '자동 배분을 켜는 즉시 남은 포인트를 추천대로');
+  campAct(m, { type: 'talentReset', cls: 'knight' });
   m.hero.autoTalent = false;
+  assert.ok(!campAct(m, { type: 'talentNoticeSeen' }));
+  m.hero.talentNotice = true;
+  assert.ok(campAct(m, { type: 'talentNoticeSeen' }) && !m.hero.talentNotice);
 
   // 도전 중: 현재 클래스만 찍기(레벨업 포인트), 초기화는 정비 화면 전용
   const g = newRun(m, { cls: 'ranger', startSpells: [] }, 1);
@@ -1023,38 +1125,49 @@ function talentRules() {
   assert.ok(drainEvents(g).some(e => e.type === 'talent' && e.key === 'rapid1'));
   assert.ok(!act(g, 0, { type: 'talent', key: 'crusade1' }) && !act(g, 0, { type: 'talentReset' }));
   step(g, DT);
-  assert.equal(g.heroUnit.tb.aspd, 0.08, '찍은 특성이 바로 반영');
+  assert.equal(g.heroUnit.tb.aspd, 0.07, '찍은 특성이 바로 반영');
 
   // 특성이 전투 스탯에 들어간다
   const sg = createGame({ stage: 5, seed: 1, best: 40, players: [{ lv: { wall: 20 } }, {}], hero: { ...newHero(), cls: 'knight', level: 40 } });
   const s0 = heroCombatStats(sg, sg.hero);
-  sg.hero.talents = { knight: { guard1: 3, guard2: 3, guard3: 2, crusade1: 3, crusade2: 3, crusade3: 2, crusade4: 3 } };
+  sg.hero.talents = { knight: branchAlloc('knight', 'guard', false) };
   const s1 = heroCombatStats(sg, sg.hero);
   assert.ok(s1.dmg > s0.dmg * 1.2 && s1.atkSpd > s0.atkSpd && s1.maxHp > s0.maxHp * 1.25 && s1.dmgReduce > s0.dmgReduce && s1.engageR === s0.engageR + 45);
 
-  // 봇 배분: 추천 빌드는 첫 갈래를 궁극 특성까지, 무작위 빌드도 규칙을 지킨다
+  // 봇 배분: 추천 빌드는 주력 갈래를 궁극 특성까지(Lv20이면 궁극), 만렙이면 주력 마스터 + 나머지 절반씩. 무작위 빌드도 규칙을 지킨다
   for (const cls of HERO_CLASS_KEYS) {
+    const main = TALENT_BUILDS[cls][0], mainCap = TALENTS[cls].find(b => b.key === main).nodes.find(n => n.cap).cap;
     const hb = { ...newHero(), level: 20 };
     assert.equal(botTalents(hb, cls), talentPoints(hb));
-    assert.ok(talentBonus(hb, cls).cap[TALENTS[cls].find(b => b.key === TALENT_BUILDS[cls][0]).nodes[5].cap], `${cls} 추천 빌드 첫 궁극 특성`);
-    const hr = { ...newHero(), level: 30 };
+    assert.ok(talentBonus(hb, cls).cap[mainCap], `${cls} 추천 빌드 Lv20 궁극 특성`);
+    const hm = { ...newHero(), level: MAX_HERO_LV };
+    botTalents(hm, cls);
+    assert.equal(branchSpent(hm, cls, main), branchMax(cls, main), `${cls}: 주력 갈래 마스터`);
+    for (const k of TALENT_BUILDS[cls].slice(1)) { const r = branchSpent(hm, cls, k) / branchMax(cls, k); assert.ok(r >= 0.3 && r <= 0.6, `${cls}.${k}: 절반 정도 ${r.toFixed(2)}`); }
+    assert.ok(TALENT_HYBRIDS[cls].some(n => talentRank(hm, cls, n.key) > 0), `${cls}: 만렙 추천 빌드는 혼합 노드도`);
+    const hr = { ...newHero(), level: 60 };
     assert.equal(randomTalents(hr, cls, mulberry32(7)), talentPoints(hr));
+    assert.ok(Object.keys(talentBonus(hr, cls).cap).length <= 1);
     assert.deepEqual(normalizeTalents(hr.talents, hr.level), hr.talents, '무작위 빌드도 유효');
   }
-  console.log('특성 배분·초기화 규칙 통과');
+  console.log('특성 배분·초기화 규칙 통과(예산 · 단 해금 · 택1 · 궁극 하나 · 혼합 · 이전)');
 }
 
-// 한 갈래 전부(궁극 특성 포함/제외)
+// 한 갈래 전부(택1은 앞 노드, 궁극 특성 포함/제외)
 function branchAlloc(cls, bkey, withCap) {
-  const a = {};
-  TALENTS[cls].find(b => b.key === bkey).nodes.forEach((n, i) => { if (i < 5 || withCap) a[n.key] = n.max; });
+  const a = {}, seen = new Set();
+  for (const n of TALENTS[cls].find(b => b.key === bkey).nodes) {
+    if ((n.cap && !withCap) || (n.or && seen.has(n.or))) continue;
+    if (n.or) seen.add(n.or);
+    a[n.key] = n.max;
+  }
   return a;
 }
-const CAP_BRANCH = Object.fromEntries(Object.entries(TALENTS).flatMap(([cls, bs]) => bs.map(b => [b.nodes[5].cap, [cls, b.key]])));
+const CAP_BRANCH = Object.fromEntries(Object.entries(TALENTS).flatMap(([cls, bs]) => bs.map(b => [b.nodes.find(n => n.cap).cap, [cls, b.key]])));
 function capGame(cap, withCap, extra = {}) {
   const [cls, bkey] = CAP_BRANCH[cap];
   return createGame({
-    stage: 6, best: 40, seed: 300, players: [{ lv: { atk: 20, rate: 3, wall: 20 } }, { lv: { wall: 20 } }], run: buff(0, 20),
+    stage: 8, best: 40, seed: 300, players: [{ lv: { atk: 20, rate: 3, wall: 20 } }, { lv: { wall: 20 } }], run: buff(0, 20),
     hero: { ...newHero(), cls, level: 60, talents: { [cls]: branchAlloc(cls, bkey, withCap) } }, ...extra,
   });
 }
@@ -1086,7 +1199,8 @@ function talentCapstones() {
     rows.push(`${cap} ${a}/${b}`);
     assert.ok(a > b, `${cap}: 궁극 특성이 동작을 바꾼다 (${a} vs ${b})`);
     if (cap !== 'wolfPack') assert.equal(b, 0, `${cap}: 궁극 특성 없이는 그 동작이 없다`);
-    assert.notEqual(on.dmgDone[2], off.dmgDone[2], `${cap}: 영웅 피해량이 달라진다`);
+    // 절대영도는 궁극기가 양쪽 다 한 방에 끝내면(초과 피해 제외) 피해가 같을 수 있다 — 아래 빙결 검사로 본다
+    if (cap !== 'absZero') assert.notEqual(on.dmgDone[2], off.dmgDone[2], `${cap}: 영웅 피해량이 달라진다`);
   }
   // 절대영도: 궁극기에 맞은 적이 얼어붙는다
   const az = capGame('absZero', true);
@@ -1129,6 +1243,38 @@ function talentCapstones() {
   };
   assert.ok(pk(true) > pk(false), '비전 충전 추가 카드');
   console.log('궁극 특성 15종 통과: ' + rows.join(' · '));
+}
+
+// 핵심 노드(ks)·혼합 노드: 켜면 전투가 실제로 달라진다(전용 nova 이벤트 · 피해량 · 성벽 회복)
+function talentKeystones() {
+  const rows = [];
+  for (const [cls, bs] of Object.entries(TALENTS)) for (const b of bs) for (const n of b.nodes.filter(x => x.ks)) {
+    const fxKey = Object.keys(n.fx)[0];
+    const mk = withKs => {
+      const a = branchAlloc(cls, b.key, false);
+      if (!withKs) delete a[n.key];
+      const g = createGame({ stage: 8, best: 40, seed: 301, players: [{ lv: { atk: 20, rate: 3, wall: 20 } }, { lv: { wall: 20 } }], run: buff(0, 20),
+        hero: { ...newHero(), cls, level: 60, talents: { [cls]: a } } });
+      if (fxKey === 'emergency') g.wall.hp = g.wall.max * 0.3;
+      return g;
+    };
+    const secs = fxKey === 'emergency' ? 14 : 25, on = mk(true), off = mk(false), ult = fxKey !== 'emergency', evOn = runHero(on, secs, ult), evOff = runHero(off, secs, ult);
+    const nova = ev => ev.filter(e => e.type === 'heroProc' && e.kind === 'nova' && e.sub === fxKey).length;
+    const sig = fxKey === 'emergency' ? on.wall.hp > off.wall.hp : nova(evOn) > 0 || on.dmgDone[2] !== off.dmgDone[2];
+    rows.push(`${n.key}(${fxKey}) ${nova(evOn)}`);
+    assert.ok(sig, `${cls}.${n.key} ${n.name}: 핵심 노드가 전투를 바꾼다`);
+    assert.equal(nova(evOff), 0, `${n.key}: 없으면 발동 없음`);
+  }
+  // 혼합 노드도 수치가 실제로 들어간다
+  for (const [cls, hs] of Object.entries(TALENT_HYBRIDS)) for (const n of hs) {
+    const h = { ...newHero(), cls, level: MAX_HERO_LV, talents: {} };
+    for (const bk of n.req) h.talents[cls] = { ...h.talents[cls], ...branchAlloc(cls, bk, false) };
+    const before = talentBonus(h, cls);
+    assert.ok(allocateTalent(h, cls, n.key), `${n.key} 찍힘`);
+    const after = talentBonus(h, cls);
+    for (const [k, v] of Object.entries(n.fx)) assert.ok(Math.abs(after[k] - before[k] - v) < 1e-9, `${n.key}.${k}`);
+  }
+  console.log('핵심 노드 15종 · 혼합 노드 통과: ' + rows.join(' · '));
 }
 
 // 소환물: 늑대(야수)가 필드 유닛으로 나오고, 영웅이 쓰러지면 사라졌다가 부활과 함께 돌아온다
@@ -1316,11 +1462,11 @@ function runLifecycle() {
   assert.deepEqual(validLoadout(m, { cls: 'ranger', startSpells: ['judgment', 'fireball', 'fireball', 'tornado', 'gale'] }), { cls: 'ranger', startSpells: ['fireball', 'tornado'] });
   assert.deepEqual(startSpellChoices(m), ['fireball', 'tornado', 'gale']);
 
-  // 시작 스킬 두 개가 융합이면 1층부터 합체 + 도전 시작 무료 카드
+  // 시작 스킬은 Lv1이라 융합 짝이어도 바로 합체하지 않는다(두 재료 만렙이 조건) + 도전 시작 무료 카드
   const g = newRun(m, { cls: 'ranger', startSpells: ['fireball', 'tornado'] }, 7);
   assert.equal(m.hero.cls, 'ranger');
-  assert.deepEqual(g.spells, { blazeTornado: 1 });
-  assert.ok(g.fusions.includes('blazeTornado') && g.book.fireball === 1 && g.book.tornado === 1, '불꽃 회오리 즉시 합체');
+  assert.deepEqual(g.spells, { fireball: 1, tornado: 1 });
+  assert.ok(!g.fusions.length, '시작하자마자 합체하지 않는다');
   assert.ok(g.pick && g.pick.cards.length === 3 && START_CARDS === 1, '도전 시작 무료 카드');
   assert.equal(g.stage, 1);
   assert.deepEqual(m.run, g.run.checkpoint, '새 도전 → 이어하기 저장 생성');
@@ -1491,6 +1637,38 @@ function earlyPace() {
   console.log('초반 템포 통과');
 }
 
+// ── 5d) 사람처럼 하는 첫 도전(자동 진행 + 카드 자동 선택, 운석·빙결은 안 누름 — 봇의 autoSkill 없음) ──
+// 새 저장에서 열린 클래스 × 시작 무료 카드(STARTER) 전부: 1~2층에서 지지 않는다(회오리 + 기사 1층 패배 재발 방지). 첫 도전 층수도 목표(8~15) 안
+function humanFirstRun() {
+  const play = (cls, seed, first) => {
+    const g = newRun(defaults(), { cls, startSpells: [] }, seed);
+    humanPlayer(g);
+    if (first) { assert.ok(g.pick.starter); g.pick.cards[0] = { spell: first, level: 1, rarity: SKILL_BY_KEY[first].rarity, fusionHint: false }; act(g, 0, { type: 'pick', index: 0 }); }
+    for (;;) {
+      playStage(g);
+      if (g.phase !== 'clear' || g.run.over || (first && g.stage >= 2)) break;
+      startStage(g, g.stage + 1);
+    }
+    return g.phase === 'clear' ? g.stage : g.stage - 1;
+  };
+  const melee = cls => HERO_CLASSES[cls].melee;
+  for (const cls of HERO_CLASS_KEYS) { // 근접 영웅의 시작 무료 카드엔 회오리가 나오지 않는다
+    for (let s = 1; s <= 12; s++) {
+      const g = newRun(defaults(), { cls, startSpells: [] }, s);
+      assert.ok(g.pick.starter && !(melee(g.hero.cls) && g.pick.cards.some(c => c.spell === 'tornado')), `${g.hero.cls} 시작 카드에 회오리`);
+    }
+  }
+  for (const cls of unlockedClasses(0)) for (const first of STARTER.filter(k => !(melee(cls) && k === 'tornado'))) for (const seed of [1, 2, 3]) {
+    assert.ok(play(cls, seed, first) >= 2, `${cls} + ${first} 시작(시드 ${seed}): 1~2층 돌파`);
+  }
+  const floors = [];
+  for (const cls of unlockedClasses(0)) for (const seed of [1, 2, 3, 4]) floors.push(play(cls, seed));
+  const m = avg(floors);
+  console.log(`사람 첫 도전(운석·빙결 없음): 평균 ${m.toFixed(1)}층 (${floors.join(',')})`);
+  assert.ok(m >= 8 && m <= 15, `사람 첫 도전 ${m.toFixed(1)}층 (목표 8~15)`);
+  console.log('사람 첫 도전 통과');
+}
+
 // ── 6) 캠페인 밸런스 러너: 새 저장 → 도전 반복 → 100층 ──
 // 카드 운으로 도전 하나하나의 도달 층이 크게 흔들려(같은 메타·클래스에서 25~70층) 캠페인 한 번의 결과도 시드마다 흔들린다
 // → 시드 여러 개를 worker_threads로 동시에 돌려 **시드 평균**을 목표와 비교한다(100층 돌파·스킬 비중은 시드마다)
@@ -1503,12 +1681,12 @@ const job = data => new Promise((resolve, reject) => {
 
 function campaignReport(seed, rows, ms) {
   console.log(`\n캠페인 시드 ${seed}: 도전 ${rows.length}회, ${(rows[rows.length - 1].total / 3600).toFixed(1)}시간, 실행 ${(ms / 1000).toFixed(0)}s`);
-  console.log(' run cls      start spells                reach  time   gems   gold  cum(h)  half  new  heroLv  hero%(*=특성 완성) skill%  수련');
+  console.log(' run cls      start spells                reach  time   gems   gold  cum(h)  half  new  heroLv  hero%(*=특성 완성) skill%  융합(첫 층)  수련');
   const half = [], nw = [];
   for (const r of rows) {
     const h = r.floors.filter(f => f.s <= r.prevBest / 2).map(f => f.t), n = r.floors.filter(f => f.s > r.prevBest).map(f => f.t);
     half.push(...h); nw.push(...n);
-    console.log(`${String(r.run).padStart(4)} ${r.cls.padEnd(8)} ${(r.start.join(',') || '-').padEnd(26)} ${String(r.reached).padStart(5)} ${(r.time / 60).toFixed(0).padStart(4)}m ${String(r.gems).padStart(6)} ${String(r.gold).padStart(6)} ${(r.total / 3600).toFixed(1).padStart(6)} ${avg(h).toFixed(0).padStart(5)} ${avg(n).toFixed(0).padStart(4)} ${String(r.heroLv).padStart(6)} ${(r.share * 100).toFixed(0).padStart(5)}${r.full ? '*' : ' '} ${r.skillShare == null ? '    -' : (r.skillShare * 100).toFixed(0).padStart(5)}  ${r.train}`);
+    console.log(`${String(r.run).padStart(4)} ${r.cls.padEnd(8)} ${(r.start.join(',') || '-').padEnd(26)} ${String(r.reached).padStart(5)} ${(r.time / 60).toFixed(0).padStart(4)}m ${String(r.gems).padStart(6)} ${String(r.gold).padStart(6)} ${(r.total / 3600).toFixed(1).padStart(6)} ${avg(h).toFixed(0).padStart(5)} ${avg(n).toFixed(0).padStart(4)} ${String(r.heroLv).padStart(6)} ${(r.share * 100).toFixed(0).padStart(5)}${r.full ? '*' : ' '} ${r.skillShare == null ? '    -' : (r.skillShare * 100).toFixed(0).padStart(5)}  ${String(r.fusions).padStart(2)}(${r.firstFuse ?? '-'})`.padEnd(8) + `  ${r.train}`);
   }
   const first = rows[0], last = rows[rows.length - 1], hours = last.total / 3600;
   const gain = (last.reached - first.reached) / (rows.length - 1);
@@ -1516,8 +1694,12 @@ function campaignReport(seed, rows, ms) {
   const res = {
     runs: rows.length, hours, first: first.reached, gain, half: avg(half), newT: avg(nw), heroLv: last.heroLv, cleared: last.reached >= MAX_STAGE,
     fullShare: avg(rows.filter(r => r.full).map(r => r.share)), skill: avg(sk), skillMin: Math.min(...sk),
+    // 융합: 두세 번째 도전부터 도전당 합체 횟수 · 후반(마지막 1/3) 도전의 합체 수 · 첫 합체 층(합체한 도전 평균)
+    fus: avg(rows.slice(2).map(r => r.fusions)), fusLate: avg(rows.slice(-Math.max(3, Math.ceil(rows.length / 3))).map(r => r.fusions)),
+    firstFuse: avg(rows.filter(r => r.firstFuse != null).map(r => r.firstFuse)),
   };
   console.log(`결과: 첫 도전 ${res.first}층 · 도전당 +${gain.toFixed(2)}층 · ${res.runs}회 · ${hours.toFixed(1)}h · 절반 이하 층 평균 ${res.half.toFixed(1)}s · 새 층 평균 ${res.newT.toFixed(1)}s · 영웅 Lv${res.heroLv} · 특성 완성 영웅 기여도 ${(res.fullShare * 100).toFixed(1)}% · 11층부터 마법사 스킬 비중 평균 ${(res.skill * 100).toFixed(1)}%(최저 ${(res.skillMin * 100).toFixed(0)}%) · 수련 ${last.train}`);
+  console.log(`융합: 3번째 도전부터 도전당 ${res.fus.toFixed(2)}회 · 후반 도전 ${res.fusLate.toFixed(2)}개 · 첫 합체 평균 ${res.firstFuse.toFixed(1)}층`);
   return res;
 }
 
@@ -1535,6 +1717,9 @@ function campaignCheck(all) {
   if (m('hours') < 15 || m('hours') > 25) bad.push(`총 ${m('hours').toFixed(1)}시간 (목표 15~25)`);
   if (!(m('half') <= 30)) bad.push(`절반 이하 층 평균 ${m('half').toFixed(1)}s (목표 ≤30)`);
   if (!(m('newT') >= 60 && m('newT') <= 120)) bad.push(`새 층 평균 ${m('newT').toFixed(1)}s (목표 60~120)`);
+  console.log(`융합(시드 평균): 3번째 도전부터 도전당 ${m('fus').toFixed(2)}회 · 후반 빌드 ${m('fusLate').toFixed(2)}개 · 첫 합체 ${m('firstFuse').toFixed(1)}층`);
+  if (!(m('fus') >= 1)) bad.push(`3번째 도전부터 도전당 합체 ${m('fus').toFixed(2)}회 (목표 1~2회 이상)`);
+  if (!(m('fusLate') >= 2 && m('fusLate') <= 4)) bad.push(`후반 빌드 융합 ${m('fusLate').toFixed(2)}개 (목표 2~4)`);
   if (!(m('fullShare') >= 0.25 && m('fullShare') <= 0.4)) bad.push(`특성 완성 영웅 기여도 ${(m('fullShare') * 100).toFixed(1)}% (목표 25~40%)`);
   assert.deepEqual(bad, [], bad.join('\n'));
 }
@@ -1627,7 +1812,7 @@ function collabs() {
     const fus = FUSIONS.find(f => f.groups.some(gr => gr[0] === c.spells[0]));
     if (fus) {
       const other2 = fus.groups.find(gr => gr[0] !== c.spells[0])[0];
-      const fg = collabGame(c, { run: buff(10, 999, { spells: { [c.spells[0]]: 3, [other2]: 3 } }) });
+      const fg = collabGame(c, { run: buff(10, 999, { spells: { [c.spells[0]]: SPELL_MAX_LV, [other2]: SPELL_MAX_LV } }) });
       assert.ok(fg.spells[fus.key] && fg.collabs.includes(c.key) && collabSlots(fg, c.key).includes(fus.key), `${c.key}: 융합 뒤에도 유지`);
     }
     // 두 번째 발견은 first:false(도감 1회)
@@ -1648,7 +1833,7 @@ function collabs() {
   kc.heroUnit.tbT = 0;
   step(kc, DT);
   assert.ok(kc.heroUnit.tb.tauntAmp > 0);
-  assert.equal(branchSpent(kc.hero, 'knight', 'command'), TALENTS.knight.find(b => b.key === 'command').nodes.slice(0, 5).reduce((s, n) => s + n.max, 0));
+  assert.equal(branchSpent(kc.hero, 'knight', 'command'), Object.values(branchAlloc('knight', 'command', false)).reduce((s, v) => s + v, 0));
   console.log('협공 통과: ' + rows.join(' · '));
 }
 
@@ -1689,7 +1874,7 @@ function linkedFinisher() {
 
 // 지원 사격: 단일 대상 스킬(얼음 창·낙뢰·심판 광선)은 영웅이 치고 있는 적을 먼저 노린다(없으면 가장 앞선 적)
 function supportFire() {
-  const g = createGame({ stage: 3, best: 40, seed: 720, players: [{}, {}], hero: { ...newHero(), cls: 'knight', level: 20 }, run: buff(0, 999, { spells: { iceLance: 2, judgment: 2 }, allySpells: { iceLance: 1 } }) });
+  const g = createGame({ stage: 3, best: 40, seed: 720, players: [{}, {}], hero: { ...newHero(), cls: 'knight', level: 20 }, run: buff(0, 999, { spells: { iceLance: 2, judgment: 2 } }) });
   for (let k = 0; k < 900 && g.enemies.length < 2; k++) { if (g.pick) resolvePick(g); else step(g, DT); }
   g.spawns.length = g.spawnIdx;
   const [front, far] = g.enemies;
@@ -1699,7 +1884,7 @@ function supportFire() {
   act(g, 0, { type: 'heroMove', x: 600, y: 470 });
   const h = g.heroUnit;
   h.x = 600; h.y = 460;
-  g.spellT.iceLance = g.spellT.judgment = g.allySpellT.iceLance = 0.1; // 영웅이 먼저 붙고 나서 시전
+  g.spellT.iceLance = g.spellT.judgment = 0.1; // 영웅이 먼저 붙고 나서 시전
   drainEvents(g);
   const ev = [];
   for (let t = 0; t < 8; t += DT) {
@@ -1711,7 +1896,6 @@ function supportFire() {
   const casts = of(ev, 'cast').filter(e => !e.basic && (e.spell === 'iceLance' || e.spell === 'judgment'));
   assert.ok(casts.length >= 4, `스킬 시전 ${casts.length}`);
   assert.ok(casts.every(e => e.support && Math.abs(e.tx - far.x) < 1 && Math.abs(e.ty - far.y) < 1), '영웅이 싸우는 적을 노린다(가장 앞선 적이 아니라)');
-  assert.ok(casts.some(e => e.o === 1), 'AI 동료 마법사도 지원 사격');
   // 영웅이 싸우지 않으면 가장 앞선 적
   const g2 = createGame({ stage: 3, seed: 720, players: [{}, {}], run: buff(0, 999, { spells: { iceLance: 2 } }) });
   const ev2 = [];
@@ -1741,6 +1925,7 @@ heroJsonRoundtrip();
 talentTable();
 talentRules();
 talentCapstones();
+talentKeystones();
 heroSummons();
 heroRoaming();
 metaUpgrades();
@@ -1751,6 +1936,7 @@ collabs();
 linkedFinisher();
 supportFire();
 earlyPace();
+humanFirstRun();
 
 if (process.argv.includes('--unit')) process.exit(0); // 단위 테스트만(캠페인 생략)
 // 동등성 시점: 최고 50층(영웅이 특성을 거의 다 찍은 메타) · --full이면 80층도 + 무작위 특성 빌드

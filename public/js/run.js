@@ -1,10 +1,10 @@
 // 메타(영구) ↔ 런(도전) 연결 — 정비 화면·결과 화면·이어하기가 부르는 함수. DOM 없음
 // meta = save.js normalize() 결과 객체(제자리에서 바꾼다):
-//   { gems, gold, best, metaLv, training, hero, discovered, seenSpells, runs, lastLoadout, auto, name, run, ... }
+//   { gems, gold, best, metaLv, training, hero, discovered, seenSpells, runs, lastLoadout, settings:{ autoNext, ... }, name, run, ... }
 import { META_KEYS, metaMax, metaCost, metaFx, RUN_GEMS, SPELL_KEYS, TRAIN_KEYS, trainMax, trainCost, START_CARDS } from './config.js';
 import { createGame, serializeRun, normalizeRun } from './sim.js';
 import { unlockedClasses, addXp, equipItem, autoEquipAll, sellItem, sellItemsByRarity } from './hero.js';
-import { allocateTalent, resetTalents } from './talents.js';
+import { allocateTalent, resetTalents, recommendNext } from './talents.js';
 
 export { serializeRun, normalizeRun };
 
@@ -46,10 +46,11 @@ export function validLoadout(meta, lo) {
   return { cls, startSpells };
 }
 
-// 두 마법사 모두 마법사 수련 레벨(meta.training)을 받는다
-const players = (meta, p0, p1, auto) => [
-  { name: meta.name, kind: 'human', auto, lv: meta.training, ...p0 },
-  { name: 'AI 동료', kind: 'bot', auto: true, lv: meta.training, ...p1 },
+// 성벽 마법사 = 나 한 명(마법사 수련 meta.training). auto = 자동 진행(settings.autoNext) · autoPick = 카드 자동 선택(settings.autoPick)
+// ponytail: players[1]은 협동 모드용 잠든 자리(sim은 g.coop일 때만 깨운다)
+const players = (meta, p0, p1) => [
+  { name: meta.name, kind: 'human', auto: !!meta.settings?.autoNext, autoPick: !!meta.settings?.autoPick, lv: meta.training, ...p0 },
+  { name: '동료', kind: 'human', auto: false, lv: meta.training, ...p1 },
 ];
 const common = (meta, seed) => ({
   best: meta.best, seed, discovered: meta.discovered, seenSpells: meta.seenSpells, hero: meta.hero, metaLv: meta.metaLv,
@@ -62,7 +63,7 @@ export function newRun(meta, loadout, seed) {
   meta.lastLoadout = lo;
   const game = createGame({
     ...common(meta, seed), stage: 1, startCards: START_CARDS,
-    players: players(meta, { gold: 0 }, { gold: 0 }, !!meta.auto),
+    players: players(meta, { gold: 0 }, { gold: 0 }),
     run: { spells: Object.fromEntries(lo.startSpells.map(k => [k, 1])), startBest: meta.best, loadout: lo },
   });
   meta.run = game.run.checkpoint;
@@ -76,7 +77,7 @@ export function restoreRun(meta, saved = meta.run, seed) {
   if (r.loadout.cls && unlockedClasses(meta.best).includes(r.loadout.cls)) meta.hero.cls = r.loadout.cls;
   const [a, b] = r.players;
   // 1층 시작 체크포인트면 도전 시작 무료 카드도 다시(체크포인트는 카드를 고르기 전 상태)
-  return createGame({ ...common(meta, seed), players: players(meta, a, b, r.auto), run: r, startCards: r.stage === 1 && r.floors === 0 ? START_CARDS : 0 });
+  return createGame({ ...common(meta, seed), players: players(meta, a, b), run: r, startCards: r.stage === 1 && r.floors === 0 ? START_CARDS : 0 });
 }
 
 // 도전 종료 정산(성벽 붕괴·100층 돌파·포기 모두). meta에 보석·골드(이번 도전에서 번 P1 골드)·최고 기록·도감·뽑아 본 스킬을 반영하고 run 저장을 지운다.
@@ -100,7 +101,7 @@ export function endRun(game, meta) {
   meta.runs = (meta.runs | 0) + 1;
   meta.run = null;
   return {
-    stageReached: game.stage, floorsCleared: cleared, victory: r.victory,
+    stageReached: game.stage, floorsCleared: cleared, victory: r.victory, abandoned: !r.victory && game.phase !== 'defeat', // 도전 포기
     prevBest, best: meta.best, newBest: cleared > prevBest,
     bossesKilled: r.bosses, time: r.time, rewards,
     spells: { ...game.spells }, loadout: r.loadout,
@@ -116,7 +117,8 @@ export function applyOffline(meta, off) {
 }
 
 // 정비 화면(도전 사이) 조작: 마법사 수련 {type:'train', stat} · 영구 강화 {type:'meta', key} · 영웅 클래스·장착·판매(골드는 바로 meta.gold)
-// 특성: {type:'talent', cls, key}(1랭크) · {type:'talentReset', cls}(무료 초기화 — 정비 화면 전용) · {type:'autoTalent', on}
+// 특성: {type:'talent', cls, key}(1랭크) · {type:'talentReset', cls}(무료 초기화 — 정비 화면 전용) · {type:'autoTalent', on, cls?}
+// · {type:'talentNoticeSeen'}(hero.talentNotice — '특성이 개편되어 포인트를 돌려받았어요' 1회 안내를 닫음)
 export function campAct(meta, a) {
   const hero = meta.hero;
   if (!a || typeof a !== 'object') return false;
@@ -142,7 +144,13 @@ export function campAct(meta, a) {
     }
     case 'talent': return unlockedClasses(meta.best).includes(a.cls) && allocateTalent(hero, a.cls, a.key);
     case 'talentReset': return resetTalents(hero, a.cls);
-    case 'autoTalent': hero.autoTalent = !!a.on; return true;
+    case 'autoTalent': { // 켜는 즉시 남은 포인트를 추천 빌드로 배분(특성 개편 환불 뒤 빈 트리 방지). cls = 보고 있는 클래스 탭
+      hero.autoTalent = !!a.on;
+      const c = unlockedClasses(meta.best).includes(a.cls) ? a.cls : hero.cls;
+      if (hero.autoTalent && c) for (let n = recommendNext(hero, c); n && allocateTalent(hero, c, n.key); n = recommendNext(hero, c));
+      return true;
+    }
+    case 'talentNoticeSeen': if (!hero.talentNotice) return false; hero.talentNotice = false; return true; // 특성 개편 환불 안내를 봤다
     case 'autoEquip':
       hero.autoEquip = !!a.on;
       if (hero.autoEquip) autoEquipAll(hero);

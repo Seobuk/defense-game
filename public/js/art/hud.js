@@ -2,7 +2,7 @@
 // DOM HUD(골드·층·웨이브·마나·메뉴·영웅 버튼)는 ui.js/style.css 몫이고, 여기는 전장 위에 캔버스로 그리는 층만.
 // docs/ART.md §4.5, §10.2, §10.8~10.11
 // 소유: UI 에이전트(kit.css · 아이콘 · ui.js/heroui.js 와 함께). 계약은 docs/ART.md §14 참고.
-import { WORLD_W, WORLD_H, WALL_Y, SYNERGIES, COMBO_TIERS, COMBO_WINDOW, FRENZY, LEGEND_T, THEMES, SPELL_BY_KEY } from '../config.js';
+import { WORLD_W, WORLD_H, WALL_Y, SYNERGIES, COMBO_TIERS, COMBO_WINDOW, FRENZY, LEGEND_T, THEMES } from '../config.js';
 import { clamp } from '../util.js';
 import { MILESTONES } from '../hero.js';
 const MS_DESC = Object.fromEntries(MILESTONES.map(m => [m.key, m.desc]));
@@ -730,11 +730,6 @@ export function events(view, evs, opts) {
         mergeFull[ev.fusion] = ev.full !== false;
         if (!evs.some(e => e.type === 'synergy' && e.key === ev.fusion && e.first)) pop(ev.full !== false ? '슬롯 해제!' : '합체!', (SYN[ev.fusion] ? SYN[ev.fusion].name : '') + (ev.full !== false ? ' 합체' : ''), '#ffc8ff', 300, 846); // 내 마법사 머리 위(합체 줄기가 닿는 곳)
         break;
-      case 'allySpell': { // AI 동료가 네임드 보스를 잡고 새 주문을 익혔다
-        const sp = SPELL_BY_KEY[ev.spell];
-        pop('AI 동료 새 주문!', (sp ? sp.name : '') + ' Lv' + (ev.level | 0), '#8fe8ff', 480, 780);
-        break;
-      }
       case 'combo': {
         combo.tierPunch = 1;
         if (quiet || moment) break;

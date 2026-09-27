@@ -2,7 +2,7 @@
 import { DT, MAX_STAGE, TRAIN_KEYS } from '../public/js/config.js';
 import { startStage, step, act, drainEvents } from '../public/js/sim.js';
 import { pickCard, botSpendGems, botSpendGold, botLoadout, botTalents, randomTalents } from '../public/js/bot.js';
-import { talentSpent, talentMaxRanks } from '../public/js/talents.js';
+import { TALENTS, branchSpent, branchMax } from '../public/js/talents.js';
 import { mulberry32 } from '../public/js/util.js';
 import { newRun, endRun } from '../public/js/run.js';
 import { defaults } from '../public/js/save.js';
@@ -27,10 +27,23 @@ export function playStage(g, maxT = 900, collect = null) {
   }
 }
 
-// 도전 1회: 1층부터 성벽이 무너질 때까지. → { summary, floors:[{ s, t }], share, skillShare, full }
+// 봇 플레이어: 자동 진행 ON(궁극기) + kind 'bot'(봇 전용 경로: 카드 자동 선택 · 운석·빙결 autoSkill). 플레이어 UI는 kind를 바꿀 수 없다
+export function botPlayer(g) {
+  g.players[0].auto = true;
+  g.players[0].kind = 'bot';
+}
+// 사람 플레이어(폰에서 자동 진행 ON + 카드 '자동 선택' ON): 궁극기·다음 층·카드는 자동, 운석·빙결은 안 누른다(autoSkill 없음)
+export function humanPlayer(g) {
+  g.players[0].auto = true;
+  g.players[0].kind = 'human';
+  g.players[0].autoPick = true;
+}
+
+// 도전 1회: 1층부터 성벽이 무너질 때까지. → { summary, floors:[{ s, t }], share, skillShare, full, fusions, firstFuse }
+// fusions = 이번 도전의 합체 횟수, firstFuse = 첫 합체 층(없으면 null)
 // talents: 'build'(추천 빌드, 레벨업 포인트도 자동) | 'random'(시작 시 무작위 배분) | 'none'(특성 없음)
 // opts.collabOff: 협공 효과 끄기(협공 강도 비교용)
-// skillShare = 11층부터 성벽 마법사 두 명의 피해 중 고른 스킬(카드·융합·동료 주문) 비중(10층 이전에 끝나면 null)
+// skillShare = 11층부터 성벽 마법사의 피해 중 고른 스킬(카드·융합) 비중(10층 이전에 끝나면 null)
 export function playRun(meta, loadout, seed, talents = 'build', opts = {}) {
   meta.hero.autoTalent = talents === 'build';
   const cls = loadout.cls;
@@ -39,12 +52,13 @@ export function playRun(meta, loadout, seed, talents = 'build', opts = {}) {
   const saved = talents === 'none' ? meta.hero.talents : null;
   if (saved) meta.hero.talents = {};
   const g = newRun(meta, loadout, seed);
-  g.players[0].auto = true; // 봇: 카드 자동 선택 · 영웅 자동 궁극기
+  botPlayer(g); // 상한(운석·빙결을 제때 누르는 플레이어). 사람 기준 확인은 humanPlayer — sim.test humanFirstRun
   g.collabOff = !!opts.collabOff;
   const floors = [];
-  let snap = null;
+  let snap = null, firstFuse = null;
   for (;;) {
     playStage(g);
+    if (firstFuse == null && g.fusions.length) firstFuse = g.stage;
     if (g.phase === 'play') { // 시간 초과 = 패배 처리(발생하면 밸런스 문제)
       g.phase = 'defeat'; g.run.over = true; g.run.time += g.phaseT;
     }
@@ -55,9 +69,9 @@ export function playRun(meta, loadout, seed, talents = 'build', opts = {}) {
   }
   const skillShare = snap ? (g.dmgSkill[0] + g.dmgSkill[1] - snap.sk) / Math.max(1, g.dmgDone[0] + g.dmgDone[1] - snap.all) : null;
   if (saved) meta.hero.talents = saved;
-  const full = !saved && talentSpent(meta.hero, g.hero.cls) >= talentMaxRanks(g.hero.cls); // 도전이 끝날 때 특성을 다 찍었나
+  const full = !saved && TALENTS[g.hero.cls].some(b => branchSpent(meta.hero, g.hero.cls, b.key) >= branchMax(g.hero.cls, b.key)); // 특성 완성 = 도전이 끝날 때 한 갈래를 마스터했나
   const d = g.dmgDone, share = d[2] / Math.max(1, d[0] + d[1] + d[2]);
-  return { g, summary: endRun(g, meta), floors, share, skillShare, full, collabs: [...g.collabs] };
+  return { g, summary: endRun(g, meta), floors, share, skillShare, full, collabs: [...g.collabs], fusions: g.fusions.length, firstFuse };
 }
 
 // 새 저장부터 100층 돌파까지 도전 반복. cls: 고정 클래스(없으면 해금된 클래스 순환)
@@ -70,12 +84,12 @@ export function campaign({ seed = 1, maxRuns = 60, cls = null, onRun = null, unt
     const open = unlockedClasses(meta.best);
     const c = cls || open[i % open.length];
     const lo = botLoadout(meta, c);
-    const { summary, floors, share, skillShare, full, collabs } = playRun(meta, lo, seed * 1000 + i);
+    const { summary, floors, share, skillShare, full, collabs, fusions, firstFuse } = playRun(meta, lo, seed * 1000 + i);
     total += summary.time;
     const row = {
       run: i + 1, cls: lo.cls, start: lo.startSpells, reached: summary.floorsCleared, stage: summary.stageReached,
       prevBest: summary.prevBest, time: summary.time, gems: summary.rewards.gems, gold: summary.rewards.gold, total, floors, heroLv: meta.hero.level,
-      share, skillShare, full, collabs, train: TRAIN_KEYS.map(k => meta.training[k]).join('/'),
+      share, skillShare, full, collabs, fusions, firstFuse, train: TRAIN_KEYS.map(k => meta.training[k]).join('/'),
     };
     rows.push(row);
     botSpendGems(meta);
@@ -97,7 +111,7 @@ export function earlyPacing({ seed = 1, cls = 'knight', floors = 10, meta = defa
   meta.hero.autoTalent = true;
   botTalents(meta.hero, cls);
   const g = newRun(meta, botLoadout(meta, cls), seed);
-  g.players[0].auto = true;
+  botPlayer(g);
   const kills = [], casts = [];
   let playT = 0, fightT = 0, midT = 0;
   const inBand = y => y >= MID_BAND[0] && y <= MID_BAND[1];

@@ -2,11 +2,11 @@
 // 로그라이트 구조(docs/DESIGN.md '로그라이트 구현 계약'): 타이틀 → (이어하기 | 정비) → 도전 → 결과 → 정비.
 // 모든 상태 변경은 handlers(H.*)로 호출측(main.js)에 넘긴다 — 아래 createUI 주석이 계약이다.
 import {
-  SKILLS, THEMES, SYNERGIES, SPEED3_UNLOCK, OFFLINE_CAP_HOURS,
-  SPELL_BY_KEY, SKILL_BY_KEY, FUSION_BY_KEY, COLLAB_BY_KEY, COLLAB_FX, PICK_AUTO_T, SPELL_SLOTS, SPELL_MAX_LV, AWAKENINGS, AWAKEN_BY_KEY,
+  SKILLS, THEMES, SYNERGIES, CODEX_SYN, codexFound, SPEED3_UNLOCK, OFFLINE_CAP_HOURS, FUSIONS, fusionParts, fusionProgress,
+  SKILL_BY_KEY, FUSION_BY_KEY, COLLAB_BY_KEY, COLLAB_FX, PICK_AUTO_T, SPELL_SLOTS, SPELL_MAX_LV, AWAKENINGS, AWAKEN_BY_KEY,
 } from './config.js';
-import { collabSlots } from './sim.js';
-import { ultWorth } from './bot.js';
+import { collabSlots, BERSERK_T } from './sim.js';
+import { ultWorth, pickCard } from './bot.js';
 import { spellCooldown } from './spells.js';
 import { HERO_CLASSES, heroTitle, RARITIES, MILESTONES, heroPower, heroClearXp, heroTier } from './hero.js';
 import { heroPortrait, bestRarityIdx, CLS_INFO } from './heroui.js';
@@ -20,7 +20,7 @@ import { emblemImg } from './art/emblems.js';
 
 const SYN_BY_KEY = Object.fromEntries(SYNERGIES.map(s => [s.key, s]));
 const KIND_TAG = { cannon: '마법', duo: '협동', event: '이벤트' };
-const HIDDEN_SYN = SYNERGIES.filter(s => s.kind !== 'fusion' && s.kind !== 'collab'); // 도감: 히든 조합 14
+const HIDDEN_SYN = CODEX_SYN.filter(s => s.kind !== 'fusion' && s.kind !== 'collab'); // 도감: 히든 조합 10(협동 4종 제외)
 const FUSION_LIST = SYNERGIES.filter(s => s.kind === 'fusion');  // 도감: 원소 융합 8
 const COLLAB_LIST = SYNERGIES.filter(s => s.kind === 'collab');  // 도감: 협공 15 (영웅 클래스 × 마법사 스킬 + 합동 필살)
 const ELEMENT_NAME = { fire: '화염', lightning: '번개', frost: '냉기', wind: '바람', holy: '신성', dark: '암흑', summon: '소환' };
@@ -31,7 +31,7 @@ const AWAKEN_STAT = { power: 'atk', haste: 'rate', ward: 'wall', fortune: 'gold'
 const GEM_ROWS = [['floor', '층 클리어', 'wall'], ['first', '첫 돌파', 'new'], ['boss', '네임드 보스', 'trophy'], ['flawless', '무결점', 'check'], ['best', '신기록 보너스', 'crit']];
 const CLEAR_SHOW_MS = 3200;
 const DEFEAT_HOLD_MS = 1600;      // 패배 도장을 보여 주는 최소 시간 → 결과 화면
-const BERSERK_T = 80;             // sim.js BERSERK_T 와 같은 값(광폭화 시작 초) — 10초 전부터 경고
+const BERSERK_WARN = 15;         // 광폭화(sim.js BERSERK_T) 15초 전부터 카운트다운
 const WIDE_SIDE = 120;            // 전장 옆 여백(px)이 이 이상이면 옆 열을 여백으로 뺀다(폴더블 펼침·태블릿·데스크톱)
 const SLIM_SIDE = 200;            // 이보다 좁은 여백은 이름 없이 구슬만 2열
 const ULT_SHORT = { knight: '성방패', ranger: '화살비', sorcerer: '블리자드', cleric: '천상치유', assassin: '그림자' };
@@ -64,7 +64,7 @@ const CLASS_ICON = {
 const synIcon = key => emblemImg(key);
 const classIcon = cls => CLASS_ICON[cls] || '';
 const SPARK_ICON = svg(24, '<path d="M12 1l2.4 8.6L23 12l-8.6 2.4L12 23l-2.4-8.6L1 12l8.6-2.4z" fill="currentColor"/>');
-const AI_ICON = svg(32, '<path d="M22 2 4 20l3 3L25 5z" fill="currentColor"/><circle cx="24" cy="8" r="6" fill="#fff" opacity=".9"/><path d="M24 3v10M19 8h10" stroke="currentColor" stroke-width="2"/>');
+const PAUSE_ICON = svg(24, '<rect x="5" y="4" width="5" height="16" rx="1.5" fill="currentColor"/><rect x="14" y="4" width="5" height="16" rx="1.5" fill="currentColor"/>');
 const pips = (n, max = SPELL_MAX_LV) => Array.from({ length: max }, (_, i) => `<i${i < n ? ' class="on"' : ''}></i>`).join('');
 // 스킬 한 칸의 색 클래스 + 융합이면 두 원소 색(--fa/--fb). 기본 스킬 14 + 융합 스킬 8 공용
 const skillTone = key => {
@@ -73,13 +73,18 @@ const skillTone = key => {
   return { cls: 'el-' + (SKILL_BY_KEY[key]?.element || 'holy'), style: '' };
 };
 const skillArt = key => emblemImg(key) || icon('el-' + (SKILL_BY_KEY[key]?.element || 'holy'));
-// 스킬 아이콘 타일(결과·이어하기·AI 동료 공용): 융합은 금 테
+// 스킬 아이콘 타일(결과·이어하기 공용): 융합은 금 테
 const skillChip = (key, lv, cls) => {
   const d = SKILL_BY_KEY[key];
   if (!d) return '';
   const t = skillTone(key);
   return `<span class="${cls} ${t.cls}" style="${t.style}" title="${esc(d.name)}">${skillArt(key)}${lv ? `<b class="num">${lv}</b>` : ''}</span>`;
 };
+// 이 카드를 찍으면 완성되는 융합(카드의 fusionHint 가 켜졌을 때 이름을 찾는 용도 — 발견한 융합만 이름을 보여 준다)
+function fusionOf(spells, key, level) {
+  const hyp = { ...spells, [key]: level };
+  return FUSIONS.find(f => !spells[f.key] && !f.ready(spells) && f.ready(hyp) && fusionParts(f, hyp).includes(key)) || null;
+}
 const collabNames = c => {
   if (!c.cls) return '모든 영웅 × 쿨타임 스킬';
   const br = c.branch ? (TALENTS[c.cls] || []).find(b => b.key === c.branch) : null;
@@ -103,6 +108,7 @@ const collabNames = c => {
                                    unlocked3x, settings, discovered, gold?(영구 골드 — 결과 화면 '보유 골드'), version? }
   onEvents(events, view)           매 프레임 drainEvents 결과 — 반드시 renderer.frame 뒤, update 앞(합체 연출이 바뀌기 전 스택 위치를 읽는다)
   toast(msg, iconName?) · showOfflineReward({ gems, xp, minutes }, onClaim) · isBusy() · handleBack()
+  isPickShown()                    카드가 화면에 떠 있나('자동 선택' 카운트다운은 카드가 보일 때만 흐른다 — 합체·보스 연출 뒤로 밀린 동안엔 멈춤)
   showUpdateReady({version,notes,size}) · showUpdateProgress(pct|null) · showInstallPermissionHelp() · setVersion(text)
   slotRects() → [{ key, x, y, r }]  스킬 스택 구슬 중심(무대 #stage 기준 CSS px, 빈 칸 제외) — 캔버스가 협공 빛줄기를 그리고 싶을 때
   heroAnchor() → { x, y } | null    영웅 버튼 초상 중심(같은 좌표계). DOM 빛줄기(#beams)는 ui.js 가 이미 그린다
@@ -122,8 +128,11 @@ const collabNames = c => {
                                    도전 중이면 heroUI.open(game.hero, { stage: data.best, gold: game.players[0].gold }, { tab })
                                    (정비 화면 action {type:'train', stat} = 마법사 수련(골드), {type:'meta', key} = 보석 강화 — onCampAct 로 온다)
   -- 전투 --
-  onToggleAuto(on)                 자동 전투(카드 자동 선택 · 궁극기 · 특성) = act {type:'auto', on}. 강화 버튼·자동 강화는 없다
-  onSkill(skill) · onSpeed() · onToggleAutoNext(on) · onNext() · onPick(index) · onReroll() · onHeroUlt()
+  onToggleAutoNext(on)             '자동 진행' 하나 = 다음 층 자동 · 영웅 궁극기 자동, 카드는 늘 직접(act {type:'auto', on} + settings.autoNext).
+                                   카드 선택 중에도 누를 수 있다(하단 패널에서 이 토글만 살아 있음)
+  onToggleAutoPick(on)             카드 화면의 '자동 선택'(자동 진행과 별개, 기본 OFF) → act {type:'autoPick', on} + settings.autoPick.
+                                   설정 화면의 같은 스위치는 onSettings({ autoPick })로 온다
+  onSkill(skill) · onSpeed() · onNext() · onPick(index) · onReroll() · onHeroUlt()
   -- 설정 --
   onSettings(settings) · onResetSave() · onCheckUpdate() · onUpdateNow() · onUpdateLater() · onOpenInstallSettings()
   onBackupSave() → string          지금 저장을 백업 코드 문자열로(save.js). UI가 클립보드에 복사(실패하면 선택 가능한 글상자)
@@ -140,13 +149,13 @@ export function createUI(root, handlers = {}) {
     'stage-wrap', 'panel', 'title', 'hud-gold', 'gold', 'stage-no', 'theme-name', 'wave', 'wave-text', 'gems',
     'btn-menu', 'menu-new', 'mana', 'berserk', 'berserk-text', 'st-revive', 'st-awaken', 'st-awaken-n',
     'side-l', 'side-r', 'stack', 'stack-count', 'beams', 'hero-card', 'hc-img', 'hc-cls', 'hc-title', 'hc-lv', 'hc-hp-fill', 'hc-ring-fg', 'hc-state',
-    'link-chip', 'link-bar', 'collab-h', 'collab-list', 'partner',
+    'link-chip', 'link-bar', 'collab-h', 'collab-list', 'flinks',
     'toasts', 'clear', 'clear-stage', 'clear-gems', 'clear-gold', 'clear-xp', 'clear-drops', 'badge-flawless', 'badge-first', 'btn-next',
     'defeat', 'defeat-stage', 'defeat-icon',
-    'pick', 'pick-h', 'pick-ring', 'pick-ring-fg', 'pick-ring-n', 'pick-cards', 'pick-reroll', 'pick-reroll-n',
+    'pick', 'pick-h', 'pick-sub', 'pick-ring', 'pick-ring-fg', 'pick-ring-n', 'pick-cards', 'pick-reroll', 'pick-reroll-n', 'pick-auto',
     'btn-hero', 'hb-portrait', 'hb-lv', 'hb-pow', 'hb-new', 'hb-tal',
     'sk-heroult', 'heroult-ico', 'heroult-name',
-    'p2-icon', 'p2-name', 'p2-spells', 'btn-auto', 'btn-speed', 'speed-text', 'speed-lock', 'btn-autonext',
+    'controls', 'btn-speed', 'speed-text', 'speed-lock', 'btn-autonext',
     'btn-start', 'start-sub', 'title-ver', 'codex-count', 'codex-fill', 'codex-list', 'codex-list-fusion', 'codex-list-collab', 'ctab-hidden', 'ctab-fusion', 'ctab-collab',
     'set-ver', 'btn-check-update', 'btn-reset', 'reset-confirm', 'btn-reset-yes', 'btn-reset-no', 'btn-backup', 'btn-restore',
     'bk-lead', 'bk-code', 'btn-bk-copy', 'rs-step1', 'rs-step2', 'rs-code', 'rs-err', 'btn-rs-check', 'rs-sum', 'btn-rs-back', 'btn-rs-yes',
@@ -232,7 +241,9 @@ export function createUI(root, handlers = {}) {
   function syncInert() {
     const modal = stack.length > 0, cover = !E.title.hidden || camp.isOpen();
     E['stage-wrap'].inert = modal || cover;
-    E.panel.inert = modal || cover || pickOpen; // 카드 선택 중엔 하단 패널도 잠금(sim도 거부)
+    E.panel.inert = modal || cover;
+    // 카드 선택 중엔 하단 패널을 잠그되(sim도 거부) '자동 진행'만 살려 둔다 — 고르는 도중에 켜고 끌 수 있게
+    for (const c of E.controls.children) if (c !== E['btn-autonext']) c.inert = pickOpen;
     E.panel.classList.toggle('dim', pickOpen);
     E.title.inert = modal;
     camp.el.inert = modal;
@@ -276,8 +287,13 @@ export function createUI(root, handlers = {}) {
     const label = `${SKILLS[s.k].name}, ${cool ? `남은 시간 ${sec}초` : ready ? '준비됨' : '전투 중에만 사용'}`;
     if (s.label !== label) { s.label = label; s.b.setAttribute('aria-label', label); }
   }
-  on(E['btn-auto'], 'click', () => H.onToggleAuto?.(!view?.players[0].auto));
-  on(E['btn-autonext'], 'click', () => H.onToggleAutoNext?.(!meta.autoNext));
+  on(E['btn-autonext'], 'click', () => {
+    const next = !meta.autoNext;
+    meta = { ...meta, autoNext: next }; // 다음 update 전에도 바로 반영(카드 링·다음 층 버튼)
+    attr(E['btn-autonext'], 'aria-pressed', String(next));
+    H.onToggleAutoNext?.(next);
+    if (view && !camp.isOpen()) toast(next ? '자동 진행 켜짐 — 다음 층·영웅 궁극기 자동' : '자동 진행 꺼짐 — 다음 층·궁극기는 직접', next ? 'auto' : 'hero');
+  });
   on(E['btn-speed'], 'click', () => {
     if (!meta.unlocked3x && view && view.speed >= 2) toast(`3배속은 ${SPEED3_UNLOCK}층을 클리어하면 열려요`, 'speed');
     H.onSpeed?.();
@@ -433,9 +449,13 @@ export function createUI(root, handlers = {}) {
     const k = s.key, d = SKILL_BY_KEY[k];
     if (!d) { showTip(s.b, '', `<b>빈 칸</b><br>카드로 새 스킬을 배울 수 있어요. 두 스킬이 <b>융합</b>하면 칸이 하나 비어요.`, 3000); return; }
     const lv = s.level, f = FUSION_BY_KEY[k], parts = view?.fusionParts?.[k];
+    // 발견한 융합의 진행도: '불꽃 회오리까지: 파이어볼 6/6 · 회오리 3/6'
+    const road = fusionProgress(view?.spells || {}, discovered()).filter(l => l.parts.includes(k))
+      .map(l => `<span class="tip-fu">${esc(FUSION_BY_KEY[l.key].name)}까지: ${l.parts.map((p, i) => `<span class="nw">${esc(SKILL_BY_KEY[p]?.name || p)} <b>${l.lv[i]}/${l.max}</b></span>`).join(' · ')}</span>`).join('');
     showTip(s.b, f ? '' : 'el-' + d.element, `<b>${esc(d.name)} Lv.${lv}</b>${f ? ` <span class="tip-dim">융합</span>` : ''}<br>${esc(d.desc[lv - 1] || '')}`
       + (f && parts ? `<span class="tip-fu">${parts.map(p => esc(SKILL_BY_KEY[p]?.name || p)).join(' + ')} 합체 — 둘의 효과를 모두 품었어요</span>` : '')
-      + (lv < SPELL_MAX_LV ? `<small>다음 Lv.${lv + 1}: ${esc(d.desc[lv] || '')}</small>` : '<small>최대 레벨</small>'), 4200);
+      + road
+      + (lv < SPELL_MAX_LV ? `<small>다음 Lv.${lv + 1}: ${esc(d.desc[lv] || '')}</small>` : '<small>최대 레벨 MAX</small>'), 4600);
   });
   function paintSlot(s, key, lv) {
     const prevKey = s.key, prevLv = s.level;
@@ -456,7 +476,62 @@ export function createUI(root, handlers = {}) {
     txt(s.lv, lv >= SPELL_MAX_LV ? 'MAX' : `Lv.${lv}`);
     s.b.setAttribute('aria-label', `${d.name} Lv${lv}${FUSION_BY_KEY[key] ? ' (융합 스킬)' : ''}`);
     if (!prevKey && !pendingMerge) s.orb.animate([{ transform: 'scale(.2)', opacity: 0 }, { transform: 'scale(1.3)', opacity: 1, offset: 0.55 }, { transform: 'scale(1)' }], { duration: 420, easing: 'cubic-bezier(.3,1.9,.5,1)' });
-    else if (prevKey === key && lv > prevLv) s.b.querySelector('.ss-pips').animate(BUMP, bumpOpts);
+    else if (prevKey === key && lv > prevLv) {
+      s.b.querySelector('.ss-pips').animate(BUMP, bumpOpts);
+      if (lv >= SPELL_MAX_LV && prevLv < SPELL_MAX_LV) maxBurst(s);
+    }
+  }
+  // 만렙(Lv6) 도달: 칸이 금빛으로 터지고 'MAX!' 도장 한 번(합체로 바로 사라지는 칸은 합체 연출이 대신한다)
+  function maxBurst(s) {
+    s.b.classList.remove('max-now'); void s.b.offsetWidth; s.b.classList.add('max-now');
+    setTimeout(() => s.b.classList.remove('max-now'), 1300);
+    const r = relRect(s.orb), tag = document.createElement('div'), wide = stage.classList.contains('wide');
+    tag.className = 'max-tag';
+    tag.textContent = 'MAX!';
+    stage.append(tag);
+    const tw = tag.offsetWidth, th = tag.offsetHeight;
+    tag.style.left = Math.max(6, Math.min(stage.clientWidth - tw - 6, wide ? r.cx - tw / 2 : r.x - tw - 6)) + 'px';
+    tag.style.top = Math.max(6, wide ? r.y - th + 4 : r.cy - th / 2) + 'px';
+    tag.animate([{ transform: 'scale(2.4) rotate(-14deg)', opacity: 0 }, { transform: 'scale(1) rotate(-6deg)', opacity: 1, offset: 0.18 }, { transform: 'scale(1) rotate(-6deg)', opacity: 1, offset: 0.78 }, { transform: 'translateY(-12px) rotate(-6deg)', opacity: 0 }],
+      { duration: 1500, easing: 'cubic-bezier(.22,1,.36,1)' }).onfinish = () => tag.remove();
+  }
+  // ── 발견한 융합의 재료 두 칸을 잇는 금빛 연결선(스택 바깥쪽 괄호 모양) — 배치·빌드·도감이 바뀔 때만 다시 ──
+  let flinkKey = '';
+  function updateFLinks(v) {
+    const on1 = v.phase === 'play' || v.phase === 'clear', d = meta.discovered;
+    const key = on1 ? `${layoutGen}|${stackKey}|${d?.size ?? d?.length ?? 0}|${seen.size}` : '';
+    if (key === flinkKey) return;
+    flinkKey = key;
+    E.flinks.replaceChildren();
+    const links = on1 ? fusionProgress(v.spells || {}, discovered()) : [];
+    const used = new Map(); // 같은 칸에서 여러 선이 나가면 괄호를 한 겹씩 바깥으로
+    const lim = stage.classList.contains('wide') ? relRect(E.stack).x + 3 : -1e9; // 넓은 화면: 괄호가 '마법서' 유리 패널 밖으로 삐져나가지 않게
+    links.forEach(l => {
+      const [a, b] = l.parts.map(k => slots.find(x => x.key === k));
+      if (!a || !b) return;
+      const ra = relRect(a.orb), rb = relRect(b.orb), r = ra.w / 2;
+      const depth = Math.max(used.get(a) || 0, used.get(b) || 0);
+      used.set(a, depth + 1); used.set(b, depth + 1);
+      const p = (l.lv[0] + l.lv[1]) / (2 * l.max);
+      let d;
+      if (Math.abs(ra.cx - rb.cx) < r) { // 같은 세로줄: 왼쪽(전장 쪽)으로 휜 괄호
+        const x = Math.min(ra.cx, rb.cx) - r - 4, bend = Math.max(2, Math.min(10 + depth * 7 + Math.abs(rb.cy - ra.cy) * 0.08, (x - lim) / 0.75));
+        d = `M${(ra.cx - r - 1).toFixed(1)} ${ra.cy.toFixed(1)} C${(x - bend).toFixed(1)} ${ra.cy.toFixed(1)} ${(x - bend).toFixed(1)} ${rb.cy.toFixed(1)} ${(rb.cx - r - 1).toFixed(1)} ${rb.cy.toFixed(1)}`;
+      } else { // 두 줄(좁은 여백 2열): 마주 보는 가장자리끼리 살짝 휜 선
+        const dx = rb.cx - ra.cx, dy = rb.cy - ra.cy, len = Math.hypot(dx, dy) || 1, ux = dx / len, uy = dy / len;
+        const x1 = ra.cx + ux * (r + 2), y1 = ra.cy + uy * (r + 2), x2 = rb.cx - ux * (r + 2), y2 = rb.cy - uy * (r + 2), bend = 8 + depth * 6;
+        d = `M${x1.toFixed(1)} ${y1.toFixed(1)} Q${((x1 + x2) / 2 + uy * bend).toFixed(1)} ${((y1 + y2) / 2 - ux * bend).toFixed(1)} ${x2.toFixed(1)} ${y2.toFixed(1)}`;
+      }
+      const g = document.createElementNS(SVGNS, 'g');
+      g.setAttribute('class', l.lv[0] + l.lv[1] >= 2 * l.max - 1 ? 'fl near' : 'fl'); // 한 장만 더 찍으면 합체
+      g.style.setProperty('--p', p.toFixed(3));
+      for (const cls of ['fl-ink', 'fl-gold', 'fl-flow']) {
+        const e = document.createElementNS(SVGNS, 'path');
+        e.setAttribute('d', d); e.setAttribute('class', cls);
+        g.append(e);
+      }
+      E.flinks.append(g);
+    });
   }
   function updateStack(v) {
     const sp = v.spells || {}, keys = Object.keys(sp);
@@ -670,7 +745,7 @@ export function createUI(root, handlers = {}) {
       txt(E['st-awaken-n'], String(n));
     }
     const bz = v.berserk > 1 ? 'on|' + (v.berserk >= 10 ? Math.round(v.berserk) : v.berserk.toFixed(1))
-      : v.phase === 'play' && !v.pick && v.phaseT >= BERSERK_T - 10 ? 'warn|' + Math.ceil(BERSERK_T - v.phaseT) : '';
+      : v.phase === 'play' && !v.pick && v.phaseT >= BERSERK_T - BERSERK_WARN ? 'warn|' + Math.ceil(BERSERK_T - v.phaseT) : '';
     if (bz !== berserkKey) {
       const [mode, val] = bz.split('|');
       if (mode === 'on' && !berserkKey.startsWith('on')) E.berserk.animate([{ transform: 'scale(1.6)', opacity: 0 }, { transform: 'scale(1)', opacity: 1 }], { duration: 320, easing: 'cubic-bezier(.3,1.9,.5,1)' });
@@ -683,18 +758,27 @@ export function createUI(root, handlers = {}) {
 
   // ── 판타지 스킬 카드 선택 오버레이 (스킬 카드 + 각성 카드, 3~5장) ──
   E['pick-cards'].innerHTML = Array.from({ length: MAX_PICK_CARDS }, () =>
-    `<button class="pick-card" type="button"><span class="pc-tag" hidden></span><span class="pc-spark" hidden>${SPARK_ICON}</span>`
-    + '<span class="pc-icowrap"></span><span class="pc-body"><span class="pc-name"></span>'
+    `<button class="pick-card" type="button"><span class="pc-tag" hidden></span>`
+    + `<svg class="pc-rec" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><rect x="1.5" y="1.5" width="97" height="97" rx="7" ry="5" pathLength="100"/></svg>`
+    + `<span class="pc-icowrap"></span><span class="pc-fuse" hidden>${SPARK_ICON}<b>이걸 찍으면 융합!</b><em></em></span><span class="pc-body"><span class="pc-name"></span>`
     + `<span class="pc-pips">${pips(0)}</span><span class="pc-desc"></span><span class="pc-rar"></span></span></button>`).join('');
   const pickCardEls = [...E['pick-cards'].children].map((b, i) => {
     on(b, 'click', () => { if (pickOpen && !pickClosing) H.onPick?.(i); });
-    const spark = b.querySelector('.pc-spark');
-    on(spark, 'click', e => { e.stopPropagation(); if (!spark.hidden) showTip(spark, '', '<b>✦</b> 무언가 일어날 것 같다…'); }); // 조건은 숨긴 채 문구만 살짝
-    return { b, tag: b.querySelector('.pc-tag'), spark, ico: b.querySelector('.pc-icowrap'), name: b.querySelector('.pc-name'),
-      pips: [...b.querySelectorAll('.pc-pips i')], pipRow: b.querySelector('.pc-pips'), desc: b.querySelector('.pc-desc'), rar: b.querySelector('.pc-rar'), key: null };
+    const fuse = b.querySelector('.pc-fuse');
+    return { b, tag: b.querySelector('.pc-tag'), fuse, fuseTo: fuse.querySelector('em'), ico: b.querySelector('.pc-icowrap'), name: b.querySelector('.pc-name'),
+      pips: [...b.querySelectorAll('.pc-pips i')], pipRow: b.querySelector('.pc-pips'), desc: b.querySelector('.pc-desc'), rar: b.querySelector('.pc-rar'),
+      rec: b.querySelector('.pc-rec rect'), key: null };
   });
-  let pickOpen = false, pickClosing = false, pickResolveTimer = 0, pickRef = null, pickWaitRef = null, pickWaitT = 0;
+  let pickOpen = false, pickClosing = false, pickResolveTimer = 0, pickRef = null, pickWaitRef = null, pickWaitT = 0, pickRec = -1;
   on(E['pick-reroll'], 'click', () => { if (pickOpen && !pickClosing) H.onReroll?.(); });
+  // 카드 화면의 '자동 선택'(자동 진행과 별개, 기본 OFF, 저장됨): 켜면 추천 카드 테두리가 차오르고 PICK_AUTO_T초 뒤 자동 선택
+  on(E['pick-auto'], 'click', () => {
+    if (!pickOpen || pickClosing) return;
+    const next = !meta.settings?.autoPick;
+    meta = { ...meta, settings: { ...meta.settings, autoPick: next } }; // 다음 update 전에도 바로 반영
+    attr(E['pick-auto'], 'aria-checked', String(next));
+    H.onToggleAutoPick?.(next);
+  });
   function syncReroll(n) {
     const show = pickOpen && !pickClosing && n > 0;
     if (E['pick-reroll'].hidden === show) E['pick-reroll'].hidden = !show;
@@ -710,7 +794,7 @@ export function createUI(root, handlers = {}) {
     // 1층 처치 0에서 뜨는 (무료 카드 아닌) 카드 = 영웅 Lv30 보너스 카드 — 마나를 모으기 전이라 '마나 폭주'가 아니다
     const gift = !pick.starter && view?.stage === 1 && !(view?.progress?.killed > 0);
     txt(E.pick.querySelector('.pick-ribbon'), pick.starter ? '출정의 축복!' : gift ? '영웅의 선물!' : full ? `스킬 칸 ${SPELL_SLOTS}/${SPELL_SLOTS}` : '마나 폭주!');
-    txt(E['pick-h'], pick.starter ? '첫 마법을 고르세요' : gift ? '영웅 Lv30 보너스 카드' : full ? '스킬을 강화하세요' : '스킬을 선택하세요');
+    txt(E['pick-h'], pick.starter ? '첫 마법을 고르세요' : gift ? '영웅 Lv30 보너스 카드' : full ? '스킬을 강화하세요' : '스킬을 고르세요');
     E['pick-cards'].classList.toggle('four', n === 4); // 4장 = 2×2, 5장 = 3 + 2
     E['pick-cards'].classList.toggle('five', n >= 5);
     pickCardEls.forEach((c, i) => {
@@ -729,7 +813,7 @@ export function createUI(root, handlers = {}) {
         c.desc.classList.remove('long');
         txt(c.rar, '각성');
         c.tag.hidden = false; c.tag.className = 'pc-tag up'; txt(c.tag, `x${card.level - 1} → ${card.level}`);
-        c.spark.hidden = true;
+        c.fuse.hidden = true;
         c.b.setAttribute('aria-label', `${a.name}, ${a.desc}, 누적 ${card.level}`);
         return;
       }
@@ -746,11 +830,20 @@ export function createUI(root, handlers = {}) {
       c.desc.classList.toggle('long', dsc.length > 30); // 고정 칸에 맞춰 한 단계 작게
       txt(c.rar, { common: '일반', rare: '희귀', legend: '전설' }[card.rarity] || '일반');
       c.tag.hidden = false;
-      if (card.level > 1) { c.tag.className = fu ? 'pc-tag up fu' : 'pc-tag up'; txt(c.tag, `${fu ? '융합 ' : ''}Lv${card.level - 1} → ${card.level}`); }
+      if (card.level > 1) { c.tag.className = fu ? 'pc-tag up fu' : 'pc-tag up'; txt(c.tag, `${fu ? '융합 ' : ''}Lv${card.level - 1} → ${card.level >= SPELL_MAX_LV ? 'MAX' : card.level}`); }
       else { c.tag.className = 'pc-tag'; txt(c.tag, 'NEW'); }
-      c.spark.hidden = !card.fusionHint;
-      c.b.setAttribute('aria-label', `${sp.name}, ${card.level > 1 ? 'Lv' + card.level + ' 강화' : '새 스킬'}. ${dsc}${card.fusionHint ? '. 무언가 일어날 것 같다…' : ''}`);
+      // ✦ 이 카드로 합체가 완성된다(sim fusionHint). 발견한 융합이면 이름까지, 미발견이면 짝 조건을 숨긴 채 '???'
+      const fz = card.fusionHint ? fusionOf(view?.spells || {}, card.spell, card.level) : null;
+      const fzName = fz && discovered().has(fz.key) ? fz.name : '';
+      c.fuse.hidden = !card.fusionHint;
+      c.b.classList.toggle('will-fuse', !!card.fusionHint);
+      if (card.fusionHint) txt(c.fuseTo, fzName ? `→ ${fzName}` : '→ ???');
+      c.b.setAttribute('aria-label', `${sp.name}, ${card.level > 1 ? 'Lv' + card.level + ' 강화' : '새 스킬'}${card.level >= SPELL_MAX_LV ? ' (최대 레벨)' : ''}. ${dsc}${card.fusionHint ? `. 이걸 찍으면 융합${fzName ? ': ' + fzName : ''}!` : ''}`);
     });
+    // 추천 카드(자동 선택이 고를 카드 = sim tickPick과 같은 bot.pickCard) — 자동 선택 ON일 때 테두리가 차오른다
+    pickRec = view ? pickCard(view, pick.cards) : 0;
+    pickCardEls.forEach((c, i) => c.b.classList.toggle('rec', i === pickRec));
+    pickMode = '';
     void E['pick-cards'].offsetWidth; // 등장 애니메이션 재시작(rar-legend 후광 포함)
     pickCardEls.forEach((c, i) => { if (i < n) setTimeout(() => c.b.classList.add('in'), 90 * i); });
     syncPickRing(pick);
@@ -778,12 +871,28 @@ export function createUI(root, handlers = {}) {
       }
     }
   }
+  // 카드는 기본적으로 직접 고른다(자동 진행과 무관): 링 없이 '전투 정지 — 천천히 고르세요'.
+  // 카드 화면 '자동 선택' ON이면 카운트다운 링 + 추천 카드 테두리가 차오르고 PICK_AUTO_T초 뒤 그 카드(탭하면 직접 고른 게 우선)
+  let pickMode = '';
   function syncPickRing(pick) {
-    const has = pick.autoLeft != null;
-    E['pick-ring'].hidden = !has;
+    const has = pick.autoLeft != null, mode = has ? 'auto' : 'manual';
+    if (mode !== pickMode) {
+      pickMode = mode;
+      E['pick-ring'].hidden = !has;
+      E.pick.classList.toggle('manual', !has);
+      attr(E['pick-auto'], 'aria-checked', String(has));
+      const ico = E['pick-sub'].querySelector('.ps-ico');
+      ico.hidden = has;
+      if (!ico.firstChild) ico.innerHTML = PAUSE_ICON;
+      txt(E['pick-sub'].querySelector('.ps-txt'), has ? '추천 카드 자동 선택 · 탭하면 직접' : '전투 정지 — 천천히 고르세요');
+      if (has && pickOpen) E['pick-ring'].animate([{ transform: 'scale(.3)', opacity: 0 }, { transform: 'scale(1)', opacity: 1 }], { duration: 300, easing: 'cubic-bezier(.34,1.56,.64,1)' });
+    }
+    const f = has ? 1 - Math.max(0, Math.min(1, pick.autoLeft / PICK_AUTO_T)) : 0; // 0 → 1로 차오름
+    const rc = pickCardEls[pickRec];
+    if (rc && rc.fill !== f) { rc.fill = f; rc.rec.style.strokeDashoffset = String(100 * (1 - f)); }
     if (!has) return;
     const left = Math.max(0, pick.autoLeft);
-    E['pick-ring-fg'].style.strokeDashoffset = String(PICK_RING_C * (1 - Math.max(0, Math.min(1, left / PICK_AUTO_T))));
+    E['pick-ring-fg'].style.strokeDashoffset = String(PICK_RING_C * f);
     txt(E['pick-ring-n'], String(Math.max(1, Math.ceil(left))));
   }
   function resolvePick(ev) {
@@ -801,6 +910,7 @@ export function createUI(root, handlers = {}) {
   function hidePick() {
     E.pick.hidden = true;
     E['pick-ring'].hidden = true;
+    pickMode = '';
     pickOpen = false; pickClosing = false;
     syncInert();
   }
@@ -829,13 +939,12 @@ export function createUI(root, handlers = {}) {
   let titleRun = null, titleHero = null, contTimer = 0;
   on(E['btn-start'], 'click', () => (titleRun ? showContinue(titleRun, titleHero) : H.onStart?.()));
   let titleArt = false;
-  function paintTitle() { // 전장 스프라이트를 구워 그대로 쓴다(영웅·마법사 2명) — 한 번만
+  function paintTitle() { // 전장 스프라이트를 구워 그대로 쓴다(영웅 + 성벽 위 대마법사) — 한 번만
     if (titleArt) return;
     titleArt = true;
     const q = sel => E.title.querySelector(sel);
     q('.t-hero').src = heroPortraitURL('knight', 3, { weapon: 'epic', armor: 'rare', helm: 'rare', cape: 'legend' }, 420);
-    q('.t-mage.l').src = magePortraitURL(0, 3, 420);
-    q('.t-mage.r').src = magePortraitURL(1, 3, 420);
+    q('.t-mage').src = magePortraitURL(0, 3, 420);
     [['slime', '.f1'], ['goblin', '.f2'], ['skeleton', '.f3'], ['imp', '.f4']].forEach(([t, c]) => { q('.t-foes ' + c).src = enemyURL(t, 18, 120); });
   }
   function showTitle({ best = 0, run = null, hero = null } = {}) {
@@ -926,6 +1035,20 @@ export function createUI(root, handlers = {}) {
     clearWait = false;
   }
   on(E['btn-next'], 'click', () => { hideClear(); H.onNext?.(); });
+  // 클리어 화면이 떠 있는 동안 자동 진행을 바꾸면 '다음 층' 버튼도 바로 따라간다
+  function syncClearWait(v) {
+    if (v.phase !== 'clear' || v.run?.over) return;
+    const wait = !meta.autoNext;
+    if (E.clear.hidden) { // 패널이 이미 자동으로 닫힌 뒤 자동 진행을 끄면 '다음 층' 버튼과 함께 다시 띄운다(버튼 없는 빈 전장 방지)
+      if (wait && clearDueAt <= performance.now()) showClear(v);
+      return;
+    }
+    if (wait === clearWait) return;
+    clearWait = wait;
+    E['btn-next'].hidden = !wait;
+    clearTimeout(clearTimer);
+    if (!wait) clearTimer = setTimeout(hideClear, 1200);
+  }
 
   function showDefeat(stage) {
     hideClear();
@@ -968,15 +1091,15 @@ export function createUI(root, handlers = {}) {
     E['res-best'].hidden = !nb;
     if (nb) txt(E['res-best-txt'], `최고 기록 ${sum.prevBest}층 → ${sum.best}층`);
     txt(E['res-sub'], win ? '종말의 드래곤이 쓰러졌어요! 성벽은 끝까지 버텼습니다.'
-      : sum.stageReached > (sum.floorsCleared | 0) ? `${sum.stageReached}층에서 성벽이 무너졌어요. 강해져서 다시 도전!` : '도전을 마쳤어요.');
+      : !sum.abandoned && sum.stageReached > (sum.floorsCleared | 0) ? `${sum.stageReached}층에서 성벽이 무너졌어요. 강해져서 다시 도전!` : sum.abandoned ? `${sum.stageReached}층에서 도전을 마쳤어요.` : '도전을 마쳤어요.');
     txt(E['res-boss'], String(sum.bossesKilled | 0));
     txt(E['res-time'], fmtTime(sum.time));
-    // 피해 비중: game.dmgDone = [나, AI 동료, 영웅(소환물 포함)]
-    const d = game?.dmgDone || [0, 0, 0], tot = d[0] + d[1] + d[2];
+    // 피해 비중: game.dmgDone = [마법사, (협동 모드 자리), 영웅(소환물 포함)] — 솔로는 마법사 + 영웅 둘
+    const d = game?.dmgDone || [0, 0, 0], mage = (d[0] || 0) + (d[1] || 0), tot = mage + (d[2] || 0);
     E['res-share'].hidden = !(tot > 0);
     txt(E['res-hero'], tot > 0 && d[2] > 0 ? Math.round(d[2] / tot * 100) + '%' : '-');
     if (tot > 0) {
-      const parts = [['me', '나', d[0]], ['ai', 'AI 동료', d[1]], ['hero', `영웅(${HERO_CLASSES[cls]?.name || ''})`, d[2]]];
+      const parts = [['me', '대마법사(나)', mage], ['hero', `영웅(${HERO_CLASSES[cls]?.name || ''})`, d[2] || 0]];
       E['res-bar'].innerHTML = parts.map(([k, , v]) => `<i class="${k}" style="--w:${(v / tot * 100).toFixed(2)}%"></i>`).join('');
       E['res-legend'].innerHTML = parts.map(([k, n, v]) => `<span class="${k}"><i></i>${esc(n)} <b class="k-num">${Math.round(v / tot * 100)}%</b></span>`).join('');
     }
@@ -1031,13 +1154,13 @@ export function createUI(root, handlers = {}) {
   E['codex-list'].innerHTML = HIDDEN_SYN.map(s => `<li class="syn-card" data-key="${s.key}"><div class="syn-ico" aria-hidden="true"></div>`
     + '<div class="syn-body"><div class="syn-name"></div><div class="syn-text"></div></div>'
     + `<span class="syn-tag ${s.kind}">${KIND_TAG[s.kind]}</span><span class="syn-new" hidden>NEW</span></li>`).join('');
-  E['codex-list-fusion'].innerHTML = FUSION_LIST.map(s => `<li class="syn-card fusion" data-key="${s.key}"><div class="syn-ico fusion-ico" aria-hidden="true"></div>`
+  E['codex-list-fusion'].innerHTML = '<li class="codex-note">재료 두 스킬을 모두 <b>Lv6</b>까지 찍으면 <b>융합 스킬 Lv1</b>로 합체하고 칸이 하나 열려요</li>' + FUSION_LIST.map(s => `<li class="syn-card fusion" data-key="${s.key}"><div class="syn-ico fusion-ico" aria-hidden="true"></div>`
     + '<div class="syn-body"><div class="syn-name"></div><div class="syn-text"></div></div>'
     + '<span class="syn-tag fusion"></span><span class="syn-new" hidden>NEW</span></li>').join('');
   E['codex-list-collab'].innerHTML = COLLAB_LIST.map(s => `<li class="syn-card collab" data-key="${s.key}" style="--cc:${CLS_INFO[s.cls]?.col || '#ffc92e'}"><div class="syn-ico collab-ico" aria-hidden="true"></div>`
     + '<div class="syn-body"><div class="syn-name"></div><div class="syn-who"></div><div class="syn-text"></div></div>'
     + '<span class="syn-tag collab"></span><span class="syn-new" hidden>NEW</span></li>').join('');
-  const mkCards = (list, host) => [...host.children].map((li, i) => ({
+  const mkCards = (list, host) => [...host.querySelectorAll('.syn-card')].map((li, i) => ({
     s: list[i], li, ico: li.querySelector('.syn-ico'), name: li.querySelector('.syn-name'),
     text: li.querySelector('.syn-text'), tag: li.querySelector('.syn-tag'), nw: li.querySelector('.syn-new'), who: li.querySelector('.syn-who'),
   }));
@@ -1093,8 +1216,8 @@ export function createUI(root, handlers = {}) {
     txt(E['ctab-hidden'], nh ? `히든 조합 ${nh}` : '히든 조합');
     txt(E['ctab-fusion'], nf ? `원소 융합 ${nf}` : '원소 융합');
     txt(E['ctab-collab'], nc ? `협공 ${nc}` : '협공');
-    txt(E['codex-count'], `${n}/${SYNERGIES.length} 발견`);
-    prop(E['codex-fill'], '--p', frac(n / SYNERGIES.length));
+    txt(E['codex-count'], `${n}/${CODEX_SYN.length} 발견`);
+    prop(E['codex-fill'], '--p', frac(n / CODEX_SYN.length));
   }
   function setCodexTab(t) {
     codexTab = t;
@@ -1213,7 +1336,7 @@ export function createUI(root, handlers = {}) {
         <span>${icon('trophy')}최고 기록</span><b class="k-num gold">${p.best | 0}층</b>
         <span>${icon('hero')}영웅</span><b class="k-num">${cls ? esc(cls.name) + ' ' : ''}Lv.${h.level | 0 || 1}</b>
         <span>${icon('gem')}보석</span><b class="k-num gem-n">${fmt(p.gems || 0)}</b>
-        <span>${icon('codex')}도감 · 도전</span><b class="k-num">${(p.discovered || []).length}/${SYNERGIES.length} · ${p.runs | 0}회</b>
+        <span>${icon('codex')}도감 · 도전</span><b class="k-num">${codexFound(p.discovered)}/${CODEX_SYN.length} · ${p.runs | 0}회</b>
       </div>`;
     E['rs-step1'].hidden = true; E['rs-step2'].hidden = false;
   });
@@ -1298,7 +1421,6 @@ export function createUI(root, handlers = {}) {
   }
 
   // ── 매 프레임 ──
-  let p2Key = '';
   function update(v, m = {}) {
     meta = m || {};
     if (stage.clientWidth !== layW || stage.clientHeight !== layH) layout(); // 관찰자·resize 이벤트를 놓친 크기 변경(가려진 웹뷰 등) 보정
@@ -1308,7 +1430,7 @@ export function createUI(root, handlers = {}) {
     if (camp.isOpen()) camp.refresh();
     if (!v) return;
     view = v;
-    const me = v.players[0], pa = v.players[1];
+    const me = v.players[0];
 
     txt(E['stage-no'], v.stage + '층');
     txt(E['theme-name'], THEMES[v.theme]?.name ?? '');
@@ -1320,6 +1442,7 @@ export function createUI(root, handlers = {}) {
     if (v.mana) updateMana(v);
     updateStack(v);
     if (pendingMerge) { const pm = pendingMerge; pendingMerge = null; playMerge(pm); }
+    updateFLinks(v);
     updateStatus(v);
     stage.classList.toggle('boss-on', !!v.boss);
     if (v.pick) {
@@ -1330,7 +1453,7 @@ export function createUI(root, handlers = {}) {
         if ((momentLeft() <= 0.15 && now >= mergeUntil) || now - pickWaitT > 4000) { pickRef = v.pick; openPick(v.pick); } // 합체 연출('슬롯 해제!')이 끝난 뒤에
       } else syncPickRing(v.pick);
     } else { pickRef = null; pickWaitRef = null; if (pickOpen && !pickClosing) hidePick(); } // 이벤트 없이 사라진 경우(클리어·패배) 즉시 닫음
-    syncReroll(v.rerollLeft | 0);
+    syncReroll(v.pick?.cards?.fixed ? 0 : v.rerollLeft | 0); // 새로 뽑아도 같은 카드면 버튼 숨김
     updateHeroBtn(v.hero);
 
     const gs = fmt(me.gold);
@@ -1344,8 +1467,8 @@ export function createUI(root, handlers = {}) {
 
     updateSkill(skills[0], me.cd.meteor, v.phase);
     updateSkill(skills[1], me.cd.freeze, v.phase);
-    attr(E['btn-auto'], 'aria-pressed', String(!!me.auto));
     attr(E['btn-autonext'], 'aria-pressed', String(!!meta.autoNext));
+    syncClearWait(v);
     txt(E['speed-text'], v.speed + 'x');
     if (E['speed-lock'].hidden !== !!meta.unlocked3x) E['speed-lock'].hidden = !!meta.unlocked3x;
 
@@ -1354,16 +1477,6 @@ export function createUI(root, handlers = {}) {
     updateCollabs(v);
     updateLink(v);
     updateBeams(v);
-
-    // AI 동료(넓은 화면 왼쪽 열): 네임드 보스 처치로 익힌 주문(최대 3)
-    const al = v.allySpells || {};
-    const pk = Object.entries(al).join();
-    if (pk !== p2Key) {
-      p2Key = pk;
-      html(E['p2-icon'], AI_ICON);
-      txt(E['p2-name'], pa.kind === 'bot' ? 'AI 동료' : pa.name);
-      E['p2-spells'].innerHTML = Object.entries(al).map(([key, lv]) => skillChip(key, lv, 'p2-sp')).join('');
-    }
 
     if (v.phase === 'play' && clearWait) hideClear(); // 다른 경로로 다음 층이 시작되면 대기 창 정리
   }
@@ -1401,11 +1514,6 @@ export function createUI(root, handlers = {}) {
           toast(ev.hero ? '부활 결계 강화 발동! 성벽 40% 회복' : '부활 결계 발동! 성벽 50% 회복', 'wall');
           E['st-revive'].animate([{ transform: 'scale(1.5)', filter: 'brightness(2)' }, { transform: 'scale(1)', filter: 'none' }], { duration: 600, easing: 'ease-out' });
           break;
-        case 'allySpell': {
-          const s = SPELL_BY_KEY[ev.spell];
-          if (s) toast(`AI 동료가 〈${s.name}〉 Lv${ev.level}을 익혔어요!`, 'partner');
-          break;
-        }
         case 'heroLevelUp': {
           const m = MILESTONE_BY_KEY[ev.milestone];
           if (m) toast(`영웅 Lv.${ev.level}! ${m.desc} 해금`, 'hero');
@@ -1459,7 +1567,7 @@ export function createUI(root, handlers = {}) {
   syncInert();
   return {
     showTitle, hideTitle, showContinue, showCamp, hideCamp, isCampOpen: () => camp.isOpen(), refreshCamp: () => camp.refresh(),
-    showResult, update, onEvents, toast, showOfflineReward, isBusy, handleBack,
+    showResult, update, onEvents, toast, showOfflineReward, isBusy, handleBack, isPickShown: () => pickOpen && !pickClosing,
     showUpdateReady, showUpdateProgress, showInstallPermissionHelp, setVersion,
     slotRects: () => slots.filter(x => x.key).map(x => { const r = relRect(x.orb); return { key: x.key, x: r.cx, y: r.cy, r: r.w / 2 }; }),
     heroAnchor: () => { if (E['btn-hero'].hidden) return null; const r = relRect(E['hb-portrait']); return { x: r.cx, y: r.cy }; },

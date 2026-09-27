@@ -1,12 +1,12 @@
 // 순수 시뮬레이션 (DOM 없음, node 실행 가능)
 import {
-  WORLD_W, WORLD_H, WALL_Y, CANNONS, BULLET_SPEED, BULLET_R, MAX_STAGE,
+  WORLD_W, WORLD_H, WALL_Y, mageAt, BULLET_SPEED, BULLET_R, MAX_STAGE,
   TRAIN_KEYS, trainMax, cannonStats, wallMax,
   goldPerKill, starsFor, RUN_GEMS, META_KEYS, metaMax, metaFx, SKILLS,
   COMBO_WINDOW, COMBO_TIERS, FRENZY, LEGEND_T, SYN_FX as FX, SYNERGIES, SYN_KEYS,
   SPELL_KEYS, RARITY_WEIGHT, MANA_MAX, MANA_FRAC, PICK_AUTO_T,
-  SPELL_SLOTS, SPELL_MAX_LV, AWAKEN_KEYS, AWAKEN_BY_KEY, BASIC_SPELLS, ALLY_SPELLS, allySpellLv,
-  FUSIONS, FUSION_KEYS, FUSION_BY_KEY, FUSION_FX, fusionParts, SKILL_BY_KEY, EARLY_FLOORS, EARLY_MARKS,
+  SPELL_SLOTS, SPELL_MAX_LV, AWAKEN_KEYS, AWAKEN_BY_KEY, BASIC_SPELLS,
+  FUSIONS, FUSION_KEYS, FUSION_BY_KEY, FUSION_FX, fusionParts, fusionProgress, SKILL_BY_KEY, EARLY_FLOORS, EARLY_MARKS,
   COLLABS, COLLAB_BY_KEY, COLLAB_BRANCH_RANKS, COLLAB_FX, collabOn, collabPow, FRONT_Y, ENTRY_RUSH, inReach,
 } from './config.js';
 import { themeOf, ENEMY_TYPES, BOSSES, ELITE, buildStage, enemyHp, enemyDmg, enemySpeedMul, bossHpMul, DENSITY } from './stages.js';
@@ -41,11 +41,11 @@ const ARCANE_AT = 0.85;         // 비전 충전 추가 카드가 뜨는 처치 
 const HERO_REVIVE_HP = 0.4;      // 성직자 부활 결계 강화
 const REVIVE_HP = 0.5, REVIVE_FREEZE = 1.5; // 부활 결계: 성벽 50% 회복 + 잠깐 빙결
 // 광폭화: 층이 BERSERK_T초를 넘기면 적 피해가 BERSERK_STEP초마다 2배, 이동은 감속·밀쳐내기 무시 — 버티기만 하는 교착을 끝낸다
-const BERSERK_T = 70, BERSERK_STEP = 10;
+export const BERSERK_T = 70; const BERSERK_STEP = 10; // ui.js 경고 카운트다운도 이 값을 쓴다
 // hero.js 에 넘기는 콜백 묶음(spells.js와 동일한 모양)
 const HERO_API = SPELL_API;
 
-// 마법사 수련 레벨(정비 화면 영구 강화) — 두 마법사 모두 run.js가 meta.training을 넘긴다
+// 마법사 수련 레벨(정비 화면 영구 강화) — run.js가 meta.training을 넘긴다
 const lvOf = src => {
   const lv = {};
   for (const k of TRAIN_KEYS) lv[k] = toInt(src?.[k], 0, trainMax(k));
@@ -61,7 +61,8 @@ function makePlayer(init, i, fx, stage = 1) {
     name: String(init.name ?? `P${i + 1}`).slice(0, 16),
     kind: KINDS.includes(init.kind) ? init.kind : 'human',
     gold: Number.isFinite(gold) && gold > 0 ? gold : 0,
-    auto: !!init.auto,
+    auto: !!init.auto,         // 자동 진행: 영웅 궁극기 자동(다음 층 자동은 main.js) — 카드와는 무관
+    autoPick: !!init.autoPick, // 카드 화면의 '자동 선택'(기본 OFF) — 켠 사람만 PICK_AUTO_T초 뒤 추천 카드
     lv,
     cd: { meteor: 0, freeze: 0 },
     angle: -Math.PI / 2,
@@ -73,7 +74,9 @@ function makePlayer(init, i, fx, stage = 1) {
 
 // 영웅 특성 합산(영웅이 없으면 null). heroUnit.tb는 updateHeroUnit이 0.5초마다(특성을 찍으면 즉시) 갱신
 const heroTb = g => (g.heroUnit ? g.heroUnit.tb : null);
-const wallCap = g => wallMax(g.stage, Math.max(g.players[0].lv.wall, g.players[1].lv.wall), g.fx.wallMul);
+// 성벽 위에서 싸우는 마법사 수. 솔로 = 1(나). ponytail: players[1]은 협동 모드(g.coop)를 위해 모양만 남겨 둔 잠든 자리
+const mages = g => (g.coop ? 2 : 1);
+const wallCap = g => wallMax(g.stage, Math.max(...g.players.slice(0, mages(g)).map(p => p.lv.wall)), g.fx.wallMul);
 
 // ── 런(도전) 상태 ──
 // 런 필드(저장·이어하기 대상). spells/rerollLeft 는 game 최상위(g.spells, g.rerollLeft)에 둔다
@@ -95,22 +98,18 @@ export function normalizeRun(raw) {
     const gr = FUSION_BY_KEY[k].groups, p = Array.isArray(o(r.fusionParts)[k]) ? r.fusionParts[k] : [];
     fusionParts[k] = gr.map((ks, i) => (ks.includes(p[i]) ? p[i] : ks[0]));
   }
-  const allySpells = {};
-  for (const k of ALLY_SPELLS) {
-    const v = toInt(o(r.allySpells)[k], 0, SPELL_MAX_LV);
-    if (v > 0) allySpells[k] = v;
-  }
   const awaken = {}, gems = {};
   for (const k of AWAKEN_KEYS) awaken[k] = toInt(o(r.awaken)[k], 0, 999);
   for (const k of GEM_KEYS) gems[k] = toInt(o(r.gems)[k], 0, 1e7);
   const pl = Array.isArray(r.players) ? r.players : [];
   const lo = o(r.loadout);
+  // v0.0.7(v:2) 도전의 융합은 재료 평균 레벨로 바로 합체한 것 — 재료를 만렙으로 치면 너무 세다. 그 도전이 끝날 때까지 옛 규칙(재료 = 융합 레벨)
+  const legacy = FUSION_KEYS.filter(k => spells[k] && (r.v === 2 || (Array.isArray(r.legacy) && r.legacy.includes(k))));
   return {
-    v: 2,
+    v: 3, legacy,
     stage: toInt(r.stage, 1, MAX_STAGE),
-    players: [0, 1].map(i => ({ gold: posNum(o(pl[i]).gold) })), // 이번 도전에서 번 골드(도전 종료 때 meta.gold로)
-    auto: !!r.auto,
-    spells, fusionParts, allySpells,
+    players: [0, 1].map(i => ({ gold: posNum(o(pl[i]).gold) })), // 이번 도전에서 번 골드(도전 종료 때 meta.gold로). [1]은 잠든 협동 자리
+    spells, fusionParts, // 옛 저장의 allySpells(AI 동료 주문)·auto(→ settings.autoNext)는 버린다
     rerollLeft: r.rerollLeft == null ? null : toInt(r.rerollLeft, 0, 99),
     awaken, gems,
     reviveUsed: !!r.reviveUsed,
@@ -133,10 +132,9 @@ export function normalizeRun(raw) {
 export function serializeRun(g) {
   const r = g.run;
   return {
-    v: 2, stage: g.stage,
+    v: 3, stage: g.stage, legacy: g.fusions.filter(k => g.run.legacy.includes(k)),
     players: g.players.map(p => ({ gold: p.gold })),
-    auto: g.players[0].auto,
-    spells: { ...g.spells }, fusionParts: JSON.parse(JSON.stringify(g.fusionParts)), allySpells: { ...g.allySpells }, rerollLeft: g.rerollLeft,
+    spells: { ...g.spells }, fusionParts: JSON.parse(JSON.stringify(g.fusionParts)), rerollLeft: g.rerollLeft,
     awaken: { ...r.awaken }, gems: { ...r.gems },
     reviveUsed: r.reviveUsed, heroRevive: r.heroRevive, arcane: r.arcane, floors: r.floors, bosses: r.bosses, firstClears: r.firstClears, flawless: r.flawless,
     time: r.time, startBest: r.startBest,
@@ -166,8 +164,9 @@ function emit(g, ev) {
 }
 
 // opts: { stage, players, best, seed, discovered, hero, metaLv:{key:lv}, run:(serializeRun 모양, 없으면 새 런), seenSpells,
-//         startCards(도전 시작 무료 카드 수 — run.js newRun이 START_CARDS), collabOff(테스트: 협공 효과 끄기) }
-// players[i].lv = 마법사 수련 레벨(run.js가 meta.training을 넘긴다)
+//         startCards(도전 시작 무료 카드 수 — run.js newRun이 START_CARDS), collabOff(테스트: 협공 효과 끄기),
+//         coop(협동 모드: players[1]이 깨어나 함께 시전 — 지금 게임은 늘 솔로, 테스트·후일용) }
+// players[i].lv = 마법사 수련 레벨(run.js가 meta.training을 넘긴다). players[0].auto = 자동 진행(궁극기 자동) · .autoPick = 카드 자동 선택
 export function createGame(opts = {}) {
   const pl = Array.isArray(opts.players) ? opts.players : [];
   const run = normalizeRun(opts.run);
@@ -180,6 +179,7 @@ export function createGame(opts = {}) {
     boss: null, freezeT: 0, berserk: 1,
     enemies: [], bullets: [], eshots: [],
     players: [],
+    coop: !!opts.coop, // ponytail: 협동 모드 자리. false면 players[1]은 시전·비상 스킬·조합·성벽에 아무 영향이 없다
     result: null,
     events: [],
     // 내부 상태
@@ -200,17 +200,17 @@ export function createGame(opts = {}) {
     // 판타지 스킬 (런 전체 누적 빌드)
     mana: { cur: 0, max: MANA_MAX }, spells: { ...run.spells }, fusions: [], pick: null, pickQ: 0,
     fusionParts: run.fusionParts, // { [융합 키]: [재료 a, 재료 b] }
-    book: {},          // 실제로 발동하는 스킬 레벨 = 기본 스킬 + 융합 스킬이 품은 재료(융합 레벨) — spells.js가 읽는다
+    book: {},          // 실제로 발동하는 스킬 레벨 = 기본 스킬 + 융합 스킬이 품은 재료(만렙) — spells.js가 읽는다
+    fusionProgress: [], // UI: 발견한 융합 중 짝이 모인 것의 진행도(config.js fusionProgress) — refreshFusion이 갱신
     collabs: [], collabT: {}, collabOff: !!opts.collabOff, // 켜진 협공 키 · collabProc 간격 · 테스트용 끄기
     linkT: 0,          // 합동 필살: 영웅 궁극기 뒤 남은 창(초)
-    allySpells: { ...run.allySpells }, // AI 동료(P2) 주문서: 네임드 보스 처치마다 ALLY_SPELLS 순서로 1개(런당 최대 3)
     seenSpells: new Set(Array.isArray(opts.seenSpells) ? opts.seenSpells.filter(k => SPELL_KEYS.includes(k)) : []),
     // 런(도전): 영구 강화 레벨 · 런 기록. fx = 영구 강화 × 각성 배율
     metaLv, fx: null,
     run: {
       awaken: run.awaken, gems: run.gems, reviveUsed: run.reviveUsed, heroRevive: run.heroRevive, arcane: run.arcane, floors: run.floors, bosses: run.bosses,
       firstClears: run.firstClears, flawless: run.flawless, time: run.time,
-      startBest: opts.run ? run.startBest : toInt(opts.best, 0, MAX_STAGE), loadout: run.loadout,
+      startBest: opts.run ? run.startBest : toInt(opts.best, 0, MAX_STAGE), loadout: run.loadout, legacy: run.legacy,
       over: false, victory: false, ended: false, checkpoint: null,
     },
     rerollLeft: 0,
@@ -219,9 +219,9 @@ export function createGame(opts = {}) {
     hero: opts.hero && typeof opts.hero === 'object' ? opts.hero : null,
     heroUnit: null,
     summons: [],        // 영웅 소환물(늑대·그림자 분신·비전 분신) — hero.js가 관리, 렌더러가 그린다
-    heroBuff: null,     // 전군 강화 함성 { t, mul }: 두 마법사 + 영웅 피해 배율
-    dmgDone: [0, 0, 0], // 이번 도전 실제 피해 [P1, P2, 영웅(소환물 포함)] — 기여도 표시·밸런스 러너용
-    dmgSkill: [0, 0],   // 그중 고른 스킬(카드·융합·동료 주문)이 낸 피해 [P1, P2] — 나머지는 기본 주문
+    heroBuff: null,     // 전군 강화 함성 { t, mul }: 마법사 + 영웅 피해 배율
+    dmgDone: [0, 0, 0], // 이번 도전 실제 피해 [나, 협동 동료(솔로면 0), 영웅(소환물 포함)] — 기여도 표시·밸런스 러너용
+    dmgSkill: [0, 0],   // 그중 고른 스킬(카드·융합)이 낸 피해 [나, 협동 동료] — 나머지는 기본 주문
     _skill: false,      // 지금 들어가는 피해가 스킬 피해인가(dmgSkill 집계용)
     _env: false,        // 자폭병 연쇄 폭발 중(기여도 집계 제외)
   };
@@ -295,7 +295,7 @@ export function startStage(g, stage) {
   g.run.checkpoint = serializeRun(g); // 이어하기: 이 스테이지 시작부터
 }
 
-export function setPlayer(g, i, init) {
+export function setPlayer(g, i, init) { // 협동 입장/퇴장 자리 교체(솔로에선 players[1]이 잠든 자리)
   if (i !== 0 && i !== 1) return;
   const ratio = g.wall.max > 0 ? g.wall.hp / g.wall.max : 1;
   g.players[i] = makePlayer(init, i, g.fx, g.stage);
@@ -306,15 +306,16 @@ export function setPlayer(g, i, init) {
 
 // ── 히든 조합 ──
 // 레벨 기반 조합 재계산. 새로 켜진 것만 synergy 이벤트
+// 협동 조합(쌍둥이 포화·황금비)은 두 마법사가 함께 싸우는 협동 모드에서만
 function refreshSyn(g) {
-  for (let i = 0; i < 2; i++) {
-    const p = g.players[i], old = p.syn;
+  for (let i = 0; i < mages(g); i++) {
+    const p = g.players[i], old = p.syn, c = mageAt(g, i);
     p.syn = CANNON_SYN.filter(s => s.test(p.lv)).map(s => s.key);
-    for (const k of p.syn) if (!old.includes(k)) synergy(g, k, i, CANNONS[i].x, CANNONS[i].y - 40);
+    for (const k of p.syn) if (!old.includes(k)) synergy(g, k, i, c.x, c.y - 40);
   }
   const old = g.duo, [a, b] = g.players;
-  g.duo = DUO_SYN.filter(s => s.test(a.lv, b.lv)).map(s => s.key);
-  for (const k of g.duo) if (!old.includes(k)) synergy(g, k, -1, WORLD_W / 2, CANNONS[0].y - 40);
+  g.duo = g.coop ? DUO_SYN.filter(s => s.test(a.lv, b.lv)).map(s => s.key) : [];
+  for (const k of g.duo) if (!old.includes(k)) synergy(g, k, -1, WORLD_W / 2, mageAt(g, 0).y - 40);
 }
 
 function synergy(g, key, o, x, y) {
@@ -331,11 +332,11 @@ export function drainEvents(g) {
 }
 
 // ── 판타지 스킬 카드 뽑기 ──
-// 이 카드를 고르면 아직 없는 융합이 완성(합체)되는가(참일 때 UI는 조건 없이 ✦ 표시만)
+// 이 카드를 고르면 융합이 완성(합체)되는가: 짝이 이미 만렙이고 이 카드가 이 스킬을 만렙으로 만들 때(UI는 ✦ "이걸 찍으면 융합!")
 function wouldFuse(g, key) {
-  if (FUSION_BY_KEY[key]) return false;
-  const hyp = { ...g.spells, [key]: (g.spells[key] || 0) + 1 };
-  return FUSIONS.some(f => !g.spells[f.key] && f.test(hyp));
+  if (FUSION_BY_KEY[key] || (g.spells[key] || 0) + 1 < SPELL_MAX_LV) return false;
+  const hyp = { ...g.spells, [key]: SPELL_MAX_LV };
+  return FUSIONS.some(f => !g.spells[f.key] && !f.ready(g.spells) && f.ready(hyp) && f.groups.some(gr => gr.includes(key)));
 }
 
 // 영웅 Lv50 마일스톤: 전설 카드 확률 상승
@@ -356,35 +357,45 @@ export const cardCount = g => 3 + (g.hero && hasMilestone(g.hero.level, 'choose4
 // 쓰는 슬롯 수(기본 스킬·융합 스킬 모두 1칸)
 export const slotsUsed = g => Object.keys(g.spells).length;
 
-// 슬롯 6칸 · Lv1~5. 슬롯이 차면 보유 스킬(융합 스킬 포함) 강화 카드만, 모자라는 자리는 각성 카드로 채운다(중복 없음).
+// 슬롯 6칸 · Lv1~6. 슬롯이 차면 보유 스킬(융합 스킬 포함) 강화 카드만. 각성 카드는 강화할 것도 새로 넣을 것도 없을 때만(중복 없음).
 // 융합 스킬은 새 카드로 나오지 않고(합체로만 생긴다) 가진 뒤에 강화 카드로 나온다. starter = 도전 시작 무료 카드(쿨타임 공격 스킬만)
-const STARTER = ['fireball', 'lightningStrike', 'iceLance', 'tornado', 'judgment'];
+export const STARTER = ['fireball', 'lightningStrike', 'iceLance', 'tornado', 'judgment'];
+// 근접 영웅(기사·성직자·암살자)의 시작 카드엔 회오리 없음: 적을 밀어내 영웅 칼이 닿지 않아 1층 화력이 모자란다(기사 + 회오리 1~2층 패배)
+const starterFor = g => (g.hero && HERO_CLASSES[g.hero.cls]?.melee ? STARTER.filter(k => k !== 'tornado') : STARTER);
 function genCards(g, starter = false) {
   const n = cardCount(g);
   const full = slotsUsed(g) >= SPELL_SLOTS;
   const fused = new Set(Object.values(g.fusionParts).flat()); // 보유 융합이 품은 재료는 새 카드로 다시 나오지 않는다(이미 융합 안에서 발동)
   let pool = SKILL_KEYS.filter(k => (g.spells[k] || 0) < SPELL_MAX_LV && (g.spells[k] > 0 || (!full && !FUSION_BY_KEY[k] && !fused.has(k))));
-  if (starter && pool.some(k => STARTER.includes(k))) pool = pool.filter(k => STARTER.includes(k));
+  const st = starter && starterFor(g);
+  if (st && pool.some(k => st.includes(k))) pool = pool.filter(k => st.includes(k));
   const cards = [];
   while (cards.length < n && pool.length) {
     const k = weightedKey(g, pool);
     pool = pool.filter(x => x !== k);
     cards.push({ spell: k, level: (g.spells[k] || 0) + 1, rarity: SKILL_BY_KEY[k].rarity, fusionHint: wouldFuse(g, k), fusion: !!FUSION_BY_KEY[k] });
   }
-  const aw = AWAKEN_KEYS.slice();
+  const aw = cards.length ? [] : AWAKEN_KEYS.slice(); // 각성 카드는 더 강화할 것도 새로 넣을 것도 없을 때만
+  const skills = cards.length;
   while (cards.length < n && aw.length) {
     const k = aw.splice(Math.floor(g.rng() * aw.length), 1)[0];
     cards.push({ spell: null, awaken: k, level: g.run.awaken[k] + 1, rarity: 'common', fusionHint: false });
   }
+  cards.fixed = skills ? !pool.length : !aw.length; // 후보를 전부 보여 줬다 = 새로고침해도 같은 카드(새로고침 막음)
   return cards;
 }
+
+// 카드 자동 선택: 카드 화면 '자동 선택' 토글(players[0].autoPick)을 켠 사람 · 헤드리스 봇(kind 'bot')만.
+// 자동 진행(auto)과는 무관 — 플레이어는 기본적으로 직접 고른다(이어하기로 복원돼도 같다)
+const autoPicks = g => !!(g.players[0].autoPick || g.players[0].kind === 'bot');
+const pickT = g => (autoPicks(g) ? PICK_AUTO_T : null);
 
 // 카드 선택을 띄운다. 이미 떠 있으면 대기열(pickQ)에 쌓았다가 고르는 즉시 다음 카드를 띄운다
 function triggerPick(g, starter = false) {
   if (g.pick) { g.pickQ++; return; }
   const cards = genCards(g, starter);
   if (!cards.length) return; // 모든 스킬 만렙인 극단적 상황
-  g.pick = { cards, autoLeft: g.players[0].auto ? PICK_AUTO_T : null, starter };
+  g.pick = { cards, autoLeft: pickT(g), starter };
   emit(g, { type: 'pickOffer', queued: g.pickQ });
 }
 
@@ -409,24 +420,23 @@ function gainMana(g) {
   triggerPick(g);
 }
 
-// 실제로 발동하는 스킬 레벨: 기본 스킬 + 융합 스킬이 품은 재료 두 스킬(융합 레벨)
+// 실제로 발동하는 스킬 레벨: 기본 스킬 + 융합 스킬이 품은 재료 두 스킬(만렙으로 합쳤으니 만렙 그대로)
 function bookOf(g) {
   const b = {};
   for (const [k, v] of Object.entries(g.spells)) if (!FUSION_BY_KEY[k]) b[k] = v;
-  for (const f of g.fusions) for (const k of g.fusionParts[f] || []) b[k] = Math.max(b[k] || 0, g.spells[f]);
+  for (const f of g.fusions) for (const k of g.fusionParts[f] || []) b[k] = g.run.legacy.includes(f) ? 1 : SPELL_MAX_LV; // 옛 도전 융합: 재료는 Lv1로만 발동(융합 모양·효과는 유지, 새 융합표가 이미 세다)
   return b;
 }
 
-// 융합 = 합체: 두 재료를 모두 가진 융합이 있으면 재료 둘을 빼고 융합 스킬 하나를 넣는다(슬롯 1칸 해제, 레벨 = 평균 내림).
-// fusionMerge 이벤트 + 히든 조합 발견(첫 발견이면 synergy first + hitstop). 그다음 book·협공 재계산.
+// 융합 = 합체: 두 재료가 모두 만렙(Lv6)인 융합이 있으면 재료 둘을 빼고 융합 스킬 Lv1을 넣는다(슬롯 1칸 해제, 카드로 Lv6까지).
+// fusionMerge 이벤트 + 히든 조합 발견(첫 발견이면 synergy first + hitstop). 그다음 book·협공·진행도(fusionProgress) 재계산.
 // export: applyPick이 부르지만, 테스트가 game.spells를 직접 바꾼 뒤 재계산시키는 용도로도 씀
 export function refreshFusion(g) {
   for (let merged = true; merged;) {
     merged = false;
     for (const f of FUSIONS) {
-      if (g.spells[f.key] || !f.test(g.spells)) continue;
-      const from = fusionParts(f, g.spells);
-      const level = Math.max(1, Math.floor((g.spells[from[0]] + g.spells[from[1]]) / 2));
+      if (g.spells[f.key] || !f.ready(g.spells)) continue;
+      const from = fusionParts(f, g.spells), level = 1;
       const full = slotsUsed(g) >= SPELL_SLOTS; // 꽉 찬 슬롯에서 합체했나(UI는 이때만 '슬롯 해제!'를 외친다)
       delete g.spells[from[0]];
       delete g.spells[from[1]];
@@ -440,6 +450,7 @@ export function refreshFusion(g) {
   for (const k of Object.keys(g.fusionParts)) if (!g.spells[k]) delete g.fusionParts[k];
   g.fusions = FUSION_KEYS.filter(k => g.spells[k] > 0);
   g.book = bookOf(g);
+  g.fusionProgress = fusionProgress(g.spells, g.discovered);
   refreshCollab(g);
 }
 
@@ -477,7 +488,7 @@ function collabProc(g, key, x, y) {
 export function reofferPick(g, pick) {
   const cards = pick && genCards(g, pick.starter);
   if (!cards || !cards.length) return false;
-  g.pick = { ...pick, cards };
+  g.pick = { ...pick, cards, autoLeft: autoPicks(g) ? pick.autoLeft ?? PICK_AUTO_T : null }; // 미뤄 둔 사이 자동 선택이 바뀌었을 수 있다
   return true;
 }
 
@@ -507,32 +518,41 @@ function applyPick(g, i, index) {
   return true;
 }
 
-// 카드 새로고침(런 전체 rerollLeft회: 영웅 Lv5 + 영구 강화). 자동 선택 카운트다운도 처음부터
+// 카드 새로고침(런 전체 rerollLeft회: 영웅 Lv5 + 영구 강화). 자동 선택 카운트다운도 처음부터(자동 선택 ON일 때만)
 function rerollPick(g, i) {
-  if (i !== 0 || !g.pick || !(g.rerollLeft > 0)) return false;
+  if (i !== 0 || !g.pick || !(g.rerollLeft > 0) || g.pick.cards.fixed) return false;
   const cards = genCards(g, g.pick.starter);
   if (!cards.length) return false;
   g.rerollLeft--;
-  g.pick = { cards, autoLeft: g.pick.autoLeft == null ? null : PICK_AUTO_T, starter: g.pick.starter };
+  g.pick = { cards, autoLeft: pickT(g), starter: g.pick.starter };
   emit(g, { type: 'pickOffer', reroll: true });
   return true;
 }
 
 // 카드가 떠 있는 동안(전투 정지) 호출측이 매 프레임 넘기는 실시간 델타(초).
-// 자동 강화가 켜져 있으면 3초 뒤 봇 휴리스틱으로 자동 선택
+// 자동 선택 ON(autoPicks)이면 PICK_AUTO_T초 뒤 봇 휴리스틱(추천 카드 pickCard)으로 자동 선택. 아니면 autoLeft = null — 고를 때까지 기다린다
 export function tickPick(g, dtReal) {
-  if (!g.pick || g.pick.autoLeft == null || !(dtReal > 0)) return;
+  if (!g.pick || g.pick.autoLeft == null || !autoPicks(g) || !(dtReal > 0)) return;
   g.pick.autoLeft -= dtReal;
   if (g.pick.autoLeft <= 0) applyPick(g, 0, pickCard(g, g.pick.cards));
 }
 
 // 플레이어 행동 (게스트 입력이 그대로 들어오므로 전부 검증)
+// i = 마법사 번호: 솔로에선 0(나)만. 1은 협동 모드(g.coop)에서만 받는다
 export function act(g, i, action) {
-  if ((i !== 0 && i !== 1) || !action || typeof action !== 'object') return false;
+  if ((i !== 0 && i !== 1) || (i === 1 && !g.coop) || !action || typeof action !== 'object') return false;
   if (action.type === 'pick') return applyPick(g, i, action.index);
   if (action.type === 'reroll') return rerollPick(g, i);
-  if (g.pick) return false; // 카드 선택 중엔 다른 조작 불가(전투 정지)
   const p = g.players[i];
+  // 자동 진행(ON = 영웅 궁극기 자동 · 다음 층 자동은 main.js). 카드 선택과는 무관 — 선택 중에도 받는다
+  if (action.type === 'auto') { p.auto = !!action.on; return true; }
+  // 카드 화면 '자동 선택'(자동 진행과 별개). 선택 중이면 바로 반영: ON → 카운트다운 시작, OFF → 사라지고 기다린다
+  if (action.type === 'autoPick') {
+    p.autoPick = !!action.on;
+    if (i === 0 && g.pick) g.pick.autoLeft = pickT(g);
+    return true;
+  }
+  if (g.pick) return false; // 카드 선택 중엔 다른 조작 불가(전투 정지)
   // 도전 중 골드 강화('upgrade')는 없다 — 마법사 수련은 정비 화면(run.js buyTraining)
   if (action.type === 'skill') {
     const sk = action.skill;
@@ -546,10 +566,6 @@ export function act(g, i, action) {
     if (dbl) synergy(g, 'double', -1, WORLD_W / 2, WALL_Y / 2);
     if (sk === 'freeze') g.freezeT = Math.max(g.freezeT, dbl ? FX.doubleFreeze : SKILLS.freeze.dur);
     else meteor(g, i, dbl);
-    return true;
-  }
-  if (action.type === 'auto') { // 자동 진행 봇(카드 자동 선택·영웅 자동 궁극기). 테스트·봇용 — 전투 화면에는 토글이 없다
-    p.auto = !!action.on;
     return true;
   }
   if (action.type === 'heroClass') {
@@ -647,12 +663,12 @@ export function step(g, dt) {
   if (g.pick) return; // 카드 선택 중엔 전투 정지(시간도 멈춤). 실시간 진행은 tickPick()이 맡는다
   if (dt > 0.1) dt = 0.1;
   g.phaseT += dt;
-  // AI 비상 스킬 · 자동 진행 봇(영웅)
+  // 봇 비상 스킬(kind 'bot' — 테스트 러너) · 영웅 자동 처리(자동 장착·자동 특성은 늘, 궁극기는 자동 진행 ON일 때만 — bot.js autoHero)
   g.botT += dt;
   if (g.botT >= BOT_INTERVAL) {
     g.botT -= BOT_INTERVAL;
-    for (let i = 0; i < 2; i++) if (g.players[i].kind === 'bot' && g.phase === 'play') autoSkill(g, i);
-    if (g.players[0].auto) autoHero(g); // 영웅은 플레이어(0번) 소유
+    for (let i = 0; i < mages(g); i++) if (g.players[i].kind === 'bot' && g.phase === 'play') autoSkill(g, i);
+    autoHero(g); // 영웅은 플레이어(0번) 소유
   }
   if (g.phase !== 'play') return;
 
@@ -808,9 +824,9 @@ function aimTarget(g) {
 function updateCannons(g, dt) {
   const tgt = frontMost(g), tb = heroTb(g);
   const aura = tb && g.heroUnit.state !== 'down' ? 1 + tb.aura : 1;
-  for (let i = 0; i < 2; i++) {
-    const p = g.players[i], c = CANNONS[i];
-    const rate = p.stats.rate * (i === 0 ? spellRateMul(g) : 1) * aura; // 질풍: P1만 · 지휘관 오라: 두 마법사
+  for (let i = 0; i < mages(g); i++) {
+    const p = g.players[i], c = mageAt(g, i);
+    const rate = p.stats.rate * (i === 0 ? spellRateMul(g) : 1) * aura; // 질풍: 내 주문서 · 지휘관 오라: 성벽 마법사
     const iv = 1 / (g.frenzyT > 0 ? Math.min(FRENZY.rateCap, rate * FRENZY.rateMul) : rate);
     p.fireT += dt;
     if (!tgt) {
@@ -833,7 +849,7 @@ function updateCannons(g, dt) {
   }
 }
 
-// 기본 주문 1회 시전: 다중 시전 = 발사체 수(부채꼴). kind = 'fireball'(P1) | 'frostbolt'(P2)
+// 기본 주문 1회 시전: 다중 시전 = 발사체 수(부채꼴). kind = 'fireball'(나) | 'frostbolt'(협동 동료)
 function fire(g, i, p, c, tx, ty) {
   const n = p.stats.shots, sp = p.stats.spread, B = BASIC_SPELLS[i];
   const mx = c.x + Math.cos(p.angle) * 30, my = c.y + Math.sin(p.angle) * 30;
@@ -1054,7 +1070,7 @@ function killEnemy(g, e, o, effects) {
   const heroGoldMul = (g.hero ? heroBonuses(g.hero).goldMul : 1) * (1 + (tb ? tb.gold : 0));
   const mult = (tier ? COMBO_TIERS[tier - 1].gold : 1) * (g.duo.includes('golden') ? FX.golden : 1) * (g.legendT > 0 ? 2 : 1) * heroGoldMul * g.fx.goldMul;
   const gold = Math.ceil(e.gold * mult);
-  for (const p of g.players) p.gold += gold; // 두 플레이어 모두 전액
+  for (let i = 0; i < mages(g); i++) g.players[i].gold += gold; // 협동이면 둘 다 전액(솔로 = 나만)
   if (g.chain) { g.chain.kills++; g.chain.gold += gold; }
   emit(g, { type: 'kill', x: e.x, y: e.y, enemy: e.type, gold, isBoss: e.isBoss, o, age: g.phaseT - e.born, fought: e.hit0 < 0 ? 0 : g.phaseT - e.hit0 });
   const prev = g._skill;
@@ -1063,7 +1079,6 @@ function killEnemy(g, e, o, effects) {
   g._skill = prev;
   if (g.hero && g.hero.cls) heroOnKill(g, e, HERO_API, o); // 영웅 경험치 + 장비 드롭
   if (e.named) {
-    learnAllySpell(g);
     g.run.bosses++;
     g.run.gems.boss += RUN_GEMS.boss(g.stage);
     emit(g, { type: 'hitstop', ms: 500 });
@@ -1080,17 +1095,6 @@ function killEnemy(g, e, o, effects) {
       m.gold = Math.ceil(e.gold * 0.1);
       m.name = '중형 슬라임';
     }
-  }
-}
-
-// AI 동료 마법사: 네임드 보스를 잡을 때마다 냉기·번개 주문을 하나씩 익힌다(런당 최대 3, 층이 높을수록 높은 레벨).
-// 다 익힌 뒤에는 익힌 주문이 그 층 레벨까지 오른다
-function learnAllySpell(g) {
-  const level = allySpellLv(g.stage), key = ALLY_SPELLS.find(k => !g.allySpells[k]);
-  const keys = key ? [key] : ALLY_SPELLS.filter(k => g.allySpells[k] < level);
-  for (const k of keys) {
-    g.allySpells[k] = Math.max(g.allySpells[k] || 0, level);
-    emit(g, { type: 'allySpell', spell: k, level: g.allySpells[k], x: CANNONS[1].x, y: CANNONS[1].y - 40 });
   }
 }
 
@@ -1154,7 +1158,7 @@ function explode(g, e, o, gold) {
   g.chain = null;
   if (c.kills >= FX.chainboomKills) { // 연쇄 폭발: 골드 비
     const amount = c.gold * FX.goldRain;
-    for (const p of g.players) p.gold += amount;
+    for (let i = 0; i < mages(g); i++) g.players[i].gold += amount;
     emit(g, { type: 'goldRain', x: e.x, y: e.y, amount });
     synergy(g, 'chainboom', o, e.x, e.y);
   }
@@ -1206,7 +1210,7 @@ function damageWall(g, dmg, src = null) {
     return;
   }
   if (!src) return;
-  for (let i = 0; i < 2 && !src.dead; i++) {
+  for (let i = 0; i < mages(g) && !src.dead; i++) {
     const p = g.players[i];
     if (!p.syn.includes('thorns')) continue;
     damage(g, src, p.stats.dmg * FX.thorns, i);

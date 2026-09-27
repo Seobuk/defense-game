@@ -61,7 +61,7 @@
         </button>
       </div>
 
-      <!-- 왼쪽 열: 영웅 상태 · 합동 필살 · 켜진 협공 · AI 동료 -->
+      <!-- 왼쪽 열: 영웅 상태 · 합동 필살 · 켜진 협공 -->
       <aside id="side-l" class="side side-l" aria-label="영웅과 협공">
         <div id="hero-card" class="hero-card" hidden>
           <span class="hc-por" aria-hidden="true"><svg class="hc-ring" viewBox="0 0 48 48"><circle class="hc-ring-bg" cx="24" cy="24" r="21"/><circle id="hc-ring-fg" class="hc-ring-fg" cx="24" cy="24" r="21"/></svg><span id="hc-img" class="hc-img"></span><span id="hc-cls" class="hc-cls"></span></span>
@@ -74,9 +74,6 @@
         <div id="link-chip" class="link-chip" hidden><img class="k-ico" src="assets/icons/crit.svg" alt=""><span><b>합동 필살</b><em>다음 스킬 2배!</em></span><i id="link-bar"></i></div>
         <div class="side-h collab-h" id="collab-h" hidden><span>협공</span></div>
         <ul id="collab-list" class="collab-list" aria-label="켜진 협공"></ul>
-        <div id="partner" class="partner-card" aria-label="AI 동료 마법사">
-          <span id="p2-icon" aria-hidden="true"></span><span id="p2-name">AI 동료</span><span id="p2-spells" class="p2-spells"></span>
-        </div>
       </aside>
 
       <!-- 오른쪽 열: 이번 도전에서 고른 스킬 (6칸, 융합하면 두 칸이 하나로) -->
@@ -84,6 +81,7 @@
         <div class="side-h stack-h"><span>마법서</span><b id="stack-count" class="num">0/6</b></div>
         <div id="stack" class="stack"></div>
       </aside>
+      <svg id="flinks" class="flinks" aria-hidden="true"></svg>
       <svg id="beams" class="beams" aria-hidden="true"></svg>
 
       <div id="clear" class="ov" hidden>
@@ -103,7 +101,7 @@
             <span class="k-badge flawless" id="badge-flawless" hidden><img class="k-ico" style="--ico:16px" src="assets/icons/gem.svg" alt="">무결점! 보석 +50%</span>
             <span class="k-badge first" id="badge-first" hidden><img class="k-ico" style="--ico:16px" src="assets/icons/new.svg" alt="">첫 클리어!</span>
           </div>
-          <button id="btn-next" class="k-btn" hidden>다음 스테이지 ▶</button>
+          <button id="btn-next" class="k-btn" hidden>다음 층 ▶</button>
         </div>
       </div>
 
@@ -118,31 +116,36 @@
       <div id="pick" class="ov pick-ov" hidden role="dialog" aria-modal="true" aria-labelledby="pick-h">
         <div class="pick-head">
           <span class="pick-ribbon">마나 폭주!</span>
-          <h2 id="pick-h">스킬을 선택하세요</h2>
-          <div id="pick-ring" class="pick-ring" hidden aria-hidden="true">
-            <svg viewBox="0 0 40 40"><circle class="pr-bg" cx="20" cy="20" r="17"></circle><circle id="pick-ring-fg" class="pr-fg" cx="20" cy="20" r="17"></circle></svg>
-            <b id="pick-ring-n"></b>
-          </div>
+          <h2 id="pick-h">스킬을 고르세요</h2>
+          <!-- 기본 = 멈춤 아이콘 + '전투 정지 — 천천히 고르세요'(직접 고름) / 카드 화면 '자동 선택' ON = 카운트다운 링 + 안내 -->
+          <p id="pick-sub" class="pick-sub" role="status">
+            <span id="pick-ring" class="pick-ring" hidden aria-hidden="true"><svg viewBox="0 0 40 40"><circle class="pr-bg" cx="20" cy="20" r="17"></circle><circle id="pick-ring-fg" class="pr-fg" cx="20" cy="20" r="17"></circle></svg><b id="pick-ring-n"></b></span>
+            <span class="ps-ico" aria-hidden="true"></span><span class="ps-txt"></span>
+          </p>
         </div>
         <div id="pick-cards" class="pick-cards"></div>
-        <button id="pick-reroll" class="k-btn secondary pick-reroll" type="button" hidden>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><path d="M21 3v6h-6z" fill="currentColor"/></svg>
-          새로고침 <b id="pick-reroll-n" class="num">1</b>
-        </button>
+        <div class="pick-foot">
+          <button id="pick-reroll" class="k-btn secondary pick-reroll" type="button" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><path d="M21 3v6h-6z" fill="currentColor"/></svg>
+            새로고침 <b id="pick-reroll-n" class="num">1</b>
+          </button>
+          <!-- 자동 선택(자동 진행과 별개, 기본 OFF): 켜면 추천 카드 테두리가 차오르고 2초 뒤 자동 선택 -->
+          <button id="pick-auto" class="pick-auto" type="button" role="switch" aria-checked="false"><span class="pa-sw" aria-hidden="true"></span>자동 선택</button>
+        </div>
       </div>
     </div>
   </div>
 
-  <!-- 하단 조작 패널: 비상 마법 · 영웅 궁극기 · 자동 전투 · 배속 · 자동 진행 (강화는 정비 화면 '마법사 수련'으로 옮겼다) -->
+  <!-- 하단 조작 패널: 비상 마법 · 영웅 궁극기 | 배속 · 자동 진행 (강화는 정비 화면 '마법사 수련').
+       자동 진행 하나가 영웅 궁극기 자동 사용 · 다음 층 자동 시작을 함께 켜고 끈다(카드는 늘 직접 — 카드 화면의 '자동 선택'은 별개) -->
   <div id="panel">
     <div id="controls">
       <button id="sk-meteor" class="skill meteor" aria-label="운석 낙하"><span class="sk-sweep"></span><span class="sk-ico" aria-hidden="true"><img class="k-ico" src="assets/icons/meteor.svg" alt=""></span><span class="sk-cd num"></span><span class="sk-name">운석</span></button>
       <button id="sk-freeze" class="skill freeze" aria-label="빙결"><span class="sk-sweep"></span><span class="sk-ico" aria-hidden="true"><img class="k-ico" src="assets/icons/freeze.svg" alt=""></span><span class="sk-cd num"></span><span class="sk-name">빙결</span></button>
       <button id="sk-heroult" class="skill heroult" aria-label="영웅 궁극기" hidden><span class="sk-sweep"></span><span id="heroult-ico" class="sk-ico" aria-hidden="true"></span><span class="sk-cd num"></span><span id="heroult-name" class="sk-name"></span></button>
       <span class="ctl-gap"></span>
-      <button id="btn-auto" class="tog" aria-pressed="false" aria-label="자동 전투: 카드 자동 선택 · 궁극기 자동 사용"><span class="tog-label">자동 전투</span><span class="tog-sw"></span></button>
       <button id="btn-speed" class="spd" aria-label="게임 속도"><b id="speed-text" class="num">1x</b><span id="speed-lock" class="lock">3x <img class="k-ico" style="--ico:11px" src="assets/icons/lock.svg" alt=""></span></button>
-      <button id="btn-autonext" class="tog" aria-pressed="false"><span class="tog-label">자동 진행</span><span class="tog-sw"></span></button>
+      <button id="btn-autonext" class="tog" aria-pressed="false" aria-label="자동 진행: 영웅 궁극기 자동 사용 · 다음 층 자동 시작"><span class="tog-label">자동 진행</span><span class="tog-sw"></span></button>
     </div>
   </div>
 
@@ -162,7 +165,7 @@
     <div class="t-foes" aria-hidden="true"><img class="f1" alt=""><img class="f2" alt=""><img class="f3" alt=""><img class="f4" alt=""></div>
     <div class="t-ground" aria-hidden="true">
       <div class="t-wall"></div>
-      <div class="t-cast"><img class="t-mage l" alt=""><img class="t-hero" alt=""><img class="t-mage r" alt=""></div>
+      <div class="t-cast"><img class="t-mage" alt=""><img class="t-hero" alt=""></div>
     </div>
     <div class="t-inner">
       <div class="logo" aria-hidden="true">
@@ -231,6 +234,7 @@
             </div>
           </div>
           <div class="set-row"><span class="set-l" id="lbl-shake"><img class="k-ico set-ico" src="assets/icons/meteor.svg" alt="">화면 흔들림</span><button class="switch" data-set="shake" role="switch" aria-labelledby="lbl-shake"></button></div>
+          <div class="set-row"><span class="set-l" id="lbl-autopick"><img class="k-ico set-ico" src="assets/icons/auto.svg" alt="">카드 자동 선택</span><button class="switch" data-set="autoPick" role="switch" aria-labelledby="lbl-autopick"></button></div>
           <div class="set-row"><span class="set-l" id="lbl-sound"><img class="k-ico set-ico" src="assets/icons/el-lightning.svg" alt="">효과음</span><button class="switch" data-set="sound" role="switch" aria-labelledby="lbl-sound"></button></div>
           <div class="set-row"><span class="set-l"><img class="k-ico set-ico" src="assets/icons/settings.svg" alt="">버전 <b id="set-ver" class="k-badge ver-badge">-</b></span><button id="btn-check-update" class="k-btn s secondary">업데이트 확인</button></div>
           <div class="set-row"><span class="set-l"><img class="k-ico set-ico" src="assets/icons/chest.svg" alt="">저장 백업</span><button id="btn-backup" class="k-btn s secondary">코드 복사</button></div>

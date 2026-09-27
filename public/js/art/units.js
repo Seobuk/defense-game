@@ -1,4 +1,4 @@
-// 유닛 — 적·엘리트·네임드 보스·영웅(클래스×티어·장비)·성벽 마법사 2명(P1 나, P2 AI 동료)·소환수(새끼 드래곤·돌 골렘·망령).
+// 유닛 — 적·엘리트·네임드 보스·영웅(클래스×티어·장비)·성벽 마법사(솔로 = 가운데 한 명, 협동 P2 자리는 잠자는 코드)·소환수(새끼 드래곤·돌 골렘·망령).
 // 스프라이트(오프스크린 캐시) + 전장 그리기 + 유닛별 연출 상태(피격 번쩍임·찌그러짐·시전 자세 등). docs/ART.md §3, §10.5
 // 소유: 유닛 에이전트. 계약(아래 export 목록과 render.js 호출 순서)은 docs/ART.md §14 참고.
 import { WALL_Y, CANNONS, SPELL_BY_KEY } from '../config.js';
@@ -7,14 +7,14 @@ import { clamp } from '../util.js';
 import {
   TAU, INK, bake, tint, circ, ell, rrect, fs, rad, lin, poly, shine, mulberry, INK2, SKIN, RARITY_COL, TIER_RARITY, EL,
   mix, lite, dim, cel, bakeO, tintOf, cache, S,
-  ctx, T, RT, frameNo, frameDt, topExtra, hudY,
+  ctx, T, RT, frameNo, frameDt, topExtra, hudY, lightK,
   shake, flash, FONT, OWN, rnd, easeOut, easeBack, lerp, pool, take,
   wt, place, spr, put, txt, rr, additive, groundRune,
 } from './core.js';
 import {
   gl, part, burst, ring, sprPop, lightBeam, K_GLOW, K_SPARK, K_STAR, K_SMOKE, K_DEBRIS, K_SHARD, MSTY,
   glyph, shadow, flame, bubble, ice, reticle, sparkle, rays, runeCircle, magicCore, curseSigil, shieldDome, lightWings,
-  numZone, arrowSpr, warcryUntil, skillCols,
+  numZone, arrowSpr, warcryUntil, skillCols, skillLv, tier, hu,
 } from './fx.js';
 import { emblem } from './emblems.js';
 
@@ -31,8 +31,12 @@ const ANIM = {
 const vis = new Map(); // 적 id → 연출 상태 (스냅샷으로 재구성된 view에서도 유지되게 id 기준)
 const order = [];
 // 성벽 마법사 [0, 1]: cast 시전 자세(1→0), aim 조준각, ox/oy 지팡이 오브(마법탄 발사 위치), hx/hy 빈손
-export const MF = [0, 1].map(i => ({ cast: 0, aim: -Math.PI / 2, runeT: 0, ox: CANNONS[i].x, oy: 940, hx: CANNONS[i].x, hy: 970, col: i ? '#8fe8ff' : '#ff8a2a', big: 0, ground: 0, fanT: 0 }));
-const ALLY = { t: 9, key: '', level: 1 }; // AI 동료 새 주문 습득 연출
+// 성벽 위 마법사 (B): 솔로 = 성벽 가운데 한 명. 협동(원격 P2)이 붙으면 CANNONS 두 자리로 돌아간다
+// ponytail: 두 번째 자리는 협동 모드(view.coop, sim 과 같은 기준)에서만 그린다 — 솔로의 잠든 players[1]은 안 그림
+export const SOLO_X = 360; // = config SOLO_MAGE.x
+export const mageOn = (view, i) => { const p = view.players && view.players[i]; return !!p && (i === 0 || !!view.coop); };
+export const mageX = (view, i) => (mageOn(view, 1) ? CANNONS[i].x : SOLO_X);
+export const MF = [0, 1].map(i => ({ cx: i ? CANNONS[1].x : SOLO_X, cast: 0, aim: -Math.PI / 2, runeT: 0, ox: i ? CANNONS[1].x : SOLO_X, oy: 940, hx: i ? CANNONS[1].x : SOLO_X, hy: 970, col: i ? '#8fe8ff' : '#ff8a2a', big: 0, ground: 0, fanT: 0 }));
 // 영웅: atk 공격 후 경과, tx/ty 공격 표적, hurt 피격 번쩍임, down 쓰러진 뒤 경과, pop 등장 스프링, walk 걸음 위상, body 현재 몸 스프라이트
 export const HF = { atk: 9, tx: 0, ty: 0, hurt: 0, down: 0, pop: 1, walk: 0, lx: 0, ly: 0, mvKey: '', body: null, cmd: 0 };
 const GF = { on: false, pop: 1, hit: 0, lastHp: 0 };   // 돌 골렘
@@ -1853,6 +1857,7 @@ function drawBody(e) {
   }
   place(px, py, rot, sx, sy);
   ctx.drawImage(body, bx, by, hw * 2, hh * 2);
+  if (EREV.n < EREV.length) { const q = EREV[EREV.n++]; q.px = px; q.py = py; q.rot = rot; q.sx = sx; q.sy = sy; q.body = body; q.bx = bx; q.by = by; q.fa = fa; }
   if (e.elite) { // 엘리트 금 왕관 장식
     const c = eliteCrown(), k = vr / 46;
     ctx.drawImage(c, -c.hw * k, -fo - vr * 1.0 - c.hh * 1.6 * k, c.hw * 2 * k, c.hh * 2 * k);
@@ -1994,7 +1999,8 @@ export function drawGolem(view) {
   const drop = GF.pop < 0.5 ? -((1 - GF.pop / 0.5) ** 2) * 140 : 0;
   const pop = GF.pop < 0.5 ? 1 : easeBack(Math.min(1, (GF.pop - 0.5) / 0.5)) * 0.1 + 0.9;
   const br = Math.sin(T * 1.8) * 0.015, hit = GF.hit;
-  const body = golemSpr();
+  const body = golemSpr(), gt = tier(skillLv(view, 'stoneGolem'));
+  if (gt.sec) { additive(true); groundRune(runeCircle(gt.max ? '#ffd23a' : '#ff9ae6'), g.x, feet - 2, 2 + gt.f, RT * 0.8, 0.5); additive(false); ctx.globalAlpha = 1; } // Lv4+ 발밑 소환 룬, Lv6 금빛
   place(g.x + Math.sin(RT * 60) * hit * 3, feet + drop, 0, pop * (1 + 0.08 * hit), pop * (1 + br - 0.07 * hit));
   put(body);
   if (hit > 0) { ctx.globalAlpha = hit * 0.8; put(tintOf(body, '#ffffff')); ctx.globalAlpha = 1; }
@@ -2266,11 +2272,26 @@ export function drawHero(view) {
 }
 
 // 이펙트 층 위에서 영웅 몸을 반투명으로 한 번 더 — 폭발·광선이 영웅을 오래 가리지 않는다(DESIGN 7 '영웅이 가운데서 싸운다')
+// 적 윤곽 되살리기(E 백색 과부하): 가산 빛이 예산을 넘는 프레임엔 이펙트 위로 적 몸을 한 번 더 — 빛에 묻혀도 실루엣이 읽힌다
+const EREV = Array.from({ length: 60 }, () => ({ px: 0, py: 0, rot: 0, sx: 1, sy: 1, body: null, bx: 0, by: 0, fa: 1 }));
+EREV.n = 0;
+export function drawEnemyReveal() {
+  const a = Math.min(0.85, (1 - lightK) * 1.6); // 빛이 적으면(배율 1) 안 그린다
+  if (a > 0.02) for (let i = 0; i < EREV.n; i++) {
+    const q = EREV[i];
+    ctx.globalAlpha = a * q.fa;
+    place(q.px, q.py, q.rot, q.sx, q.sy);
+    ctx.drawImage(q.body, q.bx, q.by, q.body.hw * 2, q.body.hh * 2);
+  }
+  EREV.n = 0;
+  ctx.globalAlpha = 1;
+  wt();
+}
 export function drawHeroReveal(view) {
   const h = view.heroUnit, r = HF.rv;
   if (!h || !r || !HF.body || h.state === 'down') return;
   place(r.x, r.y, r.lean, r.sx, r.sy);
-  ctx.globalAlpha = 0.55; // 가려지지 않았을 땐 같은 그림이 겹쳐 티가 안 나고, 폭발 위에선 윤곽이 되살아난다
+  ctx.globalAlpha = Math.min(0.95, 0.55 + (1 - lightK) * 0.8); // 가려지지 않았을 땐 같은 그림이 겹쳐 티가 안 나고, 폭발 위에선 윤곽이 되살아난다(빛이 넘칠수록 진하게)
   put(HF.body);
   ctx.globalAlpha = 1;
   wt();
@@ -2410,20 +2431,23 @@ export function drawAfter() {
 export function drawGhosts(view) {
   const gs = view.spellFx && view.spellFx.ghosts;
   if (!gs || !gs.length) return;
-  const img = ghostSpr();
+  // 망령 군단 레벨(E): Lv1 작고 옅은 유령 → Lv4 긴 잔상 꼬리 → Lv6 짙은 보라 망령
+  const lt = tier(skillLv(view, 'ghostLegion')), k = 0.75 + 0.4 * lt.f;
+  const img = ghostSpr(lt.max ? '#c8a0ff' : '#d8c0ff');
   additive(true);
   for (const q of gs) {
     const t = q.tgt, face = t && t.x < q.x ? -1 : 1;
     ctx.globalAlpha = 0.55;
-    spr(gl('#b48aff'), q.x - face * 12, q.y + 4, 44, 30);
+    spr(gl('#b48aff'), q.x - face * 12, q.y + 4, 44 * k, 30 * k);
     ctx.globalAlpha = 0.3;
-    spr(gl('#9a3dff'), q.x - face * 26, q.y + 6, 30, 20);
+    spr(gl('#9a3dff'), q.x - face * 26, q.y + 6, 30 * k, 20 * k);
+    if (lt.sec) for (let j = 1; j <= 3; j++) { ctx.globalAlpha = 0.28 - j * 0.07; spr(hu('#7a3aff'), q.x - face * (26 + j * 18), q.y + 6 + j * 2, 34 - j * 6, 22 - j * 4); }
   }
   additive(false);
   ctx.globalAlpha = 0.92;
   for (const q of gs) {
     const t = q.tgt, face = t && t.x < q.x ? -1 : 1;
-    place(q.x, q.y + Math.sin(RT * 8 + q.x * 0.05) * 3, Math.sin(RT * 6 + q.y) * 0.12, face, 1);
+    place(q.x, q.y + Math.sin(RT * 8 + q.x * 0.05) * 3, Math.sin(RT * 6 + q.y) * 0.12, face * k, k);
     ctx.drawImage(img, -img.hw, -img.hh, img.hw * 2, img.hh * 2);
   }
   wt();
@@ -2436,15 +2460,16 @@ export function drawDragon(view) {
   const holy = (view.fusions || []).includes('guardianDragon');
   const face = Math.cos(d.angle) >= 0 ? 1 : -1, breath = d.breathT > 0;
   const x = d.x, y = d.y + Math.sin(RT * 3.2) * 6;
-  const pop = (DF.pop < 1 ? easeBack(DF.pop) : 1) * 1.35;
+  const dt2 = tier(skillLv(view, 'babyDragon')); // 레벨만큼 몸집·브레스가 커진다
+  const pop = (DF.pop < 1 ? easeBack(DF.pop) : 1) * 1.35 * (0.8 + 0.25 * dt2.s);
   const tilt = breath ? 0.4 : Math.sin(RT * 2) * 0.06;
   additive(true);
   if (breath) { // 아래로 쏟아지는 브레스
     const mx = x + face * 44, my = y + 16, hgt = WALL_Y - my, fl = 0.85 + 0.15 * Math.sin(RT * 40);
     ctx.globalAlpha = 0.5 * fl;
-    spr(gl(holy ? '#fff0a8' : '#ff8a1e'), mx, my + hgt / 2, 130, hgt * 1.05);
+    spr(hu(holy ? '#ffe07a' : '#ff8a1e'), mx, my + hgt / 2, 130 * dt2.s, hgt * 1.05);
     ctx.globalAlpha = 0.7 * fl;
-    spr(gl(holy ? '#ffffff' : '#ffe45a'), mx, my + hgt / 2, 54, hgt);
+    spr(gl(holy ? '#fff0a8' : '#ffe45a'), mx, my + hgt / 2, 54 * dt2.s, hgt);
     ctx.globalAlpha = 0.8;
     spr(gl(holy ? '#ffffff' : '#ffb040'), mx, WALL_Y - 20, 180, 60);
   }
@@ -2476,8 +2501,10 @@ export function drawMages(view, opts) {
   const golden = duo.includes('golden'), twin = duo.includes('twin'), frenzy = view.frenzyT > 0;
   const gale = !!(view.spells && view.spells.gale), fireP1 = !!(view.spells && view.spells.flameBullet);
   const pose = [], tiers = [];
+  const duoOn = mageOn(view, 1);
   for (let i = 0; i < 2; i++) { // 자세 먼저 (지팡이 오브 위치를 이펙트가 쓴다)
-    const p = view.players[i], c = CANNONS[i], M = MF[i];
+    const p = mageOn(view, i) ? view.players[i] : null, c = { x: mageX(view, i) }, M = MF[i];
+    M.cx = c.x;
     const tier = p ? mageTier(p.lv) : 0, side = i === 0 ? 1 : -1;
     const cst = M.cast * M.cast * (3 - 2 * M.cast), br = Math.sin(RT * 2.2 + i * 1.7);
     // 큰 시전(쿨타임 주문): 지팡이를 머리 위로 곧게 치켜들고 몸을 편다
@@ -2493,7 +2520,7 @@ export function drawMages(view, opts) {
     pose.push({ side, cst, br, sx, sy, gx, gy, sa, ob });
     tiers.push(tier);
   }
-  if (twin) { // 쌍둥이 포화: 두 오브를 잇는 마력의 호
+  if (twin && duoOn) { // 쌍둥이 포화: 두 오브를 잇는 마력의 호
     additive(true);
     const a = 0.5 + 0.3 * Math.sin(RT * 8);
     for (const [c, w] of [[OWN[0].c, 10], [OWN[1].c, 6], ['#ffffff', 2]]) {
@@ -2508,7 +2535,7 @@ export function drawMages(view, opts) {
     additive(false);
   }
   for (let i = 0; i < 2; i++) {
-    const p = view.players[i], c = CANNONS[i], M = MF[i], P = pose[i], tier = tiers[i];
+    const p = mageOn(view, i) ? view.players[i] : null, c = { x: MF[i].cx }, M = MF[i], P = pose[i], tier = tiers[i];
     if (!p) continue;
     const baseCol = i === 0 ? (fireP1 ? '#ff6a1f' : MAGE_PAL[0].orb[1]) : MAGE_PAL[1].orb[1];
     const orbCol = M.cast > 0.15 || M.big > 0.1 ? M.col : baseCol; // 시전 중 오브 = 그 주문 색
@@ -2565,7 +2592,7 @@ export function drawMages(view, opts) {
     additive(false);
     orbit(i, n, c.x, MAGE_FEET - 60, orbCol, true);
     // 이름표
-    const tag = i === (opts.myIndex | 0) ? '나' : p.kind === 'bot' ? 'AI' : p.kind === 'remote' ? String(p.name || '').slice(0, 8) : '';
+    const tag = !duoOn ? '' : i === (opts.myIndex | 0) ? '나' : p.kind === 'bot' ? 'AI' : p.kind === 'remote' ? String(p.name || '').slice(0, 8) : '';
     if (tag) {
       ctx.font = `900 13px ${FONT}`;
       const tw = Math.max(26, ctx.measureText(tag).width + 14);
@@ -2576,34 +2603,6 @@ export function drawMages(view, opts) {
       ctx.fillStyle = OWN[i].c;
       ctx.fillText(tag, c.x, MAGE_FEET + 17.5);
     }
-    if (i === 1) drawAllyBook(view, c);
-  }
-}
-// AI 동료 주문서: 익힌 주문(game.allySpells)을 마법사 오른쪽에 작은 엠블럼 세로 줄로 + 새로 익힐 때 하늘에서 내려와 박힘
-function drawAllyBook(view, c) {
-  const book = view.allySpells || {}, keys = Object.keys(book);
-  const slot = k => ({ x: c.x + 64, y: MAGE_FEET - 104 + k * 34 });
-  keys.forEach((key, k) => {
-    const learning = key === ALLY.key && ALLY.t < 0.9;
-    if (learning) return;
-    const { x, y } = slot(k), em = emblem(key);
-    ctx.fillStyle = 'rgba(14,20,48,0.88)'; ctx.beginPath(); ctx.arc(x, y, 15, 0, TAU); ctx.fill();
-    ctx.lineWidth = 2.5; ctx.strokeStyle = '#8fe8ff'; ctx.stroke();
-    if (em) ctx.drawImage(em, x - 13, y - 13, 26, 26);
-    txt(String(book[key] | 0), x + 11, y + 10, 11, '#ffffff', '#0a1a3a', 3.5);
-  });
-  if (ALLY.t < 1.6 && ALLY.key) { // 새 주문: 빛나는 엠블럼이 위에서 내려와 자리에 박힌다
-    const k = Math.max(0, keys.indexOf(ALLY.key)), to = slot(k), u = clamp(ALLY.t / 0.9, 0, 1), e = easeOut(u);
-    const x = lerp(c.x, to.x, e), y = lerp(MAGE_FEET - 320, to.y, e), sc = u < 1 ? 1.8 - 0.8 * e : 1 + 0.3 * Math.max(0, 1 - (ALLY.t - 0.9) / 0.3);
-    additive(true);
-    ctx.globalAlpha = Math.min(1, (1.6 - ALLY.t) * 2);
-    place(x, y, RT * 1.5, 1, 1); spr(rays('#8fe8ff'), 0, 0, 120 * sc, 120 * sc); wt();
-    spr(gl('#8fe8ff'), x, y, 70 * sc, 70 * sc);
-    additive(false);
-    ctx.globalAlpha = 1;
-    const em = emblem(ALLY.key);
-    if (em && u < 1) ctx.drawImage(em, x - 16 * sc, y - 16 * sc, 32 * sc, 32 * sc);
-    if (u >= 1 && ALLY.t - frameDt < 0.9) { ring(to.x, to.y, 6, 60, 0.35, '#8fe8ff', 5); burst(K_STAR, to.x, to.y, 10, 60, 200, 0.5, 12, ['#ffffff', '#8fe8ff'], 0, 2); }
   }
 }
 // 다중 시전 레벨만큼 몸 주위를 도는 마력 구슬 (뒤쪽 반/앞쪽 반)
@@ -2629,7 +2628,7 @@ export function events(view, evs, opts) {
   for (const ev of evs) {
     switch (ev.type) {
       case 'cast': { // 주문 시전: 지팡이를 겨누고(기본 주문) / 머리 위로 치켜들고(쿨타임 주문) + 오브 앞 마법진 + 발밑 룬
-        const o = ev.o === 1 ? 1 : 0, M = MF[o], c = CANNONS[o];
+        const o = ev.o === 1 ? 1 : 0, M = MF[o], c = { x: M.cx, y: CANNONS[o].y };
         // 기본 주문(basic)은 SPELL_BY_KEY를 보지 않는다 — 카드 '파이어볼'과 기본 '화염구'가 같은 키
         const col = ev.basic ? (ev.spell === 'frostbolt' ? '#8fe8ff' : '#ff8a2a') : skillCols(ev.spell)[0];
         M.cast = 1; M.col = col;
@@ -2656,11 +2655,8 @@ export function events(view, evs, opts) {
         for (const a of ev.angles) part(K_GLOW, M.ox + Math.cos(a) * 18, M.oy + Math.sin(a) * 18, Math.cos(a) * 260, Math.sin(a) * 260, 0.1, 20, M.col, 0, 4);
         break;
       }
-      case 'allySpell':
-        ALLY.t = 0; ALLY.key = String(ev.spell || ''); ALLY.level = ev.level | 0;
-        break;
       case 'upgrade': {
-        const o = ev.o === 1 ? 1 : 0, c = { x: CANNONS[o].x, y: MAGE_FEET - 62 };
+        const o = ev.o === 1 ? 1 : 0, c = { x: MF[o].cx, y: MAGE_FEET - 62 };
         upGlow[o] = 1;
         if (ups++ < 3) {
           ring(c.x, c.y, 20, 70, 0.35, OWN[o].c, 4);
@@ -2730,7 +2726,6 @@ export function update(view, da, dt) {
   for (const p of POPS) if (p.life > 0) p.life -= dt;
   MF.fall = view.phase === 'defeat' ? Math.min(1, (MF.fall || 0) + dt * 2.5) : 0;
   for (let i = 0; i < 2; i++) { const M = MF[i]; M.cast = Math.max(0, M.cast - dt * 5); M.runeT -= dt; M.beamT = (M.beamT || 0) - dt; M.fanT -= dt; M.big = Math.max(0, M.big - dt * 2.2); M.ground = Math.max(0, M.ground - dt * 1.8); }
-  ALLY.t += dt;
   HF.atk += da;
   if (HF.cmd > 0) HF.cmd = HF.cmd >= 1 ? 0 : HF.cmd + dt * 3.2;
   HF.hurt = Math.max(0, HF.hurt - dt * 6);

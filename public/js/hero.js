@@ -1,8 +1,8 @@
 // 영웅(클래스 필드 유닛) · 장비 — 순수 함수, DOM 없음 (sim.js가 호출)
 // api = sim.js가 넘겨주는 { damage, killEnemy, damageWall, emit, chainArc, frontMost, spellHit, aimTarget, collabProc } (spells.js와 동일한 SPELL_API)
-import { WALL_Y, CANNONS, WORLD_W, SPELL_BY_KEY, COLLAB_FX, collabOn, collabPow, FRONT_Y } from './config.js';
+import { WALL_Y, WORLD_W, SOLO_MAGE, SPELL_BY_KEY, COLLAB_FX, collabOn, collabPow, FRONT_Y } from './config.js';
 import { clamp } from './util.js';
-import { talentBonus } from './talents.js';
+import { talentBonus, TALENT_VER } from './talents.js';
 
 // ── 클래스 5종 ──
 export const HERO_CLASSES = {
@@ -10,7 +10,7 @@ export const HERO_CLASSES = {
     name: '기사', role: '근접 탱커 — 도발로 적을 붙잡는다', weapon: '검',
     base: { hp: 260, atk: 12, range: 48, atkSpd: 1.0, moveSpd: 95 },
     passive: '반경 120 안의 적은 성벽 대신 기사를 노린다(도발)',
-    taunt: 120, melee: true, dps: 1.45,
+    taunt: 120, melee: true, dps: 1.38,
     ult: { name: '성스러운 방패', cd: 26, dur: 3, r: 170 },
     ultDesc: '3초간 무적 + 주변 적 기절',
     unlock: () => true,
@@ -28,7 +28,7 @@ export const HERO_CLASSES = {
     name: '마법사', role: '원거리 광역 마법', weapon: '지팡이',
     base: { hp: 150, atk: 11, range: 340, atkSpd: 0.9, moveSpd: 100 },
     passive: '공격이 착탄 지점 주변에도 피해를 준다',
-    splash: 60, melee: false, dps: 1,
+    splash: 60, melee: false, dps: 0.88,
     ult: { name: '블리자드', cd: 30, dur: 4, r: 220 },
     ultDesc: '넓은 범위에 냉기 폭풍(큰 피해)',
     unlock: () => true,
@@ -127,6 +127,7 @@ export function newHero() {
     cls: null, level: 1, xp: 0, autoEquip: true, // 자동 장착 기본 켬(주운 장비가 바로 영웅을 바꾼다 — 가방 토글로 끌 수 있다)
     talents: {},        // 클래스별 특성 배분 { [cls]: { [nodeKey]: rank } } — talents.js
     autoTalent: false,  // 자동 강화 on일 때 남는 특성 포인트를 추천 빌드로 자동 배분(bot.js)
+    talentVer: TALENT_VER, talentNotice: false, // 특성 구조 버전 · 개편 환불 안내(정비 화면 1회, campAct 'talentNoticeSeen')
     equip: { weapon: null, helm: null, armor: null, trinket: null, cape: null },
     bag: [],
   };
@@ -338,7 +339,9 @@ export function heroCombatStats(g, hero, tb = talentBonus(hero, hero.cls)) {
 }
 
 // ── 필드 유닛 ──
-export const HERO_GATE = { x: (CANNONS[0].x + CANNONS[1].x) / 2, y: WALL_Y - 30 };
+// 영웅 성문: 성벽 중앙의 솔로 마법사(SOLO_MAGE 360) 오른쪽 옆 — 층 시작·부활 때 영웅이 마법사를 가리지 않게.
+// ponytail: 협동 모드가 돌아오면 두 마법사 사이((CANNONS[0].x + CANNONS[1].x) / 2)로
+export const HERO_GATE = { x: SOLO_MAGE.x + 130, y: WALL_Y - 30 };
 export const HERO_RALLY = { x: WORLD_W / 2, y: 520 }; // 적이 없을 때 모이는 전장 중앙
 export const HERO_MELEE_R = 26; // 도발 근접 판정 여유 반경(sim.js의 walk()도 이 값을 쓴다)
 export const ROAM_TOP = FRONT_Y;  // 전선 위 접근로(y < ROAM_TOP)의 적은 쫓지 않는다 — 영웅은 전장 가운데가 전선
@@ -419,7 +422,13 @@ const inRange = (h, e, r) => e && !e.dead && dist(h, e) <= r + e.r;
 // 영웅 피해 = damage() 반환값을 그대로 hit 이벤트로(o:2 — 소환물 피해도 영웅 몫)
 function heroHit(g, api, e, dmg, crit, kind) {
   if (e.dead) return 0;
-  if (e.poisonT > 0) dmg *= 1 + (g.heroUnit ? g.heroUnit.tb.poisonAmp : 0);
+  const tb = g.heroUnit ? g.heroUnit.tb : null;
+  if (tb) { // 특성: 부식·신경독 / 무리 사냥 / 과열 / 산산조각
+    if (e.poisonT > 0) dmg *= 1 + tb.poisonAmp;
+    if (tb.packHunt && e.huntAt > g.phaseT) dmg *= 1 + tb.packHunt;
+    if (tb.overheat && e.burnT > 0) dmg *= 1 + tb.overheat;
+    if (tb.shatter && (e.slowT > 0 || e.stunT > 0 || e.frozen)) dmg *= 1 + tb.shatter;
+  }
   const dealt = api.damage(g, e, dmg, 2);
   api.emit(g, { type: 'hit', x: e.x, y: e.y, dmg: dealt, o: 2, crit, big: crit, kind: kind || 'hero' });
   return dealt;
@@ -446,9 +455,12 @@ function performAttack(g, hero, h, cls, st, target, api) {
     return m;
   };
   const chill = e => e.slowT > 0 || e.frozen || e.stunT > 0;
-  const crit = rng() < st.critChance;
+  const crit = rng() < st.critChance || (tb.firstCrit > 0 && target.id !== h.lastTgt); // 조준 사격: 새 표적 첫 발은 치명타
+  h.lastTgt = target.id;
   let dmg = st.dmg * (crit ? st.critMult : 1);
   if (h.ambushT > 0) { dmg *= 1 + tb.ambush; h.ambushT = 0; }
+  if (h.momentum) { dmg *= 1 + tb.momentum; h.momentum = false; } // 연쇄 처형
+  if (tb.frenzy) { h.frenzyN = Math.min(10, (h.frenzyN | 0) + 1); h.frenzyAt = g.phaseT; } // 연사 가속(공격 간격은 updateHeroUnit)
   api.emit(g, { type: 'heroAttack', x: h.x, y: h.y, tx: target.x, ty: target.y, cls: hero.cls, crit, n: h.atkN });
 
   // 궁수: 3연사(화살 폭풍) · 다중 화살 · 관통
@@ -491,6 +503,7 @@ function performAttack(g, hero, h, cls, st, target, api) {
     if (tb.slow && rng() < tb.slow) e.slowT = Math.max(e.slowT, 1.5);
     if (tb.freeze && !e.named && rng() < tb.freeze) e.stunT = Math.max(e.stunT || 0, 0.8);
     if (tb.poison) { e.poison = (e.poison || 0) + d * tb.poison * (cap.plague ? 2 : 1); e.poisonT = 4; }
+    if (tb.neuro && e.poisonT > 0) e.slowT = Math.max(e.slowT, 1.5); // 신경독
     if (purge) { e.burn += d * COLLAB_FX.purgeBurn * pow; e.burnT = Math.max(e.burnT, 2); e.burnO = 2; api.collabProc(g, 'purgeFlame', e.x, e.y); }
     const exe = tb.execute + (shadowExec ? COLLAB_FX.shadowExec * pow : 0);
     if (exe && !e.isBoss && e.hp > 0 && e.hp <= e.maxHp * exe) {
@@ -526,7 +539,7 @@ function performAttack(g, hero, h, cls, st, target, api) {
   }
   // 성직자: 공격마다 성벽·자신 회복 + 신성 폭발
   if (cls.healOnHit) {
-    const k = cls.healOnHit * (1 + tb.heal);
+    const k = cls.healOnHit * (1 + tb.heal) * (tb.emergency && g.wall.hp < g.wall.max * 0.5 ? 2 : 1); // 긴급 치유
     g.wall.hp = Math.min(g.wall.max, g.wall.hp + g.wall.max * k);
     h.hp = Math.min(h.maxHp, h.hp + h.maxHp * k);
     const gl = g.spellFx && g.spellFx.golem;
@@ -536,6 +549,15 @@ function performAttack(g, hero, h, cls, st, target, api) {
     }
   }
   if (tb.smite) aoe(g, api, h.x, h.y, 70, dmg * tb.smite, 'holy', target);
+  // 핵심 노드: 신성 연격(치명타 폭발) · 천벌 연타(4타마다)
+  if (tb.critBurst && crit) {
+    aoe(g, api, target.x, target.y, 80, dmg * tb.critBurst, 'holy', target);
+    api.emit(g, { type: 'heroProc', kind: 'nova', sub: 'critBurst', x: target.x, y: target.y, r: 80 });
+  }
+  if (tb.holyNova && h.atkN % 4 === 0) {
+    aoe(g, api, target.x, target.y, 100, dmg * tb.holyNova, 'holy');
+    api.emit(g, { type: 'heroProc', kind: 'nova', sub: 'holyNova', x: target.x, y: target.y, r: 100 });
+  }
   // 궁극 특성(N타마다)
   if (cap.judgeBolt && h.atkN % 3 === 0) {
     aoe(g, api, target.x, target.y, 90, dmg * 2 * (undead ? 1.5 : 1), 'holy');
@@ -672,6 +694,7 @@ function updateSummons(g, h, st, api, dt) {
         if (s.kind === 'wolf') d *= 1 + h.tb.wolfPow + (h.tb.cap.wolfPack ? 0.5 : 0);
         if (t.isBoss) d *= st.bossMul;
         heroHit(g, api, t, d, false, s.kind);
+        if (s.kind === 'wolf' && h.tb.packHunt) t.huntAt = g.phaseT + 3; // 무리 사냥: 물린 적 표식(heroHit가 읽음)
         api.emit(g, { type: 'summonAttack', id: s.id, kind: s.kind, x: s.x, y: s.y, tx: t.x, ty: t.y });
       }
     } else {
@@ -773,7 +796,10 @@ export function updateHeroUnit(g, dt, api) {
   }
 
   h.fightE = attackT;
-  const iv = 1 / st.atkSpd;
+  // 특성 공격 간격: 연사 가속(쏠 때마다 쌓이고 2초 쉬면 사라짐) · 비전 쇄도(궁극기 뒤 6초)
+  if (h.frenzyN && g.phaseT - h.frenzyAt > 2) h.frenzyN = 0;
+  if (h.surgeT > 0) h.surgeT -= dt;
+  const iv = 1 / (st.atkSpd * (1 + tb.frenzy * (h.frenzyN | 0) + (h.surgeT > 0 ? tb.surge : 0)));
   if (attackT) {
     h.state = 'attack';
     h.facing = attackT.x >= h.x ? 1 : -1; // 물러나며 쏠 때도 표적을 본다(뒷걸음 카이팅)
@@ -815,6 +841,10 @@ function blink(g, h, cls, target, api) {
   h.ambushT = h.tb.ambush ? 1 : 0;
   h.state = 'walk';
   api.emit(g, { type: 'heroBlink', x0, y0, x: h.x, y: h.y });
+  if (h.tb.shadowStrike && h.st) { // 그림자 습격: 도착 지점 반경 90
+    aoe(g, api, h.x, h.y, 90, h.st.dmg * h.tb.shadowStrike, 'dark');
+    api.emit(g, { type: 'heroProc', kind: 'nova', sub: 'shadowStrike', x: h.x, y: h.y, r: 90 });
+  }
 }
 
 // 성벽 대신 영웅이 맞는다(도발/근접). src = 때린 적(가시 갑옷 반사 대상)
@@ -831,6 +861,15 @@ export function heroTakeDamage(g, dmg, api, src = null) {
   if (src && !src.dead && h.tb.thorns) {
     heroHit(g, api, src, stats.dmg * h.tb.thorns, false, 'thorns');
     api.emit(g, { type: 'thorns', x: src.x, y: src.y + src.r, o: 2 });
+  }
+  if (h.tb.bash && !(h.bashAt > g.phaseT) && g.heroRng() < 0.25) { // 반격의 방패: 25%, 0.5초마다 최대 1번
+    h.bashAt = g.phaseT + 0.5;
+    for (const e of g.enemies) {
+      if (e.dead || (e.x - h.x) ** 2 + (e.y - h.y) ** 2 > (110 + e.r) ** 2) continue;
+      heroHit(g, api, e, stats.dmg * h.tb.bash, false, 'shield');
+      if (!e.dead && !e.named) e.stunT = Math.max(e.stunT || 0, 0.5);
+    }
+    api.emit(g, { type: 'heroProc', kind: 'nova', sub: 'bash', x: h.x, y: h.y, r: 110 });
   }
   if (h.hp <= 0) {
     h.hp = 0;
@@ -897,11 +936,19 @@ export function castHeroUlt(g, api) {
       break;
     }
   }
-  if (tb.cap.warcry) { // 전군 강화 함성: 두 마법사 + 영웅 피해 +40% (sim.js spellHit · heroCombatStats가 g.heroBuff를 읽는다)
+  if (tb.cap.warcry) { // 전군 강화 함성: 마법사 + 영웅 피해 +40% (sim.js spellHit · heroCombatStats가 g.heroBuff를 읽는다)
     g.heroBuff = { t: 8, mul: 1.4 };
     h.stT = 0;
     api.emit(g, { type: 'heroProc', kind: 'warcry', x: h.x, y: h.y, t: 8 });
   }
+  // 핵심 노드: 작전 지휘(마법사 스킬 대기 -N초, 영혼 사냥과 같은 방식) · 은총(성벽 회복 + 무적) · 비전 쇄도(공속, updateHeroUnit)
+  if (tb.ultRefresh && g.spellT) for (const k of Object.keys(g.spellT)) if (typeof g.spellT[k] === 'number' && k !== 'dragon') g.spellT[k] -= tb.ultRefresh;
+  if (tb.grace) {
+    g.wall.hp = Math.min(g.wall.max, g.wall.hp + g.wall.max * tb.grace);
+    h.invulnT = Math.max(h.invulnT, 1.5);
+  }
+  if (tb.surge) h.surgeT = 6;
+  if (tb.ultRefresh || tb.grace || tb.surge) api.emit(g, { type: 'heroProc', kind: 'nova', sub: tb.grace ? 'grace' : tb.surge ? 'surge' : 'ultRefresh', x: h.x, y: h.y, r: 140 });
   return true;
 }
 
@@ -956,6 +1003,7 @@ export function heroOnKill(g, e, api, o) {
     }
     if (o === 2 && h.state !== 'down') {
       if (tb.killHeal) h.hp = Math.min(h.maxHp, h.hp + h.maxHp * tb.killHeal);
+      if (tb.momentum) h.momentum = true; // 연쇄 처형: 다음 공격 강화(performAttack)
       if (tb.wallKill) g.wall.hp = Math.min(g.wall.max, g.wall.hp + g.wall.max * tb.wallKill);
       if (collabOn(g, 'soulHunt') && g.spellT) { // 영혼 사냥: 영웅의 처치가 성벽 마법사 스킬 대기 시간을 줄인다
         const cut = COLLAB_FX.soulHunt * collabPow(g);

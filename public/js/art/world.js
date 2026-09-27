@@ -1,7 +1,8 @@
-// 월드 — 5개 테마 배경(+여백 BLEED)·주변 입자·성벽(테마 스킨·결계·균열·가시·체력바)·두 마법사 단·영웅 성문·보물상자·동전·장비 드롭 빛기둥.
+// 월드 — 5개 테마 배경(+여백 BLEED)·주변 입자·성벽(테마 스킨·결계·균열·가시·체력바)·마법사 단·영웅 성문·보물상자·동전·장비 드롭 빛기둥.
 // docs/ART.md §2.2, §9.6, §10.2, §10.18
 // 소유: 월드 에이전트. 계약(아래 export 목록과 render.js 호출 순서)은 docs/ART.md §14 참고.
 import { WORLD_W, WORLD_H, WALL_Y, CANNONS } from '../config.js';
+import { HERO_GATE } from '../hero.js';
 import { fmt, clamp } from '../util.js';
 import {
   TAU, bake, tint, circ, ell, rrect, fs, rad, lin, poly, shine, mulberry, cache, RARITY_COL, TIER_RARITY, BAG_POS, GOLD_POS, OWN,
@@ -10,7 +11,7 @@ import {
   wt, place, spr, txt, rr, additive, groundRune,
 } from './core.js';
 import { gl, part, burst, ring, sprPop, K_STAR, K_SPARK, K_SMOKE, K_DEBRIS, soft, shadow, runeCircle, runeBand, starFlash, beamSpr, rays } from './fx.js';
-import { itemIcon, MAGE_FEET } from './units.js';
+import { itemIcon, MAGE_FEET, mageOn, mageX } from './units.js';
 
 // 테마별 주변 입자: 색, 개수, 상승 속도
 const AMB = [
@@ -185,7 +186,7 @@ export function cracks(level) {
 
 // ── 마법사 단 · 영웅 성문 (성벽 앞 바닥, ART.md 원문: P1/P2 시전 단 + 룬 마법진, 영웅의 단) ──
 function platform(theme, side) {
-  const sk = WALL_SKIN[theme] || WALL_SKIN[0], acc = side < 0 ? OWN[0].c : side > 0 ? OWN[1].c : '#e8d9ff';
+  const sk = WALL_SKIN[theme] || WALL_SKIN[0], acc = side < 0 ? OWN[0].c : side > 0 ? OWN[1].c : '#ffc94a';
   const w = 62;
   return bake('plat|' + theme + '|' + side, w, w, x => {
     x.translate(-w, -w);
@@ -809,12 +810,12 @@ export function drawWall(view) {
     ctx.globalAlpha = 1;
   }
   // 마법사 단(P1 금 / P2 청록) + 영웅 성문 — 마법사·영웅 스프라이트보다 먼저(발밑)
-  const heroGateX = (CANNONS[0].x + CANNONS[1].x) / 2, heroGateY = WALL_Y - 30;
-  ctx.drawImage(platform(theme, -1), CANNONS[0].x - 62, MAGE_FEET - 62, 124, 124);
-  ctx.drawImage(platform(theme, 1), CANNONS[1].x - 62, MAGE_FEET - 62, 124, 124);
+  const heroGateX = HERO_GATE.x, heroGateY = HERO_GATE.y; // 솔로: 마법사 단 오른쪽 옆
+  ctx.drawImage(platform(theme, mageOn(view, 1) ? -1 : 0), mageX(view, 0) - 62, MAGE_FEET - 62, 124, 124); // 솔로: 가운데 단 하나(B)
+  if (mageOn(view, 1)) ctx.drawImage(platform(theme, 1), mageX(view, 1) - 62, MAGE_FEET - 62, 124, 124);
   ctx.drawImage(heroGatePlatform(theme), heroGateX - 74, heroGateY - 74, 148, 148);
-  // 성벽 결계: 성벽 강화(두 마법사 합)가 오를수록 진해지는 룬 방어막 (무너진 뒤엔 꺼짐)
-  const ls = COLLAPSE.t >= 0 ? 0 : ((view.players[0] && view.players[0].lv ? view.players[0].lv.wall : 0) | 0) + ((view.players[1] && view.players[1].lv ? view.players[1].lv.wall : 0) | 0);
+  // 성벽 결계: 성벽 강화(협동이면 두 마법사 합)가 오를수록 진해지는 룬 방어막 (무너진 뒤엔 꺼짐)
+  const ls = COLLAPSE.t >= 0 ? 0 : ((view.players[0] && view.players[0].lv ? view.players[0].lv.wall : 0) | 0) + (mageOn(view, 1) && view.players[1].lv ? view.players[1].lv.wall | 0 : 0);
   const ba = clamp(0.16 + 0.11 * Math.log2(1 + ls), 0.16, 0.8);
   additive(true);
   ctx.globalAlpha = ba * 0.5;

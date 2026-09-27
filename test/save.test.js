@@ -2,11 +2,12 @@
 import assert from 'node:assert/strict';
 import { normalize, computeOffline, load, defaults, exportSave, importSave, STORAGE_KEY, SAVE_VERSION, MIGRATE_GEMS_PER_BEST, MIGRATE_TRAIN } from '../public/js/save.js';
 import { offlineGemsPerHour, offlineXpPerMin, OFFLINE_CAP_HOURS, META_KEYS, TRAIN_KEYS, trainMax, goldPerKill } from '../public/js/config.js';
-import { newRun } from '../public/js/run.js';
+import { newRun, restoreRun } from '../public/js/run.js';
+import { serializeRun } from '../public/js/sim.js';
 
 const zeroMeta = Object.fromEntries(META_KEYS.map(k => [k, 0]));
 const zeroTrain = Object.fromEntries(TRAIN_KEYS.map(k => [k, 0]));
-const SETTINGS0 = { dmgNumbers: 'full', sound: true, shake: true, speed: 1, autoNext: true };
+const SETTINGS0 = { dmgNumbers: 'full', sound: true, shake: true, speed: 1, autoNext: true, autoPick: false }; // 새 저장 = 자동 진행 ON(카드는 늘 직접) · 카드 자동 선택 OFF
 const oldStartGoldGems = lv => { let s = 0; for (let i = 0; i < lv; i++) s += Math.ceil(12 * 1.25 ** i); return s; };
 
 // 깨진 입력 → 기본값, 절대 throw 없음
@@ -28,6 +29,11 @@ assert.equal(STORAGE_KEY, 'wallDefense.save.v1'); // 키는 유지(스키마만 
 assert.equal(load().v, SAVE_VERSION); // node: localStorage 없음 → 기본값
 assert.ok(!('lv' in defaults()) && !('stage' in defaults()), '층·인게임 강화 레벨은 저장 최상위에 없음');
 assert.equal(defaults().gold, 0, '골드는 영구 재화(최상위)');
+// '자동 진행' 저장값은 하나(settings.autoNext): 기존 저장은 그 값을 따르고, 옛 '자동 전투'(최상위 auto)는 버린다
+assert.equal(normalize({ v: 3, auto: true, settings: { autoNext: true } }).settings.autoNext, true, '기존 저장: autoNext 유지(ON)');
+assert.equal(normalize({ v: 3, auto: true, settings: { autoNext: false } }).settings.autoNext, false, '기존 저장: autoNext 유지(OFF) — 옛 자동 전투 ON은 무시');
+assert.ok(!('auto' in normalize({ v: 3, auto: true })), '최상위 auto 없음(저장값 하나)');
+assert.equal(normalize({ v: 3, settings: { autoPick: true } }).settings.autoPick, true, '카드 자동 선택 저장');
 
 // v1 → v3 마이그레이션: 영웅·보석·최고 기록·도감·설정 유지, 퍼크 → 영구 강화(시작 골드는 보석 환불), 골드·레벨·동료·층 버림 + 최고 기록 × 3 보석
 const v1 = normalize({
@@ -42,7 +48,7 @@ assert.equal(v1.gems, 40 + 12 * MIGRATE_GEMS_PER_BEST + oldStartGoldGems(4));
 assert.equal(v1.gold, 0, 'v1 인게임 골드(옛 경제)는 버림');
 assert.deepEqual(v1.metaLv, { ...zeroMeta, pickaxe: 20, critBoom: 2 });
 assert.deepEqual(v1.training, zeroTrain);
-assert.deepEqual(v1.settings, { dmgNumbers: 'simple', sound: false, shake: true, speed: 2, autoNext: false });
+assert.deepEqual(v1.settings, { dmgNumbers: 'simple', sound: false, shake: true, speed: 2, autoNext: false, autoPick: false });
 assert.deepEqual(v1.discovered, ['flame']);
 assert.equal(v1.hero.cls, 'ranger');
 assert.equal(v1.hero.level, 30);
@@ -90,7 +96,7 @@ assert.equal(d.runs, 0);
 assert.deepEqual(d.lastLoadout, { cls: null, startSpells: ['tornado', 'gale'] });
 
 // 영웅: 이전 저장(필드 없음) → 새 영웅, 깨진 장비는 버림
-assert.deepEqual(defaults().hero, { cls: null, level: 1, xp: 0, autoEquip: true, talents: {}, autoTalent: false, equip: { weapon: null, helm: null, armor: null, trinket: null, cape: null }, bag: [] });
+assert.deepEqual(defaults().hero, { cls: null, level: 1, xp: 0, autoEquip: true, talents: {}, autoTalent: false, talentVer: 2, talentNotice: false, equip: { weapon: null, helm: null, armor: null, trinket: null, cape: null }, bag: [] });
 const sword = { id: 'x1', slot: 'weapon', rarity: 'epic', ilvl: 12, name: '검', main: { key: 'atkPct', value: 12.5 }, subs: [{ key: 'gold', value: 2 }, { key: 'bad', value: 1 }] };
 const h = normalize({ hero: { cls: 'ranger', level: 500, xp: 7, autoEquip: true, equip: { weapon: sword, helm: sword, cape: 'x' }, bag: [sword, null, { id: 3 }] } }).hero;
 assert.equal(h.cls, 'ranger');
@@ -102,16 +108,29 @@ assert.deepEqual(h.talents, {}, '특성 필드가 없던 영웅 → 빈 배분')
 assert.equal(normalize({ hero: { autoEquip: false } }).hero.autoEquip, true, '아무것도 안 낀 옛 영웅 → 자동 장착 켬');
 assert.equal(normalize({ hero: { cls: 'knight', autoEquip: false, equip: { weapon: sword } } }).hero.autoEquip, false, '장비를 낀 영웅은 설정 유지');
 
-// 특성 배분 검증: 순서·최대 랭크·포인트를 지킨 클래스만 유지, 어긴 클래스는 비움(초기화는 무료)
-const th = normalize({ hero: { cls: 'knight', level: 10, autoTalent: true, talents: {
-  knight: { crusade1: 3, crusade2: 1 },        // 정상(4점, 포인트 11)
-  ranger: { rapid2: 1 },                       // 앞 노드 안 찍음 → 비움
-  sorcerer: { fire1: 9 },                      // 최대 랭크 초과 → 비움
-  cleric: { punish1: 3, punish2: 3, punish3: 2, punish4: 3, punish5: 1 }, // 12점 > 11포인트 → 비움
+// 특성 배분 검증(talentVer 2 = 새 구조): 단 해금·택1·최대 랭크·포인트를 지킨 클래스만 유지, 어긴 클래스는 비움(초기화는 무료)
+const th = normalize({ hero: { cls: 'knight', level: 10, autoTalent: true, talentVer: 2, talents: {
+  knight: { crusade1: 3, crusade2: 1, crusade3: 2 },  // 정상(6점, 포인트 10)
+  ranger: { rapid3: 1 },                              // 2단인데 갈래 0점 → 비움
+  sorcerer: { fire1: 9 },                             // 최대 랭크 초과 → 비움
+  cleric: { punish1: 3, punish2: 3, punish3: 3, punish6: 1, punish7: 1 }, // 11점 > 10포인트 → 비움
   assassin: 'x', bogus: { a: 1 },
 } } }).hero;
-assert.deepEqual(th.talents, { knight: { crusade1: 3, crusade2: 1 } });
+assert.deepEqual(th.talents, { knight: { crusade1: 3, crusade2: 1, crusade3: 2 } });
 assert.equal(th.autoTalent, true);
+assert.equal(th.talentNotice, false);
+// 특성 개편 이전: 옛 구조(talentVer 없음 — v0.0.7까지)는 모든 클래스 포인트를 돌려주고 정비 화면 안내 1회. 다시 넣어도 안내는 유지(닫기 전까지)
+const old7 = normalize({ v: 3, hero: { cls: 'knight', level: 40, talents: { knight: { crusade1: 3, crusade2: 3, crusade3: 2 }, ranger: { rapid1: 1 } } } });
+assert.deepEqual(old7.hero.talents, {});
+assert.equal(old7.hero.talentVer, 2);
+assert.equal(old7.hero.talentNotice, true);
+assert.deepEqual(normalize(JSON.parse(JSON.stringify(old7))), old7, '이전은 한 번만(포인트 중복 없음, 안내 유지)');
+assert.equal(normalize({ hero: { cls: 'knight', level: 40 } }).hero.talentNotice, false, '찍은 게 없던 옛 저장은 안내 없음');
+// 이전 + 진행 중 도전: 그 도전의 클래스만 추천 빌드로 다시 찍어 이어하기 전력 유지(다른 클래스는 환불 그대로)
+const old7r = normalize({ v: 3, hero: { cls: 'cleric', level: 48, talents: { cleric: { x: 3 }, knight: { crusade1: 3 } } }, run: { stage: 27, loadout: { cls: 'cleric', startSpells: [] } } });
+assert.ok(Object.keys(old7r.hero.talents.cleric || {}).length > 0 && !old7r.hero.talents.knight, '이어하기 클래스는 추천 빌드로');
+assert.equal(old7r.hero.talentNotice, true);
+assert.deepEqual(normalize(JSON.parse(JSON.stringify(old7r))).hero.talents, old7r.hero.talents, '두 번째 불러오기에서 다시 찍지 않는다');
 
 // 진행 중 도전(run): JSON 왕복 후 그대로, 깨진 필드는 교정
 const meta = defaults();
@@ -126,10 +145,24 @@ assert.deepEqual(back.lastLoadout, { cls: 'knight', startSpells: ['fireball'] })
 const broken = normalize({ v: 3, run: { stage: 999, players: [{ gold: -1 }], spells: { fireball: 9, plasma: 2 }, fusionParts: { plasma: ['x', 'y'] }, gems: { floor: 'NaN' } } }).run;
 assert.equal(broken.stage, 100);
 assert.equal(broken.players[0].gold, 0);
-assert.equal(broken.spells.fireball, 5);
+assert.equal(broken.spells.fireball, 6, '스킬 만렙 6으로 자름');
 assert.equal(broken.spells.plasma, 2);
 assert.deepEqual(broken.fusionParts.plasma, ['fireball', 'lightningStrike'], '깨진 융합 재료 → 재료 칸의 첫 스킬');
 assert.equal(broken.gems.floor, 0);
+// 옛 도전 저장의 AI 동료 주문(allySpells)·auto는 조용히 버린다(오류 없음), 옛 Lv5 스킬·융합은 그대로
+const oldRun = normalize({ v: 3, run: { stage: 12, allySpells: { iceLance: 2, bogus: 9 }, auto: true, spells: { fireball: 5, blazeTornado: 3 }, fusionParts: { blazeTornado: ['flameBullet', 'tornado'] } } }).run;
+assert.ok(!('allySpells' in oldRun) && !('auto' in oldRun));
+assert.deepEqual(oldRun.spells, { fireball: 5, blazeTornado: 3 });
+assert.deepEqual(oldRun.fusionParts.blazeTornado, ['flameBullet', 'tornado']);
+// v0.0.7 도전(run v:2)의 융합은 옛 규칙(평균 레벨로 바로 합체)이라 재료를 만렙으로 치지 않는다: 재료는 Lv1로만 발동, 이어하기 왕복에도 유지
+const lgRun = normalize({ v: 3, run: { v: 2, stage: 13, spells: { stormEye: 5, fireball: 3 }, fusionParts: { stormEye: ['lightningStrike', 'tornado'] } } }).run;
+assert.deepEqual(lgRun.legacy, ['stormEye']);
+const lg = restoreRun(defaults(), lgRun, 1);
+assert.equal(lg.book.lightningStrike, 1);
+assert.equal(lg.book.tornado, 1);
+assert.deepEqual(serializeRun(lg).legacy, ['stormEye']);
+const nw = restoreRun(defaults(), { ...lgRun, v: 3, legacy: [] }, 1);
+assert.equal(nw.book.tornado, 6, '새 규칙 융합의 재료는 만렙으로 발동');
 
 // 오프라인 보상: 보석(소량) + 영웅 경험치, 골드 없음
 const base = { best: 10, metaLv: { pickaxe: 2 }, lastSeen: 1_000_000 };

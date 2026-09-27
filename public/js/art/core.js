@@ -160,17 +160,25 @@ export function setClock(t, rt, dt, n) { T = t; RT = rt; frameDt = dt; frameNo =
 // ═════════════ 카메라: 흔들림 · 섬광 · 히트스톱 줌 (어느 모듈이든 호출) ═════════════
 export let trauma = 0, flashA = 0, flashCol = '#fff', colA = 0, zoom = 0;
 export const shake = a => { trauma = Math.min(1, trauma + a); };
+// 섬광(E 백색 과부하): 한 번은 120ms 안에 사라지고, 이미 번쩍이는 중에 또 오면 절반만 더한다(겹쳐도 하얗게 날아가지 않게)
+let flashPk = 0, colPk = 0;
 export function flash(a, col = '#fff') {
-  if (col === '#fff') flashA = Math.max(flashA, a);
-  else { colA = Math.max(colA, a); flashCol = col; }
+  if (col === '#fff') { flashA = flashA > 0.02 ? Math.max(flashA, a * 0.5) : a; flashPk = flashA; }
+  else { colA = colA > 0.02 ? Math.max(colA, a * 0.5) : a; colPk = colA; flashCol = col; }
 }
 export function punchZoom(z) { zoom = Math.max(zoom, z); }
 export function decayCamera(dt) {
   trauma = Math.max(0, trauma - dt * 1.7);
-  flashA = Math.max(0, flashA - dt * 3.2);
-  colA = Math.max(0, colA - dt * 2.5);
+  flashA = Math.max(0, flashA - dt * Math.max(3.2, flashPk / 0.12));
+  colA = Math.max(0, colA - dt * Math.max(2.5, colPk / 0.12));
   zoom = Math.max(0, zoom - dt * 3);
 }
+// 가산 빛 예산(E): render.js 가 'lighter' 로 그린 빛의 화면 면적 × 알파를 세어, 넘치면 다음 프레임 가산 빛 전체를 이 배율로 누른다
+export let lightK = 1;
+export function setLightK(k) { lightK = k; }
+// 우선 빛(Lv6 완전체·MAX 연출): 예산 배율을 덜 받는다(√k) — 후반 전장이 전부 40% 밝기로 납작해지지 않게. render.js lightMeter 가 읽는다
+export let lightPrio = false;
+export function setLightPrio(v) { lightPrio = v; }
 
 // ═════════════ 공용 상수 · 이징 · 풀 ═════════════
 // UI 정렬용 월드 좌표: 장비 드롭이 날아가 꽂히는 영웅(가방) 버튼 / 마나 게이지가 가득 찰 때 반짝이는 위치

@@ -2,9 +2,9 @@
 // 자기 DOM을 스스로 만들어 root(#app)에 붙인다. 메타 객체(save.js normalize 결과)는 읽기만 하고, 바꾸는 건 전부 handlers 로.
 // 재질 kit.css, 배치 hero.css(.cp-*). docs/DESIGN.md '로그라이트 구현 계약' UI 통합 흐름
 import { HERO_CLASSES, HERO_CLASS_KEYS, heroTier, heroTitle, heroPower, HERO_TIERS, SLOTS, SLOT_NAMES } from './hero.js';
-import { META_UPGRADES, metaCost, metaMax, metaDisplay, SPELLS, SPELL_BY_KEY, SYNERGIES, MAGE_TRAINING, TRAIN_KEYS, trainCost, trainMax, trainDisplay } from './config.js';
+import { META_UPGRADES, metaCost, metaMax, metaDisplay, SPELLS, SPELL_BY_KEY, CODEX_SYN, codexFound, MAGE_TRAINING, TRAIN_KEYS, trainCost, trainMax, trainDisplay } from './config.js';
 import { startSlots, startSpellChoices } from './run.js';
-import { TALENTS, talentLeft, talentRank, talentPoints } from './talents.js';
+import { TALENTS, talentLeft, talentPoints, branchSpent, branchMax } from './talents.js';
 import { createTalentTree, BRANCH_COL } from './talentui.js';
 import { runeRingURL, CLS_INFO, UNLOCK_TEXT, slotSil } from './heroui.js';
 import { heroPortraitURL, itemIconURL, magePortraitURL } from './art/units.js';
@@ -67,13 +67,13 @@ export function createCamp(root, H = {}) {
       </section>
       <section class="cp-pane" data-pane="train" hidden>
         <div class="cp-tr-top">
-          <div class="cp-tr-mages" aria-hidden="true"><i class="cp-tr-glow"></i><img class="cp-tr-m l" alt="" draggable="false"><img class="cp-tr-m r" alt="" draggable="false"></div>
+          <div class="cp-tr-mages" aria-hidden="true"><i class="cp-tr-glow"></i><img class="cp-tr-m solo" alt="" draggable="false"></div>
           <div class="cp-tr-info">
             <h3>마법사 수련</h3>
             <div class="cp-tr-gold">${icon('coin')}<b class="k-num gold cp-tr-goldn">0</b></div>
           </div>
         </div>
-        <p class="cp-note cp-tr-note">도전 중 처치로 모은 <b>골드</b>로 두 성벽 마법사(나 · AI 동료)의 기본기를 영구히 다져요. 마법사의 진짜 힘은 도전 중 고르는 <b>스킬</b>이에요.</p>
+        <p class="cp-note cp-tr-note">도전 중 처치로 모은 <b>골드</b>로 성벽 위 대마법사의 기본기를 영구히 다져요. 마법사의 진짜 힘은 도전 중 고르는 <b>스킬</b>이에요.</p>
         <div class="cp-tr-rank"><span>수련 단계</span><div class="k-bar gold cp-tr-bar"><i></i></div><b class="k-num cp-tr-sum"></b></div>
         <div class="cp-shop-list cp-train-list"></div>
       </section>
@@ -118,6 +118,22 @@ export function createCamp(root, H = {}) {
           <button class="k-btn gray wide cp-pick-clear">이 칸 비우기</button>
         </div>
       </div>
+    </div>
+    <div class="cp-ov cp-notice" hidden>
+      <div class="k-modal dark narrow" role="dialog" aria-modal="true" aria-labelledby="cp-notice-h">
+        <div class="k-ribbon gold"><h2 id="cp-notice-h">특성 개편!</h2></div>
+        <div class="k-sheet center">
+          <div class="cp-nt-art" aria-hidden="true"><i></i>${icon('crit')}</div>
+          <p class="cp-nt-lead">특성이 개편되어 포인트를 돌려받았어요</p>
+          <ul class="cp-nt-list">
+            <li>갈래에 쓴 포인트만큼 <b>다음 단</b>이 열려요</li>
+            <li><b>궁극 특성은 하나만</b> — 어느 갈래를 마스터할지 골라요</li>
+            <li>두 갈래를 섞으면 <b>혼합 특성</b>이 열려요</li>
+          </ul>
+          <button class="k-btn l wide cp-nt-go">${icon('crit')}특성 찍으러 가기</button>
+          <button class="k-btn gray wide cp-nt-ok">나중에</button>
+        </div>
+      </div>
     </div>`;
   root.append(el);
 
@@ -129,7 +145,7 @@ export function createCamp(root, H = {}) {
   const tree = createTalentTree($('.cp-thost'), el, {
     onAllocate: key => !!H.onCampAct?.({ type: 'talent', cls: tCls, key }),
     onReset: () => !!H.onCampAct?.({ type: 'talentReset', cls: tCls }),
-    onAutoToggle: on2 => H.onCampAct?.({ type: 'autoTalent', on: on2 }),
+    onAutoToggle: on2 => H.onCampAct?.({ type: 'autoTalent', on: on2, cls: tCls }),
   });
 
   const unlocked = cls => HERO_CLASSES[cls].unlock(meta.best);
@@ -186,6 +202,18 @@ export function createCamp(root, H = {}) {
   on($('.cp-pick-x'), 'click', closePick);
   on($('.cp-pick-clear'), 'click', () => { startSpells.splice(pickSlot, 1); closePick(); render(true); });
   on($('.cp-ov'), 'click', e => { if (e.target === e.currentTarget) closePick(); });
+
+  // ── 특성 개편 환불 안내(한 번): hero.talentNotice → 닫으면 campAct {type:'talentNoticeSeen'} ──
+  const notice = $('.cp-notice');
+  function closeNotice(go) {
+    if (notice.hidden) return;
+    notice.hidden = true;
+    H.onCampAct?.({ type: 'talentNoticeSeen' });
+    if (go) setPane('talent');
+  }
+  on($('.cp-nt-go'), 'click', () => closeNotice(true));
+  on($('.cp-nt-ok'), 'click', () => closeNotice(false));
+  on(notice, 'click', e => { if (e.target === notice) closeNotice(false); });
 
   // ── 영구 강화 상점 ──
   $('.cp-meta-list').innerHTML = META_UPGRADES.map(m => `
@@ -322,12 +350,12 @@ export function createCamp(root, H = {}) {
     // 다음 목표: 클래스 해금 → 없으면 100층
     const nextCls = HERO_CLASS_KEYS.find(k => !unlocked(k));
     const goal = nextCls ? { at: nextCls === 'cleric' ? 20 : 40, label: `${HERO_CLASSES[nextCls].name} 해금`, cls: nextCls } : { at: 100, label: '100층 돌파' };
-    const disc = (meta.discovered || []).length;
+    const disc = codexFound(meta.discovered);
     $('.cp-goal').innerHTML = `
       <div class="cp-goal-l">${goal.cls ? `<img class="cp-goal-por" src="${portrait(goal.cls, 120, true)}" alt="">` : icon('trophy')}</div>
       <div class="cp-goal-r"><span class="cp-goal-k">다음 목표</span><b>${goal.at}층 클리어 · ${goal.label}</b>
         <div class="k-bar xp cp-goal-bar" style="--p:${Math.min(1, meta.best / goal.at).toFixed(3)}"><i></i><span class="k-num">${meta.best}/${goal.at}</span></div></div>
-      <div class="cp-goal-codex">${icon('codex')}<b class="k-num">${disc}/${SYNERGIES.length}</b><span>도감</span></div>`;
+      <div class="cp-goal-codex">${icon('codex')}<b class="k-num">${disc}/${CODEX_SYN.length}</b><span>도감</span></div>`;
   }
 
   function renderTalent() {
@@ -369,11 +397,10 @@ export function createCamp(root, H = {}) {
       sum += lv;
       if (lv < t.max && c <= g && c < bestCost) { bestCost = c; best = t.key; }
     }
-    // 수련이 깊을수록 두 마법사 외형이 화려해진다(티어 0~4)
+    // 수련이 깊을수록 대마법사 외형이 화려해진다(티어 0~4)
     const tier = Math.min(4, Math.floor(sum * 5 / (TRAIN_TOTAL + 1)));
-    const [ml, mr] = $$('.cp-tr-m'), sl = magePortraitURL(0, tier, 300), sr = magePortraitURL(1, tier, 300);
+    const ml = $('.cp-tr-m'), sl = magePortraitURL(0, tier, 300);
     if (ml.getAttribute('src') !== sl) ml.src = sl;
-    if (mr.getAttribute('src') !== sr) mr.src = sr;
     $('.cp-tr-bar').style.setProperty('--p', (sum / TRAIN_TOTAL).toFixed(3));
     txt($('.cp-tr-sum'), `${sum}/${TRAIN_TOTAL}`);
     for (const row of $$('.cp-tr')) {
@@ -400,7 +427,7 @@ export function createCamp(root, H = {}) {
     txt($('.cp-lo-txt b'), HERO_CLASSES[cls].name);
     txt($('.cp-lo-txt span'), `Lv.${hero.level} · 특성 ${talentPoints(hero) - talentLeft(hero, cls)}/${talentPoints(hero)}`);
     $('.cp-lo-tal').innerHTML = (TALENTS[cls] || []).map((b, i) => {
-      const sp = b.nodes.reduce((a, n) => a + talentRank(hero, cls, n.key), 0), mx = b.nodes.reduce((a, n) => a + n.max, 0);
+      const sp = branchSpent(hero, cls, b.key), mx = Math.max(1, branchMax(cls, b.key));
       return `<i style="--b:${BRANCH_COL[i]};--p:${(sp / mx).toFixed(3)}" title="${b.name} ${sp}/${mx}"><i></i></i>`;
     }).join('');
     const n = startSlots(meta);
@@ -418,10 +445,13 @@ export function createCamp(root, H = {}) {
     sig = '';
     setPane('sortie');
     el.classList.remove('in'); void el.offsetWidth; el.classList.add('in');
+    notice.hidden = !meta.hero?.talentNotice;
+    if (!notice.hidden) setTimeout(() => $('.cp-nt-go').focus({ preventScroll: true }), 50);
   }
-  function hide() { el.hidden = true; closePick(); tree.close(); }
+  function hide() { el.hidden = true; notice.hidden = true; closePick(); tree.close(); }
   function handleBack() {
     if (el.hidden) return false;
+    if (!notice.hidden) { closeNotice(false); return true; }
     if (!$('.cp-ov').hidden) { closePick(); return true; }
     if (tree.handleBack()) return true;
     if (pane !== 'sortie') { setPane('sortie'); return true; }
