@@ -5,6 +5,8 @@ import { META_KEYS, metaMax, metaCost, metaFx, RUN_GEMS, SPELL_KEYS, TRAIN_KEYS,
 import { createGame, serializeRun, normalizeRun } from './sim.js';
 import { unlockedClasses, addXp, equipItem, autoEquipAll, sellItem, sellItemsByRarity } from './hero.js';
 import { allocateTalent, resetTalents, recommendNext } from './talents.js';
+import { runBonus, takePrep, buyTrainBreak, buyGemBreak, togglePrep, openBox, unlockRelic } from './shop.js'; // 4차 경제 싱크
+import { relicPool } from './relics.js'; // 4차 유물
 
 export { serializeRun, normalizeRun };
 
@@ -54,6 +56,8 @@ const players = (meta, p0, p1) => [
 ];
 const common = (meta, seed) => ({
   best: meta.best, seed, discovered: meta.discovered, seenSpells: meta.seenSpells, hero: meta.hero, metaLv: meta.metaLv,
+  bonus: runBonus(meta), // 수련 돌파 · 보석 돌파(shop.js) → sim computeFx
+  relicPool: relicPool(meta), // 유물 후보 풀(시작 8종 + 보석으로 해금한 유물 — relics.js)
 });
 
 // 새 도전(1층부터). 마법사 수련 · 영구 강화(새로고침·선택지 등) · 시작 스킬 Lv1 적용. 1층 시작 시 무료 카드
@@ -61,10 +65,11 @@ export function newRun(meta, loadout, seed) {
   const lo = validLoadout(meta, loadout);
   meta.hero.cls = lo.cls;
   meta.lastLoadout = lo;
+  const prep = takePrep(meta); // 출정 준비(shop.js): 이번 도전에서 쓰고 meta.prep은 비운다
   const game = createGame({
-    ...common(meta, seed), stage: 1, startCards: START_CARDS,
+    ...common(meta, seed), stage: 1, startCards: START_CARDS + (prep.card ? 1 : 0), bonusForgets: prep.forget ? 1 : 0,
     players: players(meta, { gold: 0 }, { gold: 0 }),
-    run: { spells: Object.fromEntries(lo.startSpells.map(k => [k, 1])), startBest: meta.best, loadout: lo },
+    run: { spells: Object.fromEntries(lo.startSpells.map(k => [k, 1])), startBest: meta.best, loadout: lo, prep },
   });
   meta.run = game.run.checkpoint;
   return game;
@@ -77,7 +82,7 @@ export function restoreRun(meta, saved = meta.run, seed) {
   if (r.loadout.cls && unlockedClasses(meta.best).includes(r.loadout.cls)) meta.hero.cls = r.loadout.cls;
   const [a, b] = r.players;
   // 1층 시작 체크포인트면 도전 시작 무료 카드도 다시(체크포인트는 카드를 고르기 전 상태)
-  return createGame({ ...common(meta, seed), players: players(meta, a, b), run: r, startCards: r.stage === 1 && r.floors === 0 ? START_CARDS : 0 });
+  return createGame({ ...common(meta, seed), players: players(meta, a, b), run: r, startCards: r.stage === 1 && r.floors === 0 ? START_CARDS + (r.prep?.card ? 1 : 0) : 0 });
 }
 
 // 도전 종료 정산(성벽 붕괴·100층 돌파·포기 모두). meta에 보석·골드(이번 도전에서 번 P1 골드)·최고 기록·도감·뽑아 본 스킬을 반영하고 run 저장을 지운다.
@@ -104,7 +109,8 @@ export function endRun(game, meta) {
     stageReached: game.stage, floorsCleared: cleared, victory: r.victory, abandoned: !r.victory && game.phase !== 'defeat', // 도전 포기
     prevBest, best: meta.best, newBest: cleared > prevBest,
     bossesKilled: r.bosses, time: r.time, rewards,
-    spells: { ...game.spells }, loadout: r.loadout,
+    spells: { ...game.spells }, mutations: { ...game.mutations }, loadout: r.loadout, // 변이 — 결과 화면 스킬 줄
+    relics: [...game.relics], forgets: r.forgets, // 유물(고른 순서) · 쓴 망각 수 — 결과 화면
     newClasses: unlockedClasses(meta.best).filter(c => !before.includes(c)),
   };
 }
@@ -113,6 +119,7 @@ export function endRun(game, meta) {
 export function applyOffline(meta, off) {
   if (!off) return [];
   meta.gems += Math.max(0, off.gems | 0);
+  meta.gold += Math.max(0, Math.floor(Number(off.gold) || 0));
   return addXp(meta.hero, off.xp);
 }
 
@@ -155,6 +162,12 @@ export function campAct(meta, a) {
       hero.autoEquip = !!a.on;
       if (hero.autoEquip) autoEquipAll(hero);
       return true;
+    // 4차 경제(shop.js): 수련 돌파 {stat} · 보석 돌파 {key} · 출정 준비 {key}(다시 누르면 환불) · 장비 상자 {key} → { item, sold, equipped }
+    case 'trainBreak': return buyTrainBreak(meta, a.stat);
+    case 'gemBreak': return buyGemBreak(meta, a.key);
+    case 'prep': return togglePrep(meta, a.key);
+    case 'box': return openBox(meta, a.key);
+    case 'relic': return unlockRelic(meta, a.key); // 유물 해금(보석, relics.js)
   }
   return false;
 }

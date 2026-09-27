@@ -1,0 +1,79 @@
+/* 4차 던전(지역) 특성 — 지역 시작 배너 · HUD 지역 칩 · 카드/스택 칸 '약점!'·'내성' 배지 (js/dungeonui.js). ART §4 키트 재질 */
+.dg-chip, .dg-banner { --rg: #6a5acd; --rg-hi: #b7aaff; }
+:is(.dg-chip, .dg-banner)[data-r="meadow"] { --rg: #3f9a3a; --rg-hi: #b8f28a; }
+:is(.dg-chip, .dg-banner)[data-r="cave"] { --rg: #3a4f86; --rg-hi: #9fb6ff; }
+:is(.dg-chip, .dg-banner)[data-r="graveyard"] { --rg: #2f6b62; --rg-hi: #9ff0d8; }
+:is(.dg-chip, .dg-banner)[data-r="volcano"] { --rg: #b3401a; --rg-hi: #ffc07a; }
+:is(.dg-chip, .dg-banner)[data-r="abyss"] { --rg: #7a1a4a; --rg-hi: #ff9ad0; }
+
+/* ── HUD 칩: [약점 원소들][내성 원소들] 규칙 한 단어 ── */
+.st-chip.dg-chip { gap: 2px; padding: 0 9px 0 4px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--rg) 70%, #fff 12%) 0 50%, var(--rg) 54%, color-mix(in srgb, var(--rg) 70%, #000) 100%);
+  box-shadow: 0 2px 0 rgba(0, 0, 0, .45), inset 0 1px 0 rgba(255, 255, 255, .35); }
+.dg-ic { position: relative; display: grid; place-items: center; width: max(20px, calc(var(--u) * 34)); height: max(20px, calc(var(--u) * 34)); border-radius: 50%; }
+.dg-ic .k-ico { --ico: 84%; width: 84%; height: 84%; }
+.dg-ic.weak { background: radial-gradient(circle, rgba(255, 244, 170, .55), transparent 70%); }
+.dg-ic.weak::after { content: "▲"; position: absolute; right: -3px; bottom: -3px; font-size: 9px; line-height: 1; color: #7dff8a; -webkit-text-stroke: 2px var(--ink); paint-order: stroke fill; }
+.dg-ic.res .k-ico { filter: grayscale(.7) brightness(.85); opacity: .8; }
+.dg-ic.res::after { content: "▼"; position: absolute; right: -3px; bottom: -3px; font-size: 9px; line-height: 1; color: #c9cfdb; -webkit-text-stroke: 2px var(--ink); paint-order: stroke fill; }
+.dg-rn { margin-left: 3px; }
+
+/* ── 툴팁 ── */
+#spell-tip.dg-tip { max-width: min(80%, 270px); }
+.dg-tip-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 5px; }
+.dg-tip-rule { display: block; margin-top: 6px; padding-top: 5px; border-top: 1px solid rgba(255, 255, 255, .14); }
+.dg-tip small { display: block; margin-top: 4px; opacity: .7; }
+.dg-tip-line { display: block; margin-top: 4px; font-family: var(--font-display); }
+.dg-tip-line.weak { color: #9dff8a; } .dg-tip-line.resist { color: #c9cfdb; } .dg-tip-line.cure { color: #9fe8ff; }
+
+/* 원소 알약(배너·툴팁 공용) */
+.dg-el { display: inline-flex; align-items: center; gap: 2px; padding: 1px 7px 1px 2px; border-radius: 999px; border: 1.5px solid var(--ink);
+  font-family: var(--font-display); font-size: 12px; color: #fff; -webkit-text-stroke: 2.2px var(--ink); paint-order: stroke fill; white-space: nowrap; }
+.dg-el .k-ico { --ico: 18px; width: 18px; height: 18px; }
+.dg-el.weak { background: linear-gradient(180deg, #fff3a8 0 50%, #ffb21a 54%); box-shadow: 0 0 8px rgba(255, 200, 60, .6); }
+.dg-el.res { background: linear-gradient(180deg, #8c92a8 0 50%, #5a6078 54%); }
+.dg-el.res .k-ico { filter: grayscale(.6); }
+.dg-lab { font-family: var(--font-display); font-size: 11px; -webkit-text-stroke: 2.2px var(--ink); paint-order: stroke fill; white-space: nowrap; }
+.dg-lab.weak { color: #9dff8a; } .dg-lab.res { color: #d6dbe6; }
+
+/* ── 지역 시작 배너: HUD 아래 가운데, 위에서 톡 떨어져 4초 뒤 사라짐(탭 = 닫기) ── */
+/* 좁은 화면: 오른쪽 스킬 스택(구슬 ≤48px)을 가리지 않게 왼쪽으로 붙인다 · 넓은 화면(옆 열이 밖): 전장 가운데 */
+.dg-banner { position: absolute; z-index: 5; left: calc(var(--side) + 10px); right: calc(var(--side) + 66px); top: calc(env(safe-area-inset-top) + var(--u) * 232);
+  max-width: calc(var(--u) * 600); margin: 0 auto; padding: 10px 14px 12px; border-radius: 18px; border: 2.5px solid var(--ink);
+  display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; color: #fff; pointer-events: auto; cursor: pointer;
+  background: radial-gradient(120% 90% at 50% 0%, color-mix(in srgb, var(--rg) 55%, transparent) 0, transparent 70%), linear-gradient(180deg, rgba(43, 35, 102, .94), rgba(20, 15, 46, .95));
+  box-shadow: inset 0 1px 0 var(--rg-hi), inset 0 0 0 2px color-mix(in srgb, var(--rg-hi) 35%, transparent), 0 8px 0 rgba(0, 0, 0, .35), 0 14px 28px rgba(0, 0, 0, .5); }
+#stage.wide .dg-banner { left: calc(var(--side) + var(--u) * 60); right: calc(var(--side) + var(--u) * 60); }
+.dg-banner.out { pointer-events: none; opacity: 0; transform: translateY(-12px) scale(.96); transition: opacity .24s, transform .24s var(--ease-in); }
+.dg-kick { margin-top: -22px; padding: 2px 12px 3px; border-radius: 999px; border: 2px solid var(--ink);
+  background: linear-gradient(180deg, var(--rg-hi) 0 50%, var(--rg) 54%); font-family: var(--font-display); font-size: 12px; -webkit-text-stroke: 2.4px var(--ink); paint-order: stroke fill; box-shadow: 0 2px 0 rgba(0, 0, 0, .4); }
+.dg-name { font-family: var(--font-display); font-weight: 400; font-size: max(18px, calc(var(--u) * 38)); line-height: 1.05; color: var(--gold-hi);
+  -webkit-text-stroke: 4px var(--ink); paint-order: stroke fill; text-shadow: 0 2px 0 var(--ink); }
+.dg-row { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 5px 6px; }
+.dg-row .dg-lab.res { margin-left: 6px; }
+.dg-rule { display: flex; flex-direction: column; gap: 1px; max-width: 100%; padding: 6px 10px 7px; border-radius: 12px; background: rgba(8, 5, 22, .55); box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--rg-hi) 40%, transparent); }
+.dg-rule b { font-family: var(--font-display); font-weight: 400; font-size: 15px; color: var(--rg-hi); -webkit-text-stroke: 3px var(--ink); paint-order: stroke fill; }
+.dg-rule span { font-size: 12.5px; line-height: 1.35; color: #e8e4ff; word-break: keep-all; }
+
+/* ── 카드 배지: 오른쪽 위 스티커(-8° 통통) ── */
+.pick-card > .pc-dg { position: absolute; z-index: 4; top: 5px; right: 4px; padding: 1px 7px 2px; border-radius: 999px; border: 2px solid var(--ink); rotate: 8deg;
+  font-family: var(--font-display); font-size: 11px; line-height: 1.25; color: #fff; -webkit-text-stroke: 2.4px var(--ink); paint-order: stroke fill; white-space: nowrap; box-shadow: 0 2px 0 rgba(0, 0, 0, .4); }
+.pick-card > .pc-dg.weak { background: linear-gradient(180deg, #d4ff8a 0 50%, #37c24a 54%); box-shadow: 0 2px 0 #145a22, 0 0 12px rgba(120, 255, 120, .7); }
+.pick-card.in > .pc-dg.weak { animation: dgPop .5s var(--ease-back) .25s backwards, kBreath 1.6s ease-in-out .8s infinite; }
+.pick-card > .pc-dg.resist { background: linear-gradient(180deg, #a9afc4 0 50%, #666d86 54%); color: #eef1f7; }
+.pick-card > .pc-dg.cure { background: linear-gradient(180deg, #d8fbff 0 50%, #4fb8ff 54%); box-shadow: 0 2px 0 #0b3a8a, 0 0 12px rgba(80, 200, 255, .7); }
+@keyframes dgPop { from { transform: scale(2.2); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+/* ── 스택 칸 표시: 구슬 왼쪽 아래 작은 ▲(약점)·▼(내성) — 왼쪽 위는 변이 갈래 보석(.ssm-gem) 자리 ── */
+.ss > .dg-sb { position: absolute; z-index: 3; left: -6px; top: calc(var(--ss) - 11px); width: 15px; height: 15px; border-radius: 50%; border: 1.5px solid var(--ink);
+  display: grid; place-items: center; font-style: normal; font-size: 8px; line-height: 1; color: #fff; pointer-events: none; }
+.ss > .dg-sb.weak { background: linear-gradient(180deg, #d4ff8a, #2fae42); box-shadow: 0 0 6px rgba(120, 255, 120, .8); }
+.ss > .dg-sb.resist { background: linear-gradient(180deg, #b9bfd2, #5e6580); }
+.ss.empty > .dg-sb { display: none; }
+@media (prefers-reduced-motion: reduce) { .pick-card.in > .pc-dg.weak { animation: none; } }
+/* 4차 FIX: 지역 끝 5층 — 다음 지역 약점 작은 꼬리표(카드 오른쪽 위 '약점!' 아래) */
+.pick-card > .pc-dg2 { position: absolute; z-index: 4; top: 27px; right: 3px; padding: 0 6px 1px; border-radius: 999px; border: 1.5px solid var(--ink);
+  font-family: var(--font-display); font-size: 9.5px; line-height: 1.3; color: #eaffd8; -webkit-text-stroke: 2px var(--ink); paint-order: stroke fill; white-space: nowrap;
+  background: linear-gradient(180deg, rgba(60, 120, 60, .95), rgba(24, 70, 30, .95)); box-shadow: 0 1px 0 rgba(0, 0, 0, .4); }
+.pick-card > .pc-dg2[hidden] { display: none; }
+.pick-card:not(:has(> .pc-dg:not([hidden]))) > .pc-dg2 { top: 5px; rotate: 6deg; } /* '약점!' 배지가 없으면 그 자리 */

@@ -359,7 +359,7 @@ heroUnit: null | { cls, x, y, hp, maxHp, state:'walk'|'attack'|'idle'|'down', fa
 ```
 { v:1, name, stage, best, gems, gold, lv, perks, auto, partner:{gold, lv}, settings:{dmgNumbers:'full'|'simple'|'off', sound, speed, autoNext}, lastSeen }
 ```
-- `stage` = 다음에 플레이할 스테이지, `best` = 최고 클리어. 3배속 해금 = best ≥ 20.
+- `stage` = 다음에 플레이할 스테이지, `best` = 최고 클리어. 배속 해금 = best ≥ 10(2배) · ≥ 30(3배) — 4차 통합 절.
 - 불러올 때 경과 시간(최대 8h, 1분 미만 무시)으로 오프라인 골드 지급 팝업.
 
 ### 협동 네트워크 (호스트 권한형) — 추후 지원, 1차 범위 아님
@@ -482,7 +482,7 @@ spellPick{spell:null, awaken, level, rarity}   // 각성 카드 선택
   `endRun`은 `runOver`를 받은 **즉시** 부르고 바로 `store.flush()` — 결과 화면을 보는 동안 앱을 끄면 `data.run`이 남아 죽은 층을 이어하기로 다시 하는 구멍이 생긴다. 끝난 도전(`game.run.over`)에서 `startStage`는 아무것도 안 한다(옛 재도전·이전 층·100층 뒤 자동 진행은 no-op).
 - 저장된 도전을 이어하지 않고 포기: `endRun(restoreRun(data), data)`(체크포인트까지 적립한 보석·기록 정산).
 - 오프라인: `const r = computeOffline(data)` → 팝업(보석·경험치) → `applyOffline(data, r)`.
-- 3배속 해금 `best ≥ 20` 유지. `?spells=` 디버그는 Lv1~5.
+- (4차에 바뀜: 배속 해금 best ≥ 10 → 2배 · ≥ 30 → 3배.) `?spells=` 디버그는 Lv1~6.
 
 ### 로그라이트 밸런스 목표 (test/sim.test.js 캠페인 러너로 검증)
 새 저장 → 봇이 도전 → `endRun` → `botSpendGems`(가치/비용 탐욕) → `botLoadout`(클래스 순환, 선호 시작 스킬) → 다시 도전, 100층 돌파까지.
@@ -700,7 +700,7 @@ sim/메타 쪽만 바꿨다(DOM 없음): `config.js · sim.js · spells.js · ru
 - 상태·이벤트: `game.collabs`(켜진 키), `collabSlots(g, key)`(엮인 내 슬롯 스킬 키 — 영웅 초상 ↔ 스킬 아이콘 빛줄기), 켜지는 순간 `synergy{ key, o:2, first, x, y }` + `collab{ key, cls, spells }`, 효과가 실제로 터질 때 `collabProc{ key, x, y }`(같은 협공 0.35초에 1번 — 연출 트리거). 스킬·클래스·특성이 바뀔 때마다 재계산(도전 중 특성으로 갈래 조건이 차면 그때 켜짐). `game.collabOff = true`면 효과만 끔(밸런스 비교용).
 - **합동 필살**(`unison`): `act heroUlt` 성공 → `game.linkT = COLLAB_FX.linkT`(3초, HUD 표시용 남은 창). 창 안의 첫 P1 쿨타임 스킬(융합 포함)은 위력 ×2(파이어볼 반경 ×1.3) → `cast{…, linked:true}` + `linkFinish{ spell, x, y }` + `slowmo{ ms:700, scale:0.3 }` + `synergy{ key:'unison', o:2, first }`.
 - **지원 사격**: `heroUnit.fightE` = 영웅이 지금 치는 적. 단일 대상 스킬(얼음 창·낙뢰 첫 줄기·심판 광선·황혼·플라즈마, 모루와 망치면 파이어볼)과 AI 동료의 같은 스킬은 이 적을 먼저 노린다 → `cast{…, support:true}`(없으면 화면의 보스·엘리트 → 가장 앞선 적).
-- 특성(협공 강화): 기사 수호 `guard3` 협공 효과 +15%/랭크 · 지휘관 `command4` '합동 작전'(도발한 적이 받는 성벽 마법사 주문 피해 +8%/랭크, `tauntAmp`) · 궁수 `rapid4` · 마법사 `arcane2` · 성직자 `bless4` · 암살자 `poison2` 협공 효과 +15%/랭크(`collab`). `talents.js branchSpent(hero, cls, branch)`.
+- 특성(협공 강화): 기사 수호 `guard3` 협공 효과 +15%/랭크 · 지휘관 `command4` '합동 작전'(도발한 적이 받는 성벽 마법사 주문 피해 +8%/랭크, `tauntAmp`) · 궁수 `rapid4` · 마법사 `arcane2` · 성직자 `bless4` · 암살자 `poison2` 협공 효과 +15%/랭크(`collab`). `talents.js branchSpent(hero, cls, branch)`. (4차: 택1에서 협공 노드는 빠졌다 — 협공 효과는 각 갈래의 일반 노드·혼합 노드가 맡는다. 아래 "특성 택1 = 전략" 절)
 
 **5) 초반 템포 — 전선 (가장 우선)**
 - **전선** `config.js FRONT_Y = 380`: 이 선 위(y < 380)는 **접근로**. 성벽 마법사(기본 주문·모든 스킬·드래곤 브레스·유령·얼음 창·회오리)는 `inReach(e)`(= 살아 있고 `y ≥ FRONT_Y`, 네임드 보스는 어디서든)인 적만 노리고 맞힌다. 적은 접근로를 `ENTRY_RUSH`(2.5)배로 몰려 내려오고(네임드 제외), 넉백·회오리 밀쳐내기·궁수 화살은 적을 선 위로 되돌리지 않는다. 영웅은 선 위 적을 쫓지 않는다(`hero.js ROAM_TOP = FRONT_Y`, 집결 `HERO_RALLY (360, 520)`). → 적이 스폰 직후 녹지 않고 중앙 띠까지 밀려와 영웅 주변에서 마법이 터진다. 접근로의 적은 '몰려오는 중'(아직 맞지 않음)으로 보이면 된다.
@@ -787,3 +787,227 @@ sim/메타 쪽만 바꿨다(DOM 없음): `config.js · sim.js · spells.js · ru
 - **주의 — 캠페인은 혼돈적이다**: 영웅 배율 하나를 0.05만 바꿔도 캠페인 궤적이 바뀌어 동등성 측정 메타(최고 50층에 처음 닿은 시점의 영웅 Lv 37~59)가 달라지고, 클래스별 결과가 ±10%p 흔들린다. 수치를 바꾸면 `npm test` 전체를 다시 돌려 확인할 것(시드 평균 목표가 기준, 시드 하나하나는 흔들린다).
 
 **다음 웨이브(4차)를 막지 않게**: 변이는 Lv6 스킬·융합 스킬의 카드 한 종류로 `genCards`에 더하면 된다(합체 조건은 `FUSIONS[].ready`라 변이한 재료도 레벨 6이면 그대로 합체). 망각은 `g.spells`에서 키를 빼고 `refreshFusion`을 부르면 book·진행도·협공이 다시 계산된다. 던전(지역) 특성은 `stages.js`의 테마(`themeOf`)에 붙일 자리 — 적 원소 약점은 `spellHit`의 `kind`(원소)로 판정할 수 있다.
+
+### 4차 변경 구현 계약
+> 사용자: "스킬 다 찍고 계속 효과 강화만 하니까 전략적 변화가 없는 것 같아서 심심해" · "골드와 다이아가 일정량 들어가면 더 이상 쓸 곳이 없는 듯". 트랙마다 아래에 자기 절을 둔다.
+
+#### 유물 · 망각 (RELICS 트랙 — `public/js/relics.js` · `relicui.js` · `art/relicart.js` · `css/relics.css` · `test/relics.test.js`)
+**유물 = 네임드 보스 보상.** 10·20·…·90층(네임드 보스 층)을 **깨면** 클리어 순간 `g.relicPick = { cards:[키 ×≤3], autoLeft }` + 이벤트 `relicOffer{cards}`. 유물이 떠 있는 동안 `step`은 멈추고(카드 선택과 같은 방식) 다른 `act`는 거부, `startStage`는 유물을 지우지 않는다 — 다음 층 체크포인트(런 저장 `relicPick`)에 들어가 **앱을 꺼도 이어하기에서 층 시작 전에 다시 뜬다**. main.js는 유물이 떠 있으면 다음 층으로 넘어가지 않는다(`nextStage`·자동 진행 가드). 100층(도전 완료)은 유물 없음. ponytail: 층 중간에 끄면 카드처럼 층 시작부터(보스를 다시 잡으면 후보도 다시).
+- 고르기 `act(g, 0, {type:'relic', index})`(−1 = '유물 없이 계속') → `relicPick{key|null}` · `g.relics`(고른 순서, 런 저장 `relics`) · 효과 합산 `g.rfx = relicFx(g.relics)`(늘 있음 — 유물 없으면 중립값). 카드 '자동 선택' ON(`players[0].autoPick`)·봇이면 `RELIC_AUTO_T`(4초) 뒤 추천 유물(`pickRelic`) — `tickRelic(g, dtReal)`(main.js가 유물 화면이 보일 때만, `ui.isRelicShown()`).
+- 후보 = **유물 풀**(`relicPool(meta)` = 시작 풀 `START_RELICS` 8종 + `meta.relicUnlocked`) 중 아직 없고 겹침 금지(`excl`)가 아닌 것에서 무작위 3개(`g.rng`). 모자라면 2~1장, 0장이면 건너뜀. `createGame({ relicPool })`(run.js `common`이 넘김, 없으면 시작 풀). 나중의 던전 지도: 던전마다 다른 풀을 넘기면 된다(풀은 키 목록일 뿐).
+- **해금 API(ECONOMY 트랙 상점이 씀 — shop.js가 그대로 재수출)**: `meta.relicUnlocked: string[]`(save.js normalize가 해금 가능한 키만 남김) · `lockedRelics(meta)` · `relicUnlockCost(key)`(표 `cost`, 60~150 보석) · `unlockRelic(meta, key)` → bool(보석 차감 + 추가) · run.js `campAct {type:'relic', key}`.
+- 표 `RELICS[]` = `{ key, name, up, down, fx, start?, cost?, excl? }` — `up`/`down`이 카드 문구 그대로(장점 초록 ▲ / 대가 빨강 ▼). 그림 `art/relicart.js relicImg(key)`(DOM) · `relicEmblem(key, res)`(캔버스) · `relicColor(key)`.
+
+| 유물 | 장점 ▲ | 대가 ▼ |
+|---|---|---|
+| 광기의 왕관 `crown`* | 모든 스킬 피해 +40% | 스킬 칸 −1(꽉 찼으면 가장 약한 스킬 — 낮은 레벨 기본 스킬부터 — 을 잃는다, `relicProc{lost}`) |
+| 탐욕의 성배 `grail`* | 카드 선택지 +1 | 성벽 최대 −15% |
+| 유리 대포 `glass`* | 모든 피해 +30% | 성벽 최대 −35% |
+| 시간 도둑 `thief`* | 스킬 쿨타임 −20% | 기본 주문 봉인 · 성벽 최대 −15% |
+| 쌍둥이 달 `twinMoon`* | 고른 스킬이 2레벨씩(✦ 합체 판정도) | 마나 카드가 두 번에 한 번(`relicManaCard`, 저장 `relicCards`) |
+| 사냥꾼의 표식 `hunter`* | 엘리트·보스에게 스킬 피해 +70% | 일반 적에게 −15% |
+| 수전노의 금고 `miser`* | 골드 ×2.5 | 모든 피해 −10% |
+| 불사조 깃털 `phoenix`* | 성벽이 무너지면 한 번 더 50%(다른 부활이 없을 때, `revive{relic}`) | 운석 봉인 |
+| 원소 공명 `resonance` | 같은 원소 2칸 이상(융합은 두 원소)이면 그 원소 스킬 피해 +40% | 다른 원소 −20% |
+| 영웅의 깃발 `banner` | 영웅 궁극기 때 쿨타임 스킬 전부 즉시(합동 필살 창과 겹침) | 궁극기 쿨타임 +50% |
+| 도박사의 주사위 `gambler` | 전설 카드 ×3 · 희귀 ×1.5 | 선택지 −1(최소 2) |
+| 망각의 모래시계 `hourglass` | 망각 +2회 | 새로고침 0 |
+| 별똥별 인장 `meteorSeal` | 운석 쿨타임 −60% | 빙결 봉인 |
+| 빙하의 심장 `glacier` | 빙결 쿨타임 −50% · 지속 +50% | 운석 봉인 |
+| 영웅의 서약 `oath` | 영웅 피해 +60% | 마법사 스킬 피해 −20% |
+| 메아리 반지 `echo` | 스킬 연속 시전 +30%p | 스킬 피해 −15% |
+| 흡혈 수정 `vampire` | 처치마다 성벽 0.6%(잡몹은 밀도 몫) | 성벽 최대 −20% |
+| 대마법사의 지팡이 `archStaff` | 융합 전용 시전 피해 +80% | 그 밖의 스킬 −20% |
+| 현자의 외알 안경 `sage` | 기본 주문 ×10 · 관통 +2 | 스킬 쿨타임 +25% |
+| 혼돈의 구슬 `chaos` | 층을 깰 때마다 무작위 스킬 2개(서로 다르게) Lv+1(만렙이면 합체) | 마나 카드 없음(보스 카드만) |
+\* = 시작 풀. 겹침 금지: 시간 도둑↔외알 안경 · 불사조↔별똥별 · 별똥별↔빙하 · 쌍둥이 달↔혼돈.
+
+- 효과 훅(각 파일에 한 줄, 전부 `g.rfx`를 읽음): sim `computeFx`(`applyRelicFx` — atkMul·wallMul·goldMul·choices·cdMul·echo) · config `cannonStats`(`fx.cdMul` 쿨타임 상한 밖 · `fx.echo`) · spells `pd`(skillMul) · `tick`(`g._rmul` = 융합 전용 시전 배율) · sim `spellHit`(`relicHitMul` — 카드 스킬 명중만) · `damage`(o=2 영웅 heroMul) · `basicHit`/`fire`/`updateCannons`(기본 주문 배율·관통·봉인) · `genCards`(`slotCap`·`cardStep`·`noNew`) · `wouldFuse` · `rarityWeight` · `cardCount`(최소 2) · `gainMana`(`relicManaCard`) · `act skill`(`relicSealed`·쿨타임·빙결 지속) · `act heroUlt`(`onRelicUlt`) · `damageWall`(`relicRevive`) · `killEnemy`(`onRelicKill`) · 클리어(`onRelicClear` — 혼돈의 구슬 · 유물 후보) · bot `autoSkill`(봉인된 비상 스킬 건너뜀).
+- 화면(`relicui.js`, ui.js가 만들어 `update/onEvents/renderResult`를 부름): 유물 3택 = 금빛 광선 위 한 줄 한 장 카드(메달 · 이름 · ▲ 장점 · ▼ 대가), '유물 없이 계속', 자동 선택 ON이면 링 + 추천 카드 금테. 보스 층은 격파·승리 연출 1.5초 뒤, 이어하기는 바로. 고르면 금빛 폭발 → 왼쪽 열 맨 위 **유물 줄**(탭 = 장점·대가 말풍선, 발동 때 톡). 봉인된 운석·빙결 버튼은 자물쇠(누르면 어느 유물이 봉인했는지), 왕관이 잠근 칸은 자물쇠, 스택 머리 `n/5`. 결과 화면 '이번 도전의 유물' 카드 + '망각 N회 사용'. 이벤트 알림: `relicPick` · `relicProc{chaos|phoenix|crown lost}` · `forget`.
+
+**망각(비우기)** — 카드 선택 화면 아래 줄 '비우기 N'(남은 횟수가 있고 보유 스킬이 있을 때). 누르면 보유 스킬 시트 → 고른 스킬의 확인 단계('칸이 하나 비고 카드가 새로 나와요' · 융합이면 '품던 두 재료도 함께' · '다시 배우면 Lv1부터' · '남은 망각 N → N−1') → `act(g, 0, {type:'forget', spell})`: 카드가 떠 있을 때만 · `g.forgetLeft > 0` · 보유 스킬이면 슬롯에서 빼고(`refreshFusion` → book·진행도·협공 재계산, `g.mutations[spell]` 삭제 — MUTATIONS의 `pruneMutations`도 정리) 떠 있는 카드를 지금 빌드로 다시 뽑는다(`reofferPick`). 시트가 열린 동안 카드 자동 선택 카운트다운은 멈춘다(`isPickShown`). 이벤트 `forget{spell, level, fusion}`.
+- 횟수 `g.forgetLeft` = `FORGET_PER_RUN`(2) + `g.fx.forgets`(보석 강화 `metaLv.forget` — ECONOMY) + `createGame({ bonusForgets })`(출정 준비 '망각의 물약' — ECONOMY `newRun`) + 망각의 모래시계 +2. 런 저장 `forgetLeft` · `forgets`(쓴 횟수, 이어하기는 층 시작 값).
+- 결과(`endRun` Summary): `relics: string[]` · `forgets: number`.
+
+**봇 · 하네스 · 지표**: `pickRelic(g, cards)`(유물별 가치 + 문맥: 공명이 켜질 빌드 +6 · 지팡이는 융합 수 × 3 · 꽉 찬 칸의 왕관 −2) · `forgetChoice(g)`(8층부터 · 칸이 다 찼고 이번 카드로 합체가 안 되면 짝·협공에 안 드는 Lv≤3 기본 스킬을 비움). harness `playStage`가 유물을 고르고 `resolvePick`이 망각을 먼저 본다. `playRun`·`campaign` 행에 `relics`(고른 유물) · `forgets`.
+- 측정(2026-09-28, 다른 트랙 작업 중 코드 기준 — 최종 밸런스 패스가 다시 잰다): 같은 메타(최고 27층)에서 유물 하나만 풀에 두고 10회씩 — 조정 전 쌍둥이 달(카드마다 2레벨, 선택지 −1) **+191%** · 혼돈의 구슬(층마다 +1, 새 스킬 금지) **+127%** · 시간 도둑 +61% → 위 표로 조정 뒤 모두 −15~+33%(표본이 작아 ±10%p 흔들림). 캠페인 시드 1~3: 유물 없음 37·35·37회(+2.6·+2.6·+2.5층/회) → 유물 있음 35·40·22회(+2.8·+2.2·+4.2층/회) — 평균 도전 수 −12%. 유물 분포(봇): 쌍둥이 달·불사조·사냥꾼 > 성배·도둑·왕관 > 유리 대포 > 금고. 망각 도전당 1.1회(유물과 무관), 도전당 합체 2.9회(망각 전과 같음).
+- 단위 테스트 `test/relics.test.js`(npm test에 포함): 표 · 해금 API · 보스 보상 흐름(정지·체크포인트·고르기·건너뛰기·자동 선택·겹침 금지·풀 소진) · 이어하기로 떠 있던 유물 복원 · 유물 20종 효과(죽지 않는 허수아비로 피해 배율 실측) · 망각 한도·저장·융합 비우기·Lv1 재등장 · 봇 정책.
+
+#### 경제 싱크 (ECONOMY 트랙 — `public/js/shop.js` · `shopui.js` · `public/shop.css` · `test/shop.test.js` · `test/economy.js`)
+> 사용자: "골드와 다이아가 일정량 들어가면 더 이상 쓸 곳이 없는 듯" — 100층 뒤에도 늘 살 것이 있게. 스킬 선택이 주력이라 돌파는 체감(점근)한다.
+
+**가격 기준** `priceScale(best) = 6 × max(10, best)²` ≈ 그 최고 층에서 도전 한 번에 버는 골드(캠페인 실측 15층 1.8K · 59층 20K · 100층 90K).
+
+| 소비처 | 재화 | 값 | 효과 |
+|---|---|---|---|
+| 수련 돌파 `trainBreak[k]` | 골드 | 마지막 수련 비용 × 1.3^(n+1) | 수련 5종 만렙 뒤 끝없이. n단 누적 = per × 5 × (1 − 0.9ⁿ) — 1단 = 원래 1레벨의 절반, 상한 = 원래 5레벨어치(마력 +20%·시전 +15%·치명타 +7.5%p·연속 시전 +20%p·성벽 +25%) |
+| 출정 준비 `prep` | 골드 | `k × priceScale`: 두루마리 0.08 · 부적 0.04 · 결계석 0.07 · 물약 0.06 | 이번 도전 한 번: 시작 카드 +1 · 1층 희귀·전설 ×3 · 네임드 보스 층 부활 1회(50%) · 망각 +1 |
+| 장비 상자 | 골드 | 0.1 × priceScale | 드롭과 같은 `rollItem(ilvl = 최고 층)`, 등급 가중치 0층 [55,30,12,2.6,0.4] → 100층 [5,20,40,27,8] 선형. 강화 없음 |
+| 고급 · 전설 상자 | 보석 | 60 · 300 | 희귀 이상 [62,30,8] · 전설 확정 |
+| 유물 해금 | 보석 | 60~150(relics.js 표) | 보스 보상 풀에 추가 — 해금 API는 RELICS 절 |
+| 보석 돌파 `gemBreak[k]` | 보석 | 마지막 강화 비용 × 1.25^(n+1) | 골드 획득(`greed`) 만렙 뒤 '황금 손길' 처치 골드 × (1 + 0.05×5×(1−0.9ⁿ)) · 황금 곡괭이(`pickaxe`) 만렙 뒤 '심층 채굴' 방치 보상(보석·골드·경험치) × (1 + 0.15×5×(1−0.9ⁿ)) |
+| 망각 숙련(보석 강화 `forget`) | 보석 | 180 | 도전마다 망각 +1(`metaFx().forgets` → relics.js) |
+
+**방치 골드**(새로): `offlineGoldPerHour(best) = ⌊12 × (1+best)^1.35⌋`(한 시간 플레이의 약 5%, 최대 8시간). `computeOffline → { gems, gold, xp, minutes }`, `applyOffline`이 골드도 준다. 오프라인 창에 골드 줄(`#off-gold`).
+**판매가**: `sellValue × (1 + ilvl/25)`(층 비례) — 장비 상자 기대 판매가는 값의 5~12%(되팔아 이득 없음, 테스트가 25% 미만 확인).
+
+**API (`shop.js`, DOM 없음)**
+```
+priceScale(best) · breakBonus(per, n)
+trainBreakOpen(meta, k) · trainBreakCost(k, n) · trainBreakText(k, n) · buyTrainBreak(meta, k) → bool
+GEM_BREAK[{key,name,desc,per}] · gemBreakOpen(meta, k) · gemBreakCost(k, n) · gemBreakText(k, n) · buyGemBreak(meta, k) → bool
+runBonus(meta) → { atkMul, rateMul, wallMul, goldMul, critAdd, echoAdd }     // run.js common()이 createGame({ bonus })로
+applyShopBonus(fx, bonus)                                                  // sim computeFx 끝(유물 다음) — fx.echo·fx.critAdd는 config cannonStats가 더함
+PREP[{key,short,name,desc,k,tone}] · PREP_KEYS · prepCost(k, best) · togglePrep(meta, k) → bool(산 것을 다시 누르면 전액 환불)
+normPrep(v) · normRunPrep(v)(+wardUsed) · takePrep(meta)(newRun: meta.prep → run.prep, meta.prep 비움) · prepWardReady(g, bossFloor) · PREP_RARE_MUL(3)
+BOXES[{key,name,cur,desc}] · boxOdds(k, best) · boxCost(k, best) · boxIlvl(meta) · openBox(meta, k, rng?) → { item, sold, soldItem, equipped } | false
+unlockRelic(meta, key)(relics.js 재수출) · offlineGoldPerHour(best) · offlineMul(meta) · normShop(saveObj) → { trainBreak, gemBreak, prep }
+shopOffers(meta) → [{ id:'train:k'|'trainBreak:k'|'prep:k'|'box:k'|'meta:k'|'gemBreak:k'|'relic:k', cur, cost }] · affordable(meta, offers)
+botShop(meta, rng, spent?, phase 'pre'|'post'|'all')                       // 테스트 러너 소비 정책
+```
+- **campAct**(run.js): `{type:'trainBreak', stat}` · `{type:'gemBreak', key}` · `{type:'prep', key}` · `{type:'box', key}`(결과 객체 — main.js·ui.js가 `!!` 없이 그대로 돌려준다) · `{type:'relic', key}`.
+- **런**: `run.prep = { card, rare, ward, forget, wardUsed }`(`serializeRun`/`normalizeRun`, 이어하기에 남음). `newRun`이 시작 카드 `START_CARDS + card` · `createGame({ bonusForgets: forget })`, 1층 체크포인트 이어하기도 카드 +1. sim 훅 3줄: `rarityWeight`(1층 희귀·전설 ×3) · `damageWall`(보스 층 `stage % 10 === 0`에서 결계석이 부활 결계보다 먼저, 이벤트 `revive{…, prep:true}`) · `computeFx`(`applyShopBonus`).
+- **저장**(v3 그대로, 필드 추가): `trainBreak{atk,rate,crit,multi,wall}` · `gemBreak{greed,pickaxe}`(0~999 정수) · `prep{card,rare,ward,forget}`(bool). 옛 저장은 0/false. `hero.js pickRarity`는 등급 가중치 배열도 받는다(`rollItem(stage, [5 가중치], rng, cls)`).
+- **화면**: 정비 탭 '보석' → **'상점'**(`[상자 | 보석 강화 | 유물]` 세그먼트, 탭 점 = 보석 강화·보석 돌파·유물 해금 중 살 수 있는 것 — 상자는 반복 소비라 점 없음). 출정 탭에 **'출정 준비'** 카드(2×2, 누르면 사고 다시 누르면 환불, 합계 문구). 수련·보석 강화 행은 만렙이면 'MAX · 돌파 N단' + 보라·금 칩 '돌파 +x% ▶ +y%'. 상자 개봉 = 상자 흔들림 0.56초 → 방사광 + 등급 카드(리본·아이콘·주/부옵션·자동 장착 전투력 ▲·자동 판매 골드), 전설은 섬광, [확인] [한 번 더 (값)]. 탭하면 연출 건너뜀.
+
+**지표(`node test/economy.js [시드…] [--off]`)** — 캠페인(`harness.campaign({ shop: true })`: 정산 직후 출정 준비 → 보석·수련(bot.js) → 돌파·유물·상자 1개) + 100층 뒤 100번 정비(마지막 세 도전 평균 수입). 3번째 열 '살 것'은 통화별로 살 수 있는(효과 있는) 것이 있나.
+- 현재 작업 트리(다른 4차 트랙이 밸런스 조정 중 — 캠페인이 7~13회로 짧음) 시드 1~3: 살 게 없는 방문 **골드 0% · 보석 0%**(상자를 빼도 0%, 100층 뒤 100회도 0%). 방문 때 잔고는 도전 한 번 수입 안팎(골드 301 → 149K, 보석 40 → 850)이고 소비 뒤엔 거의 다 쓴다(골드 수백~3K · 보석 0~50).
+- 소비 분포 — 캠페인 골드: 수련 82~86% · **출정 준비 12~16%** · 상자 2~3%, 보석: 강화 100% + 유물 12종 해금(상점 쓰는 봇). 100층 뒤 골드: 수련 26~31% · **수련 돌파 47~54%** · 출정 준비 15~16% · 상자 6%(돌파 2~6단), 보석: 강화 8~9% · **보석 돌파 48~58%** · 보석 상자 32~41% · 유물 1~2%(보석 돌파 12~14단). 100회 뒤 잔고 골드 52~65K(도전 한 번 수입 이하) · 보석 43~2.9K — 쌓이지 않는다.
+- (통합 패스에서 바뀜) `npm test` 캠페인은 이제 **`shop:true`**가 기준이다(test/worker.js — 아래 '통합 · 밸런스' 절). `harness.campaign({ shop:false })`로 옛 방식 비교 가능.
+
+#### 던전(지역) 특성 (DUNGEON 트랙 — `public/js/dungeons.js` · `dungeonui.js` · `art/dungeonfx.js` · `css/dungeon.css` · `test/dungeons.test.js`)
+**데이터 = `DUNGEON_TRAITS[지역 키]`**(순수 데이터, 후일 세계 지도의 던전마다 그대로 붙인다) — `{ weak:[원소], resist:[원소], lore, rule:{ key, short, name, desc, …수치 } }`. 지역 키 = `THEMES[].key`(5테마, `stages.themeOf`). 판이 쓰는 특성 = `traitsOf(g)` = `g.traits`(후일 던전별로 넣을 자리) `||` 지금 테마. 배율 `ELEM_MUL = { weak: 1.3, resist: 0.75 }`.
+
+| 지역 | 약점 | 내성 | 규칙 (`rule.key`) |
+|---|---|---|---|
+| 슬라임 초원 1~20 | 화염 | 암흑 | 번지는 들불 `wildfire` — 불타는 적이 쓰러지면 (남은 화상 + 최대 체력 12%) × 60%가 가까운 3마리(반경 110)에 화상 |
+| 고블린 동굴 21~40 | 번개 | 바람 | 칠흑의 어둠 `darkness` — 사거리 윗선 `REACH.y` = 380 → 496(사거리 −20%). 영웅은 어둠 속에서도 싸운다 |
+| 언데드 묘지 41~60 | 신성 | 냉기 | 되살아나는 망자 `undying` — 잡몹 25%가 체력 40%로 한 번 일어남. 신성 스킬 명중으로 쓰러지거나 불타는 적은 제외 |
+| 화산 용암지대 61~80 | 냉기 | 화염 | 들끓는 열기 `heat` — 주문 시전 속도 ×0.85, 냉기 스킬(`g.book`, 융합이 품은 재료 포함)이 하나라도 있으면 없음 |
+| 심연의 마왕성 81~100 | 암흑·바람 | 신성·번개 | 광기의 행진 `frenzy` — 적 이동 ×1.1(옛 심연 속도 보정을 규칙으로 옮김 — 값 같음, `stages.enemySpeedMul`이 `regionSpeed`) |
+
+원소 6종이 각각 약점 1곳·내성 1곳(단위 테스트). 소환 원소는 늘 보통. 초원 내성을 암흑(피해 없는 저주·영혼 수확은 배율이 없다)으로 둔 것은 첫 도전들(1~20층)의 주력인 냉기·번개를 건드리지 않기 위해서다.
+
+**원소 배율** `elemMul(g, key, kind)` — 스킬 키의 원소(융합 = **두 원소 배율의 평균**: 약점+보통 ×1.15 · 약점+내성 ×1.025), 키가 없으면 피해 원소 `kind`(fire·lightning·frost·wind·holy·dark), 피해 없는 스킬(서리 결계·질풍·수호의 빛·저주 낙인·영혼 수확·돌 골렘)은 1. 훅:
+- `sim.spellHit`: 카드·융합 피해(`card`)에만 `raw *= em`(기본 주문·영웅·운석은 보통). `hit` 이벤트에 `em`. `onSpellHit`에는 원소 배율 **전** raw를 넘기고, 불꽃 마탄 화상·연쇄 번개 전이는 제 원소(`elemMul(g,'flameBullet'|'chainLightning')`)로 다시 곱한다. `g._hitSrc` = 지금 명중한 스킬 키/원소(망자 부활 판정).
+- 시전 스킬 = `g._src`(spells.js): `tick`이 시전 동안 그 스킬 키(융합 = 융합 키), 머무는 효과는 `updateSpells`가 폭풍 `stormEye` · 드래곤 브레스 `babyDragon` · 유령 `ghostLegion`, 회오리는 불붙었으면 `blazeTornado`. 그 밖(얼음 창 투사체 등)은 `kind`로. 변이·새 투사체가 `g._src` 없이 `sHit`해도 `kind`로 맞게 떨어진다.
+- 규칙 훅: `sim.step` 맨 앞 `applyReach(g)`(config `REACH.y` — `inReach`가 읽는다. 전역이지만 매 스텝 지금 판 기준) · `spells.spellRateMul × castRateMul(g)` · `sim.damage`의 처치 직전 `undying(g, e, emit)`(true면 처치 아님, 이벤트 `rise{x,y,r}`) · `sim.killEnemy`의 `regionKill(g, e, emit)`(이벤트 `wildfire{x,y,pts}`).
+- 끄기: `DG_TEST.off = true`(테스트·A/B 워커 전용 프로세스 스위치 — 광기의 행진 속도는 옛 값이라 끄지 않는다).
+
+**봇** `pickBias(g, key)` → `bot.pickCard` 점수에 더함: 지금 지역 약점 +4 · 내성 −3 · 규칙 해소(화산의 냉기) +6, 지역 끝 5층 안이면 다음 지역 것 ×0.75도. 합체 ✦(100)·협공(40)·융합 강화(35)가 여전히 앞선다 — '조금' 맞춘다. 카드 '자동 선택'의 추천 카드도 같은 점수.
+
+**화면**
+- `dungeonui.js createDungeonUI({ stage, hudLeft, showTip })` → `update(v, busy)` · `card(btn, key, v)` · `slots(v, slots)` · `tip(v, key)`. ui.js 훅 4줄(`// 던전`). `skillAffinity(g, key[, theme])` → `{ mul, tag:'weak'|'resist'|null, cure }`, `regionView(theme)` = 배너·칩·툴팁용 요약.
+- **지역 시작 배너**: 새 도전·이어하기·지역이 바뀐 층에서, 캔버스 '새 층' 도장 뒤(`phaseT ≥ 1.5`) + 카드·유물·모달이 없을 때 HUD 아래에 톡 — '지역 특성' 리본 · 지역 이름 · 약점 +30%(금빛 원소 알약) · 내성 −25%(회색) · 규칙 이름/설명. 4.2초 뒤 또는 탭하면 닫힘. 좁은 화면은 오른쪽 스킬 스택을 비켜 왼쪽 정렬, 넓은 화면은 전장 가운데.
+- **HUD 칩**(`#hud-left` 맨 앞, `.st-chip.dg-chip[data-r]` 지역색): 약점 원소 아이콘(▲) · 내성(흐린 ▼) · 규칙 한 단어(`rule.short`). 탭 = 자세한 툴팁(층 범위·배율·규칙·지역 설명).
+- **카드 배지** `.pc-dg`: '약점!'(초록 젤리, 숨쉬기) · '내성'(회색) · '열기 해소'(화산에서 냉기 스킬이 아직 없을 때, 하늘색). **스택 칸** `.dg-sb` ▲/▼, 칸 툴팁에 '고블린 동굴: 약점 — 피해 +30%' 한 줄.
+- **캔버스**(`art/dungeonfx.js`, render.js 훅 2줄 · fx.js 숫자 훅 1줄): 약점 명중 숫자 = 라임(`#b8ff3a`, 배지와 같은 색) · 내성 = 흐린 회색 · '약점!' 꼬리표 0.6초에 한 번(숫자 설정 '전체'일 때만) · 망자 부활 = 흙먼지 + 청록 영혼 불꽃 + 고리 + '부활!' · 들불 = 불씨가 이웃으로 튄다 · 동굴 어둠 = 사거리 윗선 위를 어둡게(적 위 · 마법 아래 — 마법이 어둠을 밝힌다) + 경계의 흔들리는 횃불 띠.
+
+**밸런스(A/B — 깨끗한 v0.0.8 트리 + 던전 트랙만, 시드 1~3, `npm test` 캠페인 러너와 같은 봇)**
+- 켬/끔: 도전 **25.0 / 27.3회** · 도전당 **+3.73 / +3.41층** · **19.5 / 17.6h** · 첫 도전 10.7 / 10.3층 · 3번째 도전부터 합체 **3.14 / 2.74회**(약점 원소로 모이는 빌드가 짝을 더 빨리 만렙으로) · 후반 빌드 융합 3.92개. `node test/sim.test.js` 캠페인·동등성 전부 통과(협공 +14% · 클래스 기사 +3 · 궁수 −8 · 마법사 +11 · 성직자 −4 · 암살자 −2%).
+- 지역별 새 층 클리어(초, 켬/끔): 초원 68.1/70.9 · 동굴 78.3/84.3 · 묘지 88.8/94.8 · 화산 **91.5/87.2**(열기) · 심연 105.7/116.5. 도전이 끝난 지역(켬/끔, 75/79회): 초원 14/24 · 동굴 8/18 · 묘지 29/26 · 화산 8/3 · 심연 13/8 — 묘지(망자)·화산(열기)이 벽이 되고 초원·동굴은 약점 빌드로 빨리 지나간다.
+- 원소 생존성(최고 20층+ 도전의 주력 원소별 '도달 ÷ 최고'): 켬 화염 1.02 · 번개 1.05 · 냉기 1.01 · 바람 1.02 · 암흑 1.02 · 신성 0.91 · 소환 0.90 (끔 0.71~1.27 — 표본이 작아 흔들림). 죽은 원소 없음.
+- 측정 스크립트(스크래치, 저장소 밖): 지역별 처치 속도는 `harness.playRun`의 `floors[{s,t}]`를 20층 단위로 묶으면 된다. 전체 캠페인이 약간 쉬워졌으므로(도전당 +0.3층) 최종 밸런스 패스가 `DIFF`를 소폭 올려도 된다.
+
+#### 변이 (MUTATIONS 트랙 — `public/js/mutations.js` · `mutui.js` · `art/mutfx.js` · `css/mutation.css` · `test/mutations.test.js`)
+**규칙.** Lv6(만렙)이 된 기본 스킬 14종·융합 스킬 8종은 **두 갈래 변이 중 하나**를 고른다(스킬당 1회, 22 × 2 = 44). 변이는 수치가 아니라 **작동 방식**(표적·모양·개수·지속·궤적·끌어당김·분열·공전·연쇄·장판·소환)을 바꾼다.
+- 카드: `genCards`가 변이 대기(`pendingMutations(g)` = Lv6 · 변이 없음, 슬롯 순서) 중 하나를 **늘 한 장** 넣고, 나머지 대기는 강화·새 스킬 카드로 자리를 채우고도 남을 때만 더 넣는다. 카드 = `{ spell, mutate:true, muts:[A, B], level:6, rarity:'legend', fusion, fusionHint:false }`. 도전 시작 무료 카드(starter)엔 없다.
+- 고르기 `act(g, 0, {type:'pick', index, choice: 0|1})`(choice가 없거나 틀리면 추천 갈래 `mutChoice` — 자동 선택·봇·`tickPick`) → `g.mutations[스킬] = 변이 키` + `spellPick{ spell, mutate: 변이 키, rarity:'legend' }`(level 없음 → MAX 연출 없음). UI `H.onPick(index, choice)`.
+- **각성은 최후의 선택**: 강화할 것 · 변이 · 빈 칸(새 스킬)이 하나라도 있으면 각성 카드는 없다(유물 트랙의 '비우기' 버튼은 카드 화면에 그대로 — 각성 카드만 뜬 화면에서도 비우면 새 스킬 카드가 다시 뽑힌다).
+- **합체하면 변이 소멸**: 변이한 재료도 레벨 6이라 `FUSIONS[].ready`로 그대로 합체 → `refreshFusion`의 `pruneMutations(g)`가 빠진 스킬·만렙 아닌 스킬의 변이를 지운다(융합 Lv1, 망각도 같은 경로). 카드 ✦ 띠에 '→ 이름 · 변이 소멸' 경고.
+- 저장: `serializeRun.mutations`, `normalizeRun` → `normalizeMutations(raw, spells)`(지금 가진 Lv6 스킬의 제 변이만, 옛 저장 = `{}`, throw 없음).
+- API(`mutations.js`): `MUTATIONS[스킬] = [{ key, name, short(카드 한 줄), desc(툴팁), col, cd(시전형 쿨타임 배율), bot }, …]` · `MUT_BY_KEY` · `MUT_KEYS` · `mutOf` · `pendingMutations` · `mutationCard` · `mutChoice` · `applyMutation` · `pruneMutations` · `normalizeMutations` · `mutCdMul`(스택 쿨타임 링).
+- 시뮬 훅(`spells.js`, `// 변이` 표시): 시전형은 `tick`이 `mutCast(g, key) || CAST/FCAST`를 부르고 `KIT`(pd · sHit · cast · densest · burnOn · chilled · isSupport · base(CAST) · lv · rate)을 넘긴다. 지속·소환형은 `mutTick`(updateSpells 끝) · `mutOnHit`(onSpellHit — 변이한 연쇄 번개는 기본 전이 대신) · `mutOnKill`(onKill) · `mutSlow`(frostSlowMul) · `mutCurse`(`curseMul(g, e)` — sim `damage`가 e를 넘긴다) · `mutOwns`(새끼 드래곤 변이는 자체 비행). 기본 배열 확장 두 줄: 얼음 창 `l.pierce`, 회오리 `tn.vx`. 전장 물체 `g.spellFx.mut[{k, m, t, …}]`(스테이지마다 새로, 최대 64) · 타이머 `g.spellFx.mt`(soul·reap·well·wsA·d2·hexY…). 던전 원소 배율용 `g._src`는 물체마다 그 변이의 스킬.
+- 이벤트: `mutFx{ m, x, y, … }`(연출 전용 — sim·UI는 무시) · 기본 `spell{…, mut}`(기본 연출 위에 덧그림).
+- 화면: 카드 = 'Lv6 변이' 띠 + 무지개 테 + **A/B 두 갈래(이름 + 무엇이 바뀌나)** — 갈래를 눌러 고른다(키보드 Enter = 추천 갈래), 자동 선택 ON이면 추천 갈래에 '추천'. 스택 칸 = 무지개 고리 + 갈래 보석(A/B · 변이 색), 넓은 화면 이름 줄 '변이 · 이름', 툴팁에 변이 설명 · Lv6 미변이면 '변이 대기'. **강화 카드 설명 = 수치 '전 → 후' 줄**(`upgradeHTML` — '마력 400% → 500%', 최대 3줄) + Lv6 카드엔 'Lv6 완전체 연출 · 변이 해금'.
+- 그림(`art/mutfx.js`, render.js: events → update → `drawGround`(서리 결계 위) → `draw`(새끼 드래곤 뒤)): 변이마다 고유 모양. 흰 코어 없는 `hu()`·원소 색, 형태(창·낫·기사·거울·얼음 감옥·지뢰·검은 해)는 보통 합성, 흐르는 입자는 20Hz — 광량 예산 안.
+
+| 스킬 | A | B |
+|---|---|---|
+| 파이어볼 | 분열 화염구 — 3갈래 서로 다른 무리 + 착탄마다 연쇄 폭발 3 | 태양 구체 — 느린 거대 구체가 성벽→전선 떠오르며 관통해 태움 |
+| 불꽃 마탄 | 들불 — 불탄 적이 쓰러지면 가까운 3마리에 화상 전염(연쇄) | 불바다 — 맞힌 자리에 2.5초 타는 장판 |
+| 낙뢰 | 천벌 — 모든 줄기가 가장 강한 적(보스 먼저) 하나에 연달아 + 기절 | 뇌운 — 무리를 따라다니며 4초간 벼락 치는 먹구름 |
+| 연쇄 번개 | 구전 — 전이 대신 떠돌며 주변을 지지는 번개 구체 | 전류 사슬 — 두 적을 2초 전류로 묶어 둘·그 사이를 지짐 |
+| 얼음 창 | 빙창 부채 — 5자루 부채꼴(3관통) | 빙하 창 — 느린 거대 창이 닿는 적을 얼리고 끝에서 파편 6 |
+| 서리 결계 | 영구 동토 — 적 무리 밑에 6초 얼어붙은 땅(강한 둔화 + 피해) | 얼음 거울 — 적 투사체를 되쏘고 성벽을 치는 적에 냉기 반격 |
+| 회오리 | 진공 소용돌이 — 제자리에서 빨아들인 뒤 폭발 | 횡단 돌풍 — 좌우에서 두 회오리가 가로질러 휩쓸기 |
+| 질풍 | 바람 칼날 — 관통하는 칼날 3줄기 주기 발사(시전 속도 유지) | 바람 정령 — 성벽 앞을 도는 정령 3(베고 밀침) |
+| 수호의 빛 | 성역 파동 — 3초마다 성벽에서 퍼지는 빛 고리(태우고 밀침) | 빛의 샘 — 넘친 치유가 모여 앞선 적 5에게 빛의 창 |
+| 심판 광선 | 십자 심판 — 세로 + 가로 십자 광선 | 쓸어내는 광선 — 1.4초 동안 옆으로 쓸기 |
+| 저주 낙인 | 파멸 낙인 — 강한 적에 3초 낙인, 받은 피해 일부가 폭발 | 저주 장막 — 무리를 따라다니는 띠 안 ×1.7 · 밖 ×0.45 |
+| 영혼 수확 | 영혼 일제 사격 — 영혼 12개 → 추적 영혼 6발 | 사신의 낫 — 10처치마다 한 줄 휩쓸어 체력 20% 이하 처형 |
+| 새끼 드래곤 | 쌍둥이 용 — 두 높이에서 번갈아 브레스 | 급강하 — 브레스 대신 밀집 무리로 내리꽂혀 화염 폭발 |
+| 돌 골렘 | 대지 강타 — 무리 앞으로 걸어가 내려찍기(기절) | 파편 재조립 — 부서지면 폭발 → 5초 뒤 재조립 + 가시 반격 |
+| 불꽃 회오리 | 방랑 화염 — 가장 가까운 적을 쫓아 5초 떠돎 | 화염 고리 — 작은 회오리 넷이 원을 그리며 공전 |
+| 초전도 | 결빙 회로 — 한 줄기가 적에서 적으로 이어지며 모두 얼림 | 얼음 감옥 — 앞선 적을 2초 가둔 뒤 파편 |
+| 증기 폭발 | 간헐천 — 간헐천 3개가 3초 동안 분출 | 압력 폭발 — 1.2초 빨아들인 뒤 대폭발 |
+| 폭풍의 눈 | 떠도는 폭풍 — 전장을 가로지르며 끌고 벼락 | 쌍둥이 눈 — 두 무리에 작은 눈 + 둘 사이 번개 다리 |
+| 황혼 | 일식 — 검은 해가 3초간 광선 난사(저주) | 황혼의 물결 — 가로 물결이 전장 전체를 훑음(저주 + 밀침) |
+| 플라즈마 | 플라즈마 레일 — 성벽→전선 일직선 관통 + 번개 갈래 | 플라즈마 지뢰 — 길목에 지뢰 3, 밟으면 폭발 + 번개 |
+| 망령 군단 | 망령 기사 — 6초간 누비며 베는 기사 2 | 유령 돌격 — 세로 기둥으로 일제히 관통 |
+| 수호룡 | 용의 비호 — 3초 성벽 위 화염 장막 + 투사체 차단 + 치유 | 성룡 낙하 — 가장 강한 적에 수직 낙하 + 충격파 |
+
+**강도**(`node test/mutations.test.js` 표 — 14층·같은 시드·20초, 보조 스킬 Lv3와 함께, Lv6 기본 대비 내 전체 피해): 시전형은 대부분 ×0.85~1.3(천벌 0.88·빙하 창 0.98·쓸어내는 광선 1.10 — 단일·보스 쪽, 진공 소용돌이 1.52는 끌어모아 다른 스킬을 돕는 값). 피해가 없던 지속형(질풍·수호의 빛·서리 결계·돌 골렘)은 변이로 피해가 생겨 ×2 안팎 — 6칸 빌드 전체에선 한 칸 몫이다. 용의 비호 0.62는 치유·투사체 차단 대가. 캠페인 영향은 밸런스 패스가 `npm test`로 본다(봇은 변이 카드 38점 — 곧 합체할 짝의 재료면 16점).
+
+#### 특성 택1 = 전략 (TALENTS 트랙 — `public/js/talents.js` · `talentui.js` · `public/hero.css` · hero.js 특성 훅 · `test/talents.test.js`)
+플레이테스트: v0.0.8 트리의 택1 다수가 '+수치 A vs +수치 B'였다. **택1 30쌍(15갈래 × 2)을 전부 '싸우는 방식'을 바꾸는 두 갈래로** 바꿨다. 규칙(6단 · 궁극 하나 · Lv99 예산 = 한 갈래 + 나머지 절반 · 혼합 노드)과 노드 키(X4·X5 = 2단 묶음 a, X9·X10 = 4단 묶음 b)는 그대로다.
+- 노드 필드 추가: `tag`(분류 `TALENT_TAGS` = 표적 · 위치 · 발동 · 자원 · 협동) · `brief`(트리에 보이는 한 줄 요약, 10자 이하). 택1은 모두 2랭크, 효과 키 하나, 문구에 숫자.
+- 새 효과 키 27개(`TALENT_FX_KEYS` — 전부 hero.js/sim.js 훅, 숫자는 클래스마다 표 데이터):
+  - 표적(`pickTarget` 점수 + 피해 `mul`): `hunt`(정예·보스 +3점, 피해 +) · `guardWall`(성벽 가까울수록, 성벽 200 안 피해 +) · `cull`(체력 비율 낮을수록, 50% 이하 피해 +) · `focus`(현재 표적 +2점, 같은 표적 타마다 +, 5중첩).
+  - 위치: `hold`(성벽 앞 `HOLD_Y` = WALL_Y−240 선 위로 안 나감 · 선 밖 적 무시 · 피해 감소 + 도발 반경 ×200) · `charge`(5초마다 150↑ 먼 적에 4배속 돌진 → 반경 80 피해 + 0.6초 기절) · `pointBlank`(원거리가 물러나지 않고 190까지 붙음, 200 안 피해 +) · `chillAura`(값 = 반경, 주변 적 계속 둔화 + 값+30까지 다가감) · `killBlink`(처치 시 확률로 순간이동 대기 0 + `hop` = 거리 무관 도약) · `longshot`(혼합: 사거리 +값/2, 거리 비례 피해 +).
+  - 발동: `heavy`(3타마다 피해 + · 0.5초 기절) · `cleave`(주 표적 주변 60 aoe) · `bounce`(값 = 튕김 수, 30%) · `split`(값 = 갈래 수, `SPLIT_K` 0.3 + 광역) · `corpse`(영웅 처치 → 반경 80 폭발, 폭발로 죽은 적도 터짐) · `evade`(맞을 때 확률로 무효 + 반격 100%) · `wolfStun`.
+  - 자원: `ultCharge`(공격마다 궁극기 대기 −값초 — 클래스 공속에 맞춰 기사 0.12 · 궁수 0.07 · 마법사 0.14 · 성직자 0.12 · 암살자 0.08) · `soulFeed`(영웅 처치 → `g.spellT` −값초, 영혼 사냥과 같은 방식) · `lifesteal`(공격마다 체력 %) · `berserk`(50% 아래 피해 +) — 둘 다 후퇴 기준 30% → 15% · `wolfUlt`(궁극기 뒤 8초 `h.packT` 동안 늑대 +값).
+  - 협동: `mark`(영웅의 **주 표적**·늑대가 문 적 `e.markAt = phaseT + 3` → sim.js `spellHit`가 마법사 주문 ×(1+값)) · `pull`(6초마다 영웅 표적 주변 200 안 비보스 적을 표적 쪽으로 값만큼) · `ultBless`(궁극기 → `g.heroBuff` 5초, 전군 강화 함성과 같은 통로).
+  - 늑대 표적(`updateSummons`): `wolfGuard`(성벽에 가장 가까운 적, 영웅 곁 목줄 없음) · `wolfFocus`(영웅 표적만) — 둘 다 늑대 피해 +.
+- 지운 키(쓰는 노드 없음): `pierce` · `undead` · `bossExec`. 혼합 노드 중 수치 섞기 4개를 동작으로: 궁수 `hunter` 사냥 표식(mark + 늑대 피해) · `windShot` 바람 사수(longshot) · 마법사 `elemental` 원소 과부하(heavy 0.4) · 성직자 `consecrate` 축성의 사슬(pull + 골드). 핵심 노드 15종은 이미 동작형이라 그대로.
+- 이벤트(연출 art/fx.js): `heroProc{kind:'nova', sub, col, r, pts?}` sub = charge · heavy · chill · corpse · evade · pull(고리가 조여 들고 `pts`에서 빛 알갱이) · ultBless, `heroProc{kind:'bolt', cls, x, y, tx, ty}`(도탄·비전 연쇄·분열 화염 작은 탄).
+- 저장: `TALENT_VER` 3. `migrateTalents(raw, 2, level)` = X4·X5·X9·X10 또는 바뀐 혼합 4개에 포인트가 있는 **클래스만 환불** + `talentNotice`(기존 안내 흐름), 나머지 클래스는 유지. 버전 없음 = 전부 환불(그대로).
+- 추천(봇·자동 배분 `TALENT_RECOMMEND.picks`): 기사 돌격·휩쓸기 / 가시·도발 장악 / 전과 보고·표적 지정 · 궁수 근접 속사·폭발 화살 / 거인 사냥·도탄 / 사냥 늑대·늑대 소집 · 마법사 분열 화염·성벽 화염 / 마나 폭주·비전 표식 / 빙결·서리 사슬 · 성직자 이단 심판·철퇴 휩쓸기 / 생명 흡수·정화 / 축복 전달·자비의 일격 · 암살자 먹잇감·강타 / 독 확산·독 폭발 / 그림자 도약·회전 베기.
+- UI(`talentui.js`): 택1 두 쪽 아래 분류 알약(색: 표적 붉은 · 위치 하늘 · 발동 금 · 자원 초록 · 협동 보라) + 한 줄 요약 — 폰 360에서 두 쪽 차이가 트리에서 바로 보인다. 상세 시트는 분류 태그 + '또는' 다음 쪽 비교 카드(누르면 그쪽 시트).
+- 밸런스(HEAD v0.0.8 대비, 같은 메타 고정 비교 — 캠페인 시드 1~4의 최고 50·75층 메타 8개 × 클래스마다 10~14회, 특성은 빈 상태에서 추천대로): 평균 도달 층 HEAD 60.8 → 62.7(+3%), 클래스 편차는 HEAD와 같은 모양(기사 −0 · 궁수 −4 · 마법사 +13 · 성직자 −12 · 암살자 +3% ← HEAD +5 · −4 · +12 · −9 · −3%). 낮은 영웅 레벨 메타(Lv34~43 포함): HEAD 56.1 → 57.1, 클래스 편차 ±10% 안. `npm test` 캠페인(이 트랙만 얹은 HEAD): 도전당 +3.6~3.7층 · 25~26회 · 영웅 기여도 31%(HEAD +3.41 · 27회 · 30%). 택1 두 쪽 봇 비교 예: 궁수 근접 속사 60.9 vs 화살비 장전 54~55층, 마법사 분열 화염 70 vs 불씨 폭발 69, 성직자 이단 심판 56 vs 천벌 54 — 표적·보스 우선은 층수에, 폭발·오라는 성벽 방어·연출에 강하다(봇 추천은 층수 기준).
+
+#### 통합 · 밸런스 (INTEGRATE 패스 — 배속 해금 · 전투 상태 줄 · 방치 비상 스킬 · 캠페인 기준)
+**배속 해금**(spec 8 — 사용자: "속도는 처음에는 1배. 좀 깨야지 2배, 이후 고수되면 3배")
+- `config.js SPEED_UNLOCK = { 2: 10, 3: 30 }` · `speedCap(best)` → 1|2|3(영구 최고 기록 `meta.best`) · `nextSpeed(cur, best)`(열린 단계만 순환, 끝이면 1). 옛 `SPEED3_UNLOCK`(20)은 없다.
+- save.js `normalize`: 저장 배속이 해금 범위를 넘으면 `min(speed, speedCap(best))` — 기존 저장도 기록대로 바로 적용. main.js `allowedSpeed`·`onSpeed`가 같은 함수, 매 프레임 `meta.speedCap`을 ui에 넘긴다.
+- ui.js: 배속 버튼 아래 작은 자물쇠 줄 = **다음 잠긴 단계**('2x 🔒', 다 열리면 숨김). 열린 끝에서 누르면 토스트 '2배속: 10층 돌파 시 해금'(자물쇠 아이콘). 해금 순간(`clear`로 `speedCap`이 오르면 1.6초 뒤) `ui.speedUnlocked(n)` = 토스트 'n배속 해금! 배속 버튼을 눌러 보세요' + 버튼 금빛 고리 톡(`.spd.unlock`).
+- 테스트: `test/save.test.js` 끝(해금 표 · 순환 · 저장 클램프).
+
+**전투 상태 한 줄**(spec 9 — 사용자: "콤보 표시가 화면을 많이 가려서")
+- DOM `#st-row`(index.html `#hud-center` 안, 진행 바 바로 아래 가운데): `#combo`(콤보 알약 '콤보 294 전설' — 단계 색 `data-t` 0~4) · `#st-frenzy`('광란 x2') · `#st-legend`('골드 x2') · `#berserk`('광폭화 x4' / '광폭화 10초'). 남은 시간 = 알약 아래 2px 게이지(`.st-g > i` scaleX). 너비 `min(260px, 100vw − 196px)` — 왼쪽 지역 칩·오른쪽 영웅 버튼을 비켜 넘치면 두 줄. 보스전엔 보스바 아래(`#stage.boss-on .st-row`). 갱신 = ui.js `updateCombo(v)`(키가 바뀔 때만 글자, 게이지는 값이 바뀔 때만).
+- 캔버스(`art/hud.js`)는 **단계 상승 순간만**: 이벤트 `combo{tier}` → 상태 줄 바로 아래 가운데에 0.8초(슬램 0.14초 → 머묾 → 0.52초부터 알약으로 날아가며 0.22배·흐려짐), x50/x100은 회전 광선. 알약 위치 = main.js가 0.5초마다 `#combo`(숨었으면 `#st-row`) 가운데를 재서 `renderer.frame(opts.comboAt)` → `hud.setComboAnchor`. 알약은 0.76초 뒤 받아서 톡(밝게 1.4배 → 1). 옛 오른쪽 중단 큰 카운터 · 캔버스 광란/전설 알약 · `setStackLeft`는 지웠다. 360×640 · 390×844 · 1000×880에서 지역 칩·영웅 버튼·스킬 스택과 겹치지 않음 확인.
+
+**방치 플레이 비상 스킬**(3차 남은 일): 자동 진행 ON(`players[i].auto`)이면 사람 플레이어도 `bot.autoSkill`(운석·빙결, 유물 봉인은 건너뜀)이 돈다 — 옛 AI 동료가 대신 누르던 몫. sim.js `step` 한 줄. 토스트·aria 문구 '다음 층·궁극기·운석·빙결 자동'. `harness.humanPlayer`(자동 진행 + 카드 자동 선택)도 이제 비상 스킬을 쓴다 — '사람 첫 도전' 10.7 → 11.4층(목표 8~15).
+
+**정리**: `art/units.js`의 옛 'upgrade' 이벤트(도전 중 골드 강화)·`upGlow` 삭제. ART.md §9.1·§10.2·§12(광량 예산)·§14(파일 소유: 던전·상점 행, units/hud/fx 계약 — `drawEnemyReveal`·레벨 연출 계약·`setComboAnchor`) 갱신.
+
+**크로스 트랙 확인**(스크래치 러너, 12시드 × 최고 60층 메타 · 유물 20종 해금 · 1~60층): 카드 선택과 유물 선택이 동시에 떠 있는 순간 0 · 스킬 레벨 1~6 밖 0 · 변이가 Lv6 보유 스킬이 아닌 곳에 남은 경우 0(합체·망각·왕관 칸 잃기 뒤에도) · `slotsUsed ≤ slotCap`(왕관) · 층 체크포인트 `serializeRun → normalizeRun` 멱등. 브라우저(390×844, 3배속): 새 도전 → 10층 네임드 보스 → 유물 3택(사냥꾼) → 14층까지, 변이 카드(A/B) · 비우기 시트(카운트다운 멈춤 → 확인 → 카드 다시 뽑힘) · 카드 자동 선택 · 이어하기 — 게임 코드 콘솔 에러 0(브라우저 창이 서비스 워커 등록만 거부: `sw.js`는 200으로 서빙, `pwa.js`가 catch).
+
+**캠페인 기준 = 상점까지 쓰는 봇**(`test/worker.js campaign({ shop: true })` — 정산 직후 출정 준비 → 보석 강화·수련 → 돌파·유물 해금·상자 1개). 행에 `muts`(변이 키) · `relics` · `forgets` · `idle{gold,gems}`(정산 직후·소비 전 통화별로 살 수 있는 것이 없나). `campaignReport`가 '전략' 줄(20층+ 도전의 변이·유물·망각 수, 셋 다 없는 도전 수, 도전이 끝난 지역, 살 게 없는 방문)과 유물 분포를 찍고 `campaignCheck`가 **셋 다 없는 20층+ 도전 0 · 살 게 없는 방문 0**을 확인한다.
+
+**밸런스 결과**(`npm test`, 결정적 — 수치 조정 없이 목표 안: 4차 트랙들의 쉬워지는 쪽(유물·출정 준비·지역 약점 빌드)과 어려워지는 쪽(변이 카드가 강화 카드 자리를 나눔·묘지 망자·화산 열기·유물의 대가)이 상쇄됐다. 상점 없는 캠페인은 36회 · +2.6층/회 · 28.6h로 목표 밖 — 출정 준비가 들어간 지금 기준이 맞다)
+- 시드 1~3: 첫 도전 **4 · 14 · 11층**(평균 9.7) · 도전당 **+3.56 · +3.44 · +2.41층**(+3.13) · **28 · 26 · 38회**(30.7) · **18.5 · 19.5 · 29.4h**(22.5) · 절반 이하 층 26.1초 · 새 층 78.5초 · 특성 완성 영웅 기여도 30.7% · 11층부터 스킬 비중 98.7%(도전별 최저 87~93%).
+- 융합: 3번째 도전부터 도전당 **3.06회**(2~6회차도 대부분 1회 — 3차의 0~1회보다 나아짐) · 후반 빌드 3.96개 · 첫 합체 8.7층.
+- 전략(20층+ 도전 73회): 변이 3.1~3.9 · 유물 5.2~6.2 · 망각 1.3~2.0 /도전 — **셋 다 없는 도전 0**. 도전이 끝난 지역(초원/동굴/묘지/화산/심연) 19/9/28/18/15 — 묘지(망자)·화산(열기)이 벽, 초원·동굴은 약점 빌드로 빨리 지남. 원소 생존성은 던전 절 측정(0.90~1.05 — 죽은 원소 없음).
+- 유물 분포(봇): 불사조·쌍둥이 달·성배·사냥꾼 > 도둑·왕관 > 유리 대포 > 해금 유물(공명·깃발·메아리·흡혈 …). 시작 풀 8종이 대부분인 건 해금이 보석 강화 뒤라서.
+- 경제(`node test/economy.js 1 2 3`): 살 게 없는 방문 골드 0% · 보석 0%(상자 빼도 0%, 100층 뒤 100회도 0%). 캠페인 골드 수련 78~83% · 출정 준비 13~17% · 상자 3~5%, 보석 강화 63~97% · 보석 돌파 0~28% · 유물 3~9%(12종 해금). 100층 뒤 100회 잔고 166K~496K 골드(도전 1~3회 수입) · 1.7~2.2K 보석.
+- 협공 **+15%**(기사 +7 · 궁수 +19 · 마법사 +8 · 성직자 +13 · 암살자 +30%). 클래스 동등성(최고 51~65층 메타, 24회씩): 기사 **+11%** · 궁수 **−11%** · 마법사 +3% · 성직자 −7% · 암살자 +4%(영웅 기여도 25~38%).
+- 초반 템포(1~10층): 교전 생존 1.81초 · 중앙 띠 처치 93% · 영웅 중앙 띠 93% · 스킬 시전 112/분 · 1~9층 패배 없음. 사람 첫 도전(자동 진행) 11.4층.
+- **주의**: 시드 1의 첫 도전(기사, 시드 1000)은 봇이 1~4층에 새 지속형 스킬(골렘·서리 결계·저주)로 칸을 채우고 5층에서 진다 — 봇 카드 점수(새 스킬 8+가치+짝 6 > 강화 12)의 운 나쁜 경우이고 같은 조건의 다른 시드(1001~5000)는 11~15층. 사람 기준 첫 도전(`humanFirstRun` 12판)은 10~13층.
+
+
+#### 리뷰 · 플레이테스트 수정 (FIX 패스)
+회귀 테스트 `test/fix4.test.js`(npm test에 포함).
+- **따라잡기 카드**(플레이테스트: "24~40층 내내 남은 Lv1 스킬 +1만 뜬다"): `sim.CATCHUP_FROM`(30)층 **뒤** Lv3 미만 기본 스킬 카드(새 스킬 포함)는 한 장에 +1레벨 더(`catchUp(g, key)` · 카드 `catchUp:true`, 카드 희귀도 줄 '따라잡기 +1'). 융합 스킬은 제외. 20층부터로 재면 궁수 동등성 −17%·후반 융합 4.00(목표 끝)이라 30층으로 뒀다.
+- **카드 `from`**: `genCards` 카드마다 `from`(지금 레벨, 0 = 새 스킬). UI 태그·레벨 칸·aria·수치 줄이 `from → level`(쌍둥이 달·따라잡기 2레벨). `mutui.upgradeLines(key, level, from)` · `upgradeHTML(key, level, from, maxLines)`. 새 스킬이 Lv2로 들어오면 'NEW Lv2'.
+- **좁은 카드**: 강화 수치 줄은 폰에서 카드 4~5장이면 2줄, 그래도 넘치면 `fitPickDescs`가 마지막 수치 줄부터 뺀다(반쪽 줄 없음). 변이 카드는 갈래 설명이 잘리면 `.narrow`(갈래 이름 + '눌러서 자세히') → 누르면 **A/B 시트**(`mutui.createMutSheet` — 두 갈래 이름·한 줄·설명 전문, 거기서 고른다. 시트가 열린 동안 자동 선택 카운트다운 멈춤, 뒤로가기 = 닫기).
+- **유물 화면 문맥 줄**(`relicui ctxLine`): 광기의 왕관 = '잃는 스킬: 서리 결계 Lv1'(`relics.weakestSkill(g)` — `dropOverCap`과 같은 규칙) · 원소 공명 = 지금 공명하는 원소(`relics.resonant(g)`, `g._res` 캐시 — `refreshFusion`이 비움) · 지팡이 = 융합 수. 20·40·60·80층(이어하기면 21·41…층) 유물 화면 위에 **다음 지역 띠**(약점·내성·규칙). 짧은 화면(≤760px)은 카드를 줄인다. ponytail: 왕관이 잃을 스킬을 고르게 하진 않았다(미리 보여 주기만).
+- **다음 지역 배지**: 지역 끝 5층 카드에 '다음 지역 약점'/'다음 지역 열기 해소' 작은 꼬리표(`.pc-dg2`, 봇 `pickBias`와 같은 창). 변이 카드도 지역 배지를 다시 칠한다(옛 카드 배지가 남던 버그).
+- **망각**: 확인 단계에 '변이(이름)도 사라져요' · '(융합) 재료예요(재료 n/6)' · 다시 배우면 Lv(쌍둥이 달·따라잡기 반영). 비우기 버튼은 스킬 3개 이상이거나 칸이 찼을 때만. 비운 뒤 새 카드는 자동 선택 카운트다운도 처음부터(`forgetSkill`).
+- **HUD**: 지역 배너가 닫히는 중 매 프레임 `hideBanner`가 타이머를 지워 투명한 배너가 탭을 막던 버그(`.dg-banner.out`은 `pointer-events:none`). 스택 칸 ▲/▼는 구슬 왼쪽 아래(왼쪽 위 = 변이 갈래 보석). 보스전엔 `#hud-left`(지역·부활 칩)도 보스 바 아래. 광폭화 알약은 전투 중에만, x1.1 전엔 '광폭화!'. 카드 머리 '스킬 칸 n/cap'(왕관).
+- **배속 해금 연출**: 10·30층(유물 층)에선 유물을 고른 뒤 0.9초에(`main.js speedUnlockDue`). 옛 저장 배속이 내려갔으면 첫 도전 시작에 '3배속은 이제 최고 30층 돌파 때 열려요' 한 번.
+- **결과 · 이어하기**: 결과 `Summary.mutations` → 스킬 줄에 갈래 보석 + 변이 이름. 이어하기 창 스킬 칩에 갈래 보석, 유물이 떠 있으면 '유물 선택 대기 중'. 특성 개편 안내는 포인트가 이미 추천 빌드로 찍혀 있으면 그 문구 + '특성 보기 · 무료 초기화'.
+- **장비**: 상자(`openBox`)와 전투 드롭(`lootDrop`) 모두 **장착 먼저 → 가방 정리**(`hero.trimBag`) — 가방이 가득 차도 더 좋은 새 장비가 팔려 나가지 않는다. 상자 결과가 바로 팔렸으면 '가방이 가득 차 바로 팔았어요 +N'. 유물 도감 줄 순서는 탭을 열 때 한 번만 정한다(사자마자 줄이 움직여 두 번 탭이 다음 유물을 사던 버그).
+- **sim**: `startStage`가 `applyReach`(카드·유물로 step이 멈춘 층 시작에 지난 판 동굴 어둠이 남던 것) · `refreshFusion`이 `run.legacy`에서 없는 융합을 뺀다(망각·왕관 뒤 다시 만든 융합은 새 규칙).
+- **핫패스**: `dungeons.skillElements`·`elemMul`은 미리 만든 상수 배열(명중마다 할당 없음) · 공명 캐시 · 동굴 어둠/저주 장막/황혼 물결 그라디언트 캐시 · `dungeonui.slots` 서명. ponytail: `fx.js` 번개 `zig()` 점 배열은 그대로(프레임당 몇 개).
+- **밸런스**(`npm test`, 결정적): 시드 1~3 첫 도전 4·14·11층 · 도전당 **+3.20·+3.44·+3.07층**(+3.24) · **31·26·30회**(29.0) · 21.0h · 3번째 도전부터 합체 2.95회 · 후반 빌드 융합 3.65개 · 협공 +14% · 클래스 동등성 기사 +9 · 궁수 −13 · 마법사 +2 · 성직자 +4 · 암살자 −2% · 사람 첫 도전 11.4층. (따라잡기를 뺀 같은 트리 +3.23층 · 29.7회 · 궁수 −12% — 따라잡기는 후반 속도만 조금 올린다. 궁수는 원래 동등성 하한 근처.)

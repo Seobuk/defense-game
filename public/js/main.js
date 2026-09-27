@@ -1,7 +1,8 @@
 // 부팅 · 게임 루프 · 저장/업데이트 배선 — 로그라이트: 타이틀 → (이어하기 | 정비) → 도전 → 결과 → 정비 (docs/DESIGN.md '로그라이트 구현 계약')
 // 솔로: 성벽 위 마법사는 나 한 명(players[1]은 협동 모드 자리 — 잠들어 있다)
 import { startStage, step, act, drainEvents, tickPick, refreshFusion, reofferPick } from './sim.js';
-import { DT, SPEED3_UNLOCK, SPELL_KEYS, SPELL_MAX_LV, SYNERGIES, WALL_Y, WORLD_W, MAX_STAGE } from './config.js';
+import { tickRelic } from './relics.js'; // 4차 유물: 카드 '자동 선택' ON이면 유물도 자동
+import { DT, speedCap, nextSpeed, SPEED_UNLOCK, SPELL_KEYS, SPELL_MAX_LV, SYNERGIES, WALL_Y, WORLD_W, MAX_STAGE } from './config.js';
 import { MAX_HERO_LV, RARITY_KEYS, rollItem, addToBag } from './hero.js';
 import { newRun, restoreRun, endRun, applyOffline, campAct, buyMeta } from './run.js';
 import { createRenderer, fontsReady } from './render.js';
@@ -29,11 +30,14 @@ if (+(/Chrome\/(\d+)/.exec(navigator.userAgent)?.[1] || 999) < 123) document.doc
 const App = window.Capacitor?.Plugins?.App;
 
 let data = store.load();
+// 4차 배속 해금: 옛 저장 배속이 해금 범위를 넘어 내려갔으면(save.js normalize) 첫 도전 시작 때 한 번 알린다
+let speedClamped = 0;
+try { const s = JSON.parse(localStorage.getItem(store.STORAGE_KEY))?.settings?.speed; if (s > data.settings.speed && SPEED_UNLOCK[s]) speedClamped = s; } catch { /* 저장소 막힘 */ }
 let game = null;
 let mode = 'title';               // 'title' | 'camp' | 'run' | 'result'
 let acc = 0, lastT = performance.now(), stopUntil = 0, nextAt = 0, saveAt = 0, backAt = 0;
 let pickHoldUntil = 0;
-let stackAt = 0, stackLeft = NaN; // 오른쪽 스킬 스택 왼쪽 끝(월드 x, 콤보 위치용)
+let stackAt = 0, stackLeft = NaN, comboAt = null; // 오른쪽 스킬 스택 왼쪽 끝(월드 x) · 4차 콤보 알약 가운데(HUD 좌표)
 const heldPicks = [];             // 미뤄 둔 카드(보스 배너·운석 뒤에 띄움)
 let pendingResult = null;         // runOver → 이번 프레임 UI 이벤트(패배 도장) 뒤에 결과 화면
 let pendingUpdate = null, updSnooze = false;
@@ -54,7 +58,12 @@ const ui = createUI(document.getElementById('app'), {
   },
   onAbandonRun,
   onResultDone: () => { if (mode === 'result') showCamp(); },
-  onCampAct: a => { const ok = campAct(data, a); if (ok && a.type === 'train') audio.play('upgrade'); return persistOk(ok); },
+  onCampAct: a => { // 장비 상자는 결과 객체 { item, sold, equipped }를 그대로 돌려준다(shopui.js 개봉 연출)
+    const ok = campAct(data, a);
+    if (ok) audio.play(a.type === 'box' ? (ok.item?.rarity === 'legend' ? 'fusion' : 'pickConfirm') : a.type === 'prep' ? 'coin' : a.type === 'train' || /Break$/.test(a.type) ? 'upgrade' : a.type === 'relic' ? 'synergy' : '');
+    persistOk(ok);
+    return ok;
+  },
   onBuyMeta: k => { const ok = buyMeta(data, k); if (ok) audio.play('upgrade'); return persistOk(ok); },
   onStartRun: lo => startRun(newRun(data, lo)),
   onOpenHero: ({ tab } = {}) => (inRun() ? heroUI.open(game.hero, runCtx(), { tab }) : heroUI.open(data.hero, campCtx(), { tab })),
@@ -63,8 +72,10 @@ const ui = createUI(document.getElementById('app'), {
   onToggleAutoNext: on => setAuto(on),
   onToggleAutoPick: on => setAutoPick(on),
   onNext: () => nextStage(),
-  onPick: index => inRun() && act(game, 0, { type: 'pick', index }),
+  onPick: (index, choice) => inRun() && act(game, 0, { type: 'pick', index, choice }), // choice: 변이 카드 갈래 0|1(4차)
   onReroll: () => inRun() && act(game, 0, { type: 'reroll' }),
+  onRelic: index => inRun() && act(game, 0, { type: 'relic', index }),   // 4차 유물 3택(−1 = 유물 없이)
+  onForget: spell => inRun() && act(game, 0, { type: 'forget', spell }), // 4차 망각(비우기)
   onHeroUlt: () => inRun() && act(game, 0, { type: 'heroUlt' }),
   onSettings: s => {
     const pickChanged = !!s.autoPick !== !!data.settings.autoPick;
@@ -137,6 +148,7 @@ function startRun(g) {
   mode = 'run';
   game.speed = allowedSpeed(data.settings.speed);
   acc = 0; stopUntil = 0; nextAt = 0; pickHoldUntil = 0;
+  if (speedClamped) { const s = speedClamped; speedClamped = 0; setTimeout(() => ui.toast(`${s}배속은 이제 최고 ${SPEED_UNLOCK[s]}층 돌파 때 열려요`, 'lock'), 900); }
   heldPicks.length = 0;
   grantDebugSpells();
   ui.hideTitle();
@@ -170,7 +182,7 @@ function finishRun(g) {
 
 // 층 시작마다 체크포인트 저장(startStage 가 game.run.checkpoint 를 새로 만든다)
 function nextStage() {
-  if (!inRun() || game.run.over || game.phase !== 'clear') return;
+  if (!inRun() || game.run.over || game.phase !== 'clear' || game.relicPick) return; // 유물을 고르기 전엔 다음 층 없음
   startStage(game, game.stage + 1);
   acc = 0;
   heldPicks.length = 0;
@@ -217,10 +229,11 @@ function setAutoPick(on) {
   persist();
 }
 
-const allowedSpeed = s => (s >= 3 && data.best < SPEED3_UNLOCK ? 1 : s);
+const allowedSpeed = s => Math.min(s || 1, speedCap(data.best)); // 4차 배속 해금(config SPEED_UNLOCK)
+let speedUnlockDue = 0; // 유물 화면이 끝나면 보여 줄 배속 해금(n배속)
 function onSpeed() {
   const cur = inRun() ? game.speed : data.settings.speed;
-  const s = allowedSpeed(cur >= 3 ? 1 : cur + 1);
+  const s = nextSpeed(cur, data.best);
   data.settings.speed = s;
   if (inRun()) game.speed = s;
   persist();
@@ -278,11 +291,11 @@ function persist(now = false) {
 function checkOffline() {
   const r = store.computeOffline(data);
   data.lastSeen = Date.now(); // 복귀 이벤트가 두 번 와도 한 번만 지급
-  if (!(r.gems > 0 || r.xp > 0)) return;
-  if (!(r.gems > 0) || r.minutes < 10) { // 잠깐 비운 정도(보석 0)는 창 없이 조용히 지급 — 카드 선택 위로 팝업하지 않는다
+  if (!(r.gems > 0 || r.gold > 0 || r.xp > 0)) return;
+  if (!(r.gems > 0 || r.gold > 0) || r.minutes < 10) { // 잠깐 비운 정도(보석 0)는 창 없이 조용히 지급 — 카드 선택 위로 팝업하지 않는다
     applyOffline(data, r);
     persist(true);
-    if (r.xp > 0) ui.toast(`돌아오셨네요! 영웅 경험치 +${r.xp}`, 'hero');
+    if (r.xp > 0 || r.gold > 0) ui.toast(`돌아오셨네요! ${r.gold > 0 ? `골드 +${r.gold} · ` : ''}영웅 경험치 +${r.xp}`, r.gold > 0 ? 'coin' : 'hero'); // 방치 골드(shop.js)
     if (mode === 'title' && data.run) ui.showContinue(data.run, data.hero);
     return;
   }
@@ -335,6 +348,14 @@ function handleEvents(events, now) {
         for (let i = 0; i < (game.pick?.cards.length || 3); i++) setTimeout(() => audio.play('cardFlip'), 90 * i + 60);
         break;
       case 'spellPick': audio.play('pickConfirm', ev.rarity); break;
+      // 4차 유물·망각: 고른 즉시 저장(체크포인트가 유물을 품는다) · 고른 뒤 다음 층까지 잠깐 여유
+      case 'relicOffer': audio.play('pickShow'); break;
+      case 'relicPick':
+        audio.play(ev.key ? 'synergy' : 'pickConfirm', 'legend'); nextAt = Math.max(nextAt, now + 1500); persist(true);
+        if (speedUnlockDue) { const n = speedUnlockDue; speedUnlockDue = 0; setTimeout(() => ui.speedUnlocked(n), 900); } // 미뤄 둔 배속 해금 연출
+        break;
+      case 'relicProc': audio.play(ev.key === 'phoenix' ? 'synergy' : 'crit'); break;
+      case 'forget': audio.play('upgrade'); break;
       case 'spell': audio.play('spell', ev.key); break;
       case 'revive': audio.play('synergy'); break;
       case 'talent': audio.play('upgrade'); persist(true); break;
@@ -356,7 +377,10 @@ function handleEvents(events, now) {
         audio.play('clear');
         const prev = data.best;
         data.best = Math.max(data.best, game.stage); // 3배속 해금용(신기록 보석은 endRun이 도전 시작 기록 기준으로 계산)
-        if (prev < SPEED3_UNLOCK && data.best >= SPEED3_UNLOCK) setTimeout(() => ui.toast('3배속 해금!', 'speed'), 1600);
+        if (speedCap(data.best) > speedCap(prev)) { // 4차: '2배속 해금!' — 10·30층은 유물 층이라 유물을 고른 뒤에(유물 화면에 묻히지 않게)
+          if (game.relicPick) speedUnlockDue = speedCap(data.best);
+          else setTimeout(() => ui.speedUnlocked(speedCap(data.best)), 1600);
+        }
         nextAt = now + NEXT_DELAY;
         updSnooze = false;
         persist(true);
@@ -505,7 +529,7 @@ function frame(now) {
   meta.best = data.best;
   meta.speed = inRun() ? game.speed : data.settings.speed;
   meta.autoNext = data.settings.autoNext;
-  meta.unlocked3x = data.best >= SPEED3_UNLOCK;
+  meta.speedCap = speedCap(data.best);
   meta.settings = data.settings;
   meta.discovered = game ? game.discovered : data.discovered;
 
@@ -521,8 +545,9 @@ function frame(now) {
   // 카드 선택 중: 전투 정지(sim도 스스로 멈춤). 카드 화면 '자동 선택'을 켰을 때만 실시간 카운트다운(sim이 판단), 아니면 고를 때까지 기다린다
   const picking = !!game.pick;
   if (picking && !heroUI.isOpen() && ui.isPickShown()) tickPick(game, dt);
+  if (game.relicPick && !heroUI.isOpen() && ui.isRelicShown()) tickRelic(game, dt); // 유물 3택(자동 선택 ON일 때만 카운트다운)
   // 모달(메뉴·영웅 화면·결과 등)이 열리면 일시정지
-  const paused = picking || ui.isBusy() || heroUI.isOpen();
+  const paused = picking || !!game.relicPick || ui.isBusy() || heroUI.isOpen();
   const holding = now < stopUntil;
   if (dbgLoot && game.hero?.cls && game.phase === 'play' && !paused) { dropLoot(dbgLoot); dbgLoot = null; }
   if (!paused && !holding) {
@@ -540,9 +565,11 @@ function frame(now) {
     stackAt = now + 500;
     const r = document.getElementById('side-r').getBoundingClientRect();
     stackLeft = r.width > 0 ? renderer.toWorld(r.left, r.top).x : NaN;
+    const c = document.getElementById('combo'), cr = (c.hidden ? document.getElementById('st-row') : c).getBoundingClientRect(); // 4차: 콤보 알약 가운데(단계 팝이 빨려 드는 곳)
+    comboAt = renderer.toWorld(cr.left + cr.width / 2, cr.top + cr.height / 2);
   }
   const out = renderer.frame(g, events, dt, {
-    dmgNumbers: data.settings.dmgNumbers, shake: data.settings.shake, hitstop: holding || paused, myIndex: 0, stackLeft,
+    dmgNumbers: data.settings.dmgNumbers, shake: data.settings.shake, hitstop: holding || paused, myIndex: 0, stackLeft, comboAt,
   });
   if (out.coins > 0) audio.play('coin');
   ui.onEvents(events, g);
@@ -553,7 +580,7 @@ function frame(now) {
     pendingResult = null;
   }
 
-  if (inRun() && game.phase === 'clear' && !game.run.over && data.settings.autoNext && now >= nextAt && !ui.isBusy() && !heroUI.isOpen()) {
+  if (inRun() && game.phase === 'clear' && !game.run.over && !game.relicPick && data.settings.autoNext && now >= nextAt && !ui.isBusy() && !heroUI.isOpen()) {
     if (pendingUpdate && !updSnooze) maybeShowUpdate();
     else nextStage();
   } else maybeShowUpdate();

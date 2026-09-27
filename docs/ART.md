@@ -306,12 +306,13 @@
 ## 9. VFX 규칙 (FX)
 
 ### 9.1 레이어 순서 (아래 → 위) — `render.js frame()`이 이 순서를 지킨다
-배경(+위 여분) → 바닥 데칼·서리 결계 → 주변 입자 → 드래곤 경고 기둥 → 영웅 바닥(도발·이동 마커) → 궁극기 바닥 마법진 → 골렘 → **적**(그림자·오라·몸·표식·체력바) → 적 투사체 → 회오리 → 망령 → 얼음 창 → **마법탄** → 브레스 → 심판 예고 → **성벽** → 빛기둥 → 잔상 → **영웅** → **성벽 마법사** → 새끼 드래곤 → 파티클 → 팝 스프라이트(마법진·섬광) → 번개 → 운석 → 파이어볼 → 영웅 투사체 → 영혼 → 장비 드롭 → 동전 → **데미지 숫자** → LEVEL UP → 화면 틴트 → 캔버스 HUD(보스바·콤보·도장·팝업·배너·컷인) → 섬광 → (DOM HUD)
+배경(+위 여분) → 바닥 데칼·서리 결계 → 주변 입자 → 드래곤 경고 기둥 → 영웅 바닥(도발·이동 마커) → 궁극기 바닥 마법진 → 골렘 → **적**(그림자·오라·몸·표식·체력바) → 적 투사체 → 회오리 → 망령 → 얼음 창 → **마법탄** → 브레스 → 심판 예고 → **성벽** → 빛기둥 → 잔상 → **영웅** → **성벽 마법사** → 새끼 드래곤 → 파티클 → 팝 스프라이트(마법진·섬광) → 번개 → 운석 → 파이어볼 → 영웅 투사체 → 영혼 → 장비 드롭 → 동전 → **데미지 숫자** → LEVEL UP → 화면 틴트 → 캔버스 HUD(보스바·콤보 단계 팝·도장·팝업·배너·컷인) → 섬광 → (DOM HUD — 상태 줄·스킬 스택·칩)
 
 ### 9.2 블룸·가산
 - 빛은 **미리 구운 방사형 글로우**(`fx.gl(color)`)를 `'lighter'`로. 실시간 `shadowBlur`·`filter: blur` 금지.
 - 글로우 한 프레임 최대 **60장**(넘치면 작은 것부터 생략), 파티클 ≤ 400.
 - 발광 3층: 흰 코어(작게) + 원소 메인(중간, α .7) + 원소 에지 헤일로(크게, α .25).
+- (3차부터) 큰 글로우는 흰 중심 없는 `fx.hu(col)`, 흰 광선 심 ≤ 20px — render.js 광량 예산(`window.__wdLight`)이 넘치는 프레임의 가산 그리기를 눌러 준다. 빛이 많은 프레임엔 `units.drawEnemyReveal`·`drawHeroReveal`이 적·영웅 윤곽을 효과 위로 다시 그린다(DESIGN '3차 변경' E).
 
 ### 9.3 타격 이펙트 표준
 | 단계 | 시간 | 내용 |
@@ -360,12 +361,12 @@
 ### 10.2 전투 HUD
 - **무대 = 화면 전체 높이**(✅). DOM HUD는 화면 맨 위, 월드는 아래에 붙고 위 여분(topExtra)은 배경. HUD 기준 캔버스 좌표는 `core.hudY(y)` / `GOLD_POS`·`BAG_POS`·`MANA_POS` getter.
 - 좌상: 골드 알약(코인 아이콘이 알약 밖으로 반쯤). 우상: 보석 알약 + 메뉴 `.k-btn.round.neutral`. 영웅 버튼 = 초상 + Lv 배지 + 전투력(중심 = BAG_POS, 좁은 화면에서도 `--u` 기준 고정 크기 → 글자 min px로 틀어지지 않게).
-- 중앙: "25층" Impact + 테마 이름 Display 13 + 웨이브 바(`.k-bar`) + 마나 바(8px) + 광폭화 칩(DOM 한 곳만 — 캔버스 알약으로 다시 그리지 않음).
+- 중앙: "25층" Impact + 테마 이름 Display 13 + 웨이브 바(`.k-bar`) + 마나 바(8px). 그 아래 **전투 상태 한 줄**(4차, DOM `#st-row` — 콤보 · 광란 x2 · 골드 x2 · 광폭화 작은 알약, 남은 시간 = 알약 아래 2px 게이지, 왼쪽 지역 칩·오른쪽 영웅 버튼을 비켜 넘치면 두 줄, 보스전엔 보스바 아래).
 - **오른쪽 스킬 스택**(`#side-r`, 스킬 중심 개편): 이번 도전에서 고른 스킬 6칸이 세로로(원형 원소 구슬 + 쿨타임 고리 + Lv 점 5개, 빈 칸 = 점선 룬 소켓, 융합 스킬 = 두 원소 반반 + 금 테 + 도는 후광) + `n/6` 알약. 좁은 화면 = 영웅 버튼 아래 전장 가장자리에 겹침, 넓은 화면(`#stage.wide`) = 오른쪽 여백의 유리 패널 '마법서'(이름·Lv 표시, `.slim`이면 구슬 2열). 합체 = 두 구슬이 날아와 하나로 + 빈 칸 반짝('슬롯 해제!'는 꽉 찬 슬롯에서 합체했을 때만).
 - **왼쪽 열**(`#side-l`): 영웅 카드(초상 + 체력 고리) · 합동 필살 칩 · 켜진 협공 타일 · (넓은 화면) AI 동료 주문. 협공 빛줄기(영웅 초상 ↔ 엮인 구슬)는 평소 숨기고 협공이 켜지거나 터질 때만 가늘게 한 번 흐른다(엮인 구슬은 클래스 색 고리로 숨 쉼).
 - 영웅 버튼: 좁은 화면 = 전장 우상단(BAG_POS), 넓은 화면 = 오른쪽 여백 위쪽(마법서 패널 바로 위).
 - 보스바는 영웅 버튼 영역을 비운다(§4.5). 토스트는 보스바 아래, 패배 도장이 뜨면 치운다.
-- 콤보: 우측 중단, Impact h1 + 단계 리본. 오른쪽 끝 = 스킬 스택 왼쪽 끝(좁은 화면, `hud.setStackLeft`) — 스택 뒤로 숨지 않게. **컷인·클리어·모달·카드 선택 중엔 숨김**.
+- 콤보(4차 — 사용자: "콤보 표시가 화면을 많이 가려서"): 평소엔 상태 줄의 작은 알약 '콤보 294 전설'(숫자만 조용히 오름, 단계 색). **단계가 오르는 순간만**(10·30·50·100) 캔버스(`hud.js drawCombo`)가 상태 줄 바로 아래 가운데에 0.8초 크게 슬램 → 알약 자리(`hud.setComboAnchor`, main.js가 0.5초마다 잼)로 빨려 들며 0.22배로 작아지고, 알약이 받아 톡 튄다. 전장 가운데·스킬 스택 근처엔 머물지 않는다. **컷인·클리어·모달·카드 선택 중엔 팝 없음**.
 
 ### 10.3 하단 패널
 `.k-panel` 밤 유리. **전투 중 골드 강화 버튼·자동 강화 토글은 없다**(스킬 중심 개편 — 같은 5종은 정비 화면 '마법사 수련', 골드). 하단 패널 = 비상 마법 **운석 · 빙결** + **영웅 궁극기**(클래스 문장, 쿨다운 부채꼴, 준비 시 광택 스윕 · 닿는 곳에 적이 없으면 흐리게, 합동 필살 창이 열리면 금빛 고리) 왼쪽 묶음 + **자동 전투 · 배속 · 자동 진행** 오른쪽 묶음. 비상 마법 = `.k-btn.round` 64px + SVG + 이름 작은 알약.
@@ -452,6 +453,7 @@ for src, name in [('Jua-Regular.ttf', 'Jua'), ('BlackHanSans-Regular.ttf', 'Blac
 - 가산 글로우 ≤ 60, 파티클 ≤ 400(풀 600 재활용), 데미지 숫자 ≤ 14, 탄 260발 이상 LOD.
 - DOM 애니메이션은 `transform`·`opacity`만(+ 개별 `scale`/`rotate`).
 - 측정: 데스크톱 1.4ms/프레임(스테이지 100, 적 16·탄 31). 새 연출 추가 후 `__wd.frame` 60회 평균을 다시 재서 3ms 넘으면 LOD.
+- **광량 예산**(3차): render.js가 프레임마다 가산 빛 면적을 재서 넘치면 다음 프레임의 가산 그리기 전체를 `lightK`배(최저 0.35)로 — `window.__wdLight`. 큰 글로우는 흰 중심 없는 `hu(col)`, 흰 광선 심 ≤ 20px, `flash()` ≤ 120ms(겹치면 절반). 빛이 많은 프레임엔 `units.drawEnemyReveal`·`drawHeroReveal`이 윤곽을 효과 위에 다시 그린다. 4차 새 연출(`mutfx.js`·`dungeonfx.js`·`relicart.js`)도 같은 규칙.
 
 ---
 
@@ -486,6 +488,10 @@ for src, name in [('Jua-Regular.ttf', 'Jua'), ('BlackHanSans-Regular.ttf', 'Blac
 | **유닛** | `public/js/art/units.js` |
 | **월드** | `public/js/art/world.js` |
 | **FX** | `public/js/art/fx.js` |
+| **변이(4차)** | `public/js/art/mutfx.js`(44 변이 연출 — `events`·`update`·`drawGround`·`draw`, render.js 한 줄씩) · `public/css/mutation.css` · `public/js/mutui.js` |
+| **던전 특성(4차)** | `public/js/art/dungeonfx.js`(약점·내성 숫자 색 · 망자 부활 · 들불 · 동굴 어둠) · `public/css/dungeon.css` · `public/js/dungeonui.js`(지역 배너 · HUD 칩 · 카드/칸 배지) |
+| **상점·경제(4차)** | `public/shop.css` · `public/js/shopui.js`(상점 탭 · 출정 준비 · 상자 개봉 · 돌파 칩) |
+| **유물·망각(4차)** | `public/js/art/relicart.js`(유물 엠블럼 20종 — 금테 메달 + 바탕색 + 물건, emblems.js의 `EM` 그리기 도구로 같은 손) · `public/css/relics.css` · `public/js/relicui.js`(유물 3택 · HUD 유물 줄 · 비우기 시트 · 결과 화면 유물) |
 | **UI** | `public/js/art/hud.js` · `public/js/art/emblems.js` · `public/css/kit.css` · `public/assets/icons/*.svg` · `public/js/icons.js` · `public/style.css` · `public/hero.css` · `public/index.html` · `public/js/ui.js` · `public/js/heroui.js` |
 | **아트 리드(공용, 동결)** | `public/js/art/core.js` · `public/js/render.js`(층 순서·이벤트 분배) · `public/css/fonts.css` · `public/assets/fonts/*` · `docs/ART.md` |
 | 건드리지 않음 | `sim.js` `config.js` `stages.js` `spells.js` `hero.js` `bot.js` `save.js` `main.js` `audio.js` `updater.js` — 예외: FX의 `hit` 이벤트 최소 추가(§6), 그때도 `npm test` 통과 |
@@ -515,8 +521,8 @@ for src, name in [('Jua-Regular.ttf', 'Jua'), ('BlackHanSans-Regular.ttf', 'Blac
 - render 전용: `setCanvas, setView, setWorldTransform, setClock, decayCamera`
 
 ### 14.5 `art/units.js` (유닛)
-- render가 부름: `events(view, evs, opts)`(shoot·upgrade·heroHit·heroDown·heroRespawn) · `update(view, da, dt)` · `drawWarn(view)` · `drawGroundFx(view)` · `drawGolem(view)` · `drawEnemies(view)` · `drawGhosts(view)` · `drawAfter()` · `drawHero(view)` · `drawMages(view, opts)` · `drawDragon(view)`
-- 다른 모듈이 씀(시그니처 유지): 상태 `MF[0|1]{cast,aim,ox,oy,...}`(FX가 시전·발사 위치로), `HF{atk,tx,ty,body,...}`, `visOf(e){hitD,punch,chroma,...}`, `stuns`(id→끝 RT), `upGlow`, `afterImage(x,y,face,life)`, `MAGE_FEET` · 텍스처 `enemy(type,r,v)`, `bone()`, `itemIcon(slot,rarity,cls)`(월드 드롭), `classIcon(cls)`, `heroBody/heroWeapon/heroCape`, `mageBody/mageStaff/mageCape`, `FEET` 등
+- render가 부름: `events(view, evs, opts)`(shoot·heroHit·heroDown·heroRespawn — 옛 'upgrade'(도전 중 골드 강화)는 없어져 4차에 지움) · `update(view, da, dt)` · `drawWarn(view)` · `drawGroundFx(view)` · `drawGolem(view)` · `drawEnemies(view)` · `drawGhosts(view)` · `drawAfter()` · `drawHero(view)` · `drawMages(view, opts)` · `drawDragon(view)`
+- 다른 모듈이 씀(시그니처 유지): 상태 `MF[0|1]{cast,aim,ox,oy,...}`(FX가 시전·발사 위치로), `HF{atk,tx,ty,body,...}`, `visOf(e){hitD,punch,chroma,...}`, `stuns`(id→끝 RT), `afterImage(x,y,face,life)`, `drawEnemyReveal(view)`·`drawHeroReveal(view)`(광량이 많은 프레임에 윤곽 다시 그리기), `MAGE_FEET` · 텍스처 `enemy(type,r,v)`, `bone()`, `itemIcon(slot,rarity,cls)`(월드 드롭), `classIcon(cls)`, `heroBody/heroWeapon/heroCape`, `mageBody/mageStaff/mageCape`, `FEET` 등
 - 자유: 스프라이트 도안, 크기 배율, 애니메이션, 적 체력바, 보스 시각 오프셋, 등장 페이드. **판정 좌표(e.x/e.y/e.r)는 그대로 읽기만**.
 
 ### 14.6 `art/world.js` (월드)
@@ -527,10 +533,11 @@ for src, name in [('Jua-Regular.ttf', 'Jua'), ('BlackHanSans-Regular.ttf', 'Blac
 ### 14.7 `art/fx.js` (FX)
 - render가 부름: `events`(hit·kill·boom·spell·spellPick·pickOffer·heroAttack·heroUlt·heroBlink·skill·shield·clear·defeat·warn·enrage·frenzy·chain·shatter·goldRain·hitstop) · `update` · `dmgScan(view, mode)` · `dmgMode()` · `resetGlows()` · 그리기 `drawDecals, drawFrostWard, drawUltGround, drawEshots, drawTornadoes, drawLances, drawBullets, drawBeams, drawTelegraph, drawLBeams, drawParticles, drawSprs, drawBolts, drawMeteors, drawFireballs, drawHeroShots, drawSouls, drawNums, drawOverlays, drawFlash`
 - 다른 모듈이 씀(시그니처 유지): `gl(color)` 글로우 · `part(k,x,y,vx,vy,life,size,col,g,drag)` · `burst(k,x,y,n,sp0,sp1,life,size,cols,g,drag,up)` · `ring(x,y,r0,r1,life,col,w)` · `sprPop(img,x,y,s0,s1,life,ang,spin,sq)` · `lightBeam(x,w,y0,y1,life,core,halo)` · `num(...)` · `numText(str,x,y,size,top,bot,ink)` · 상수 `K_GLOW K_SPARK K_STAR K_CONF K_SHARD K_SMOKE K_GOO K_DEBRIS`, `MSTY`, `mstyle`, `HERO_NUM`, `CANDY` · 텍스처 `glow soft shadow sparkle rays runeCircle runeBand starFlash comet magicCore iceSpear frostBand curseSigil beamSpr slashArc shieldDome lightWings arrowSpr flame bubble ice reticle vignette frost glyph`
+- **레벨 연출 계약**(3차): 스킬 연출 크기·층은 `skillLv(view, key, ev)`(이벤트 `lv` → `view.spells` → `view.book`)와 `tier(lv)` — Lv1 작고 단색 → Lv2~3 둘째 색·흔들림 → Lv4~5 보조 층 → Lv6 완전체 마무리(스킬마다 1.8~3.2초에 한 번, 동시에 3개까지). 흰 중심 없는 큰 글로우 `hu(col)`. 4차 변이는 `art/mutfx.js`가 기본 연출 위에 덧그린다(`spell{mut}`·`mutFx`).
 - 자유: 마법탄·파티클·숫자 렌더링 전부. 텍스처 모양을 바꿔도 **이름·시그니처는 유지**(유닛·월드·HUD가 쓴다).
 
 ### 14.8 `art/hud.js` (UI)
-- render가 부름: `events`(bossSpawn·combo·synergy·heroLevelUp) · `update` · `drawLevelUps()` · `drawHud(view)`(보스바·콤보·광란/전설 표시·도장·팝업·배너·컷인)
+- render가 부름: `events`(bossSpawn·combo·synergy·heroLevelUp) · `update` · `drawLevelUps()` · `drawHud(view)`(보스바·콤보 단계 팝·도장·팝업·배너·컷인) · `setComboAnchor({x,y})`(4차: 콤보 알약 가운데, HUD 좌표). 평소 콤보·광란·전설·광폭화 표시는 DOM 상태 줄(ui.js `updateCombo`/`updateStatus`)
 - 다른 모듈이 씀: `stamp(txt, col, y, size, life)`(FX: 빙결!·운석 낙하!·격노!·광란!·골드 비!·보스 격파!) · `pop(txt, sub, col, x, y)`
 - 자유: 캔버스 HUD 전부 + 컷인 대기열·콤보 숨김 규칙(모달·클리어 중엔 `view.phase`·`document` 상태로 판단 가능, 필요하면 `opts`에 값 추가를 아트 리드에 요청).
 

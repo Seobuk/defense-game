@@ -11,12 +11,14 @@ import { heroPortraitURL, itemIconURL, magePortraitURL } from './art/units.js';
 import { emblemImg } from './art/emblems.js';
 import { icon } from './icons.js';
 import { fmt } from './util.js';
+import { createShopUI } from './shopui.js'; // 4차 경제: 상점 탭(상자·유물) · 출정 준비 카드
+import { trainBreakCost, trainBreakText, gemBreakOpen, gemBreakCost, gemBreakText, GEM_BREAK } from './shop.js';
 
 const META_ICON = {
-  greed: 'coin', wisdom: 'hero', choice: 'new', reroll: 'reroll', startSlot: 'codex', revive: 'em:flawless', critBoom: 'em:critBoom', awaken: 'crit', pickaxe: 'em:pickaxe',
+  greed: 'coin', wisdom: 'hero', choice: 'new', reroll: 'reroll', startSlot: 'codex', revive: 'em:flawless', critBoom: 'em:critBoom', awaken: 'crit', pickaxe: 'em:pickaxe', forget: 'reroll',
 };
 // 상점 타일 색(분류): 전투 · 경제 · 카드 · 특수
-const META_TONE = { critBoom: 'r', awaken: 'r', greed: 'y', pickaxe: 'y', wisdom: 'b', choice: 'p', reroll: 'p', startSlot: 'p', revive: 'g' };
+const META_TONE = { critBoom: 'r', awaken: 'r', greed: 'y', pickaxe: 'y', wisdom: 'b', choice: 'p', reroll: 'p', startSlot: 'p', revive: 'g', forget: 'p' };
 // 마법사 수련 타일 색 = 옛 인게임 강화 버튼 색(마력 보라 · 시전 속도 금 · 치명타 빨강 · 다중 시전 파랑 · 성벽 결계 초록)
 const TRAIN_TONE = { atk: 'p', rate: 'y', crit: 'r', multi: 'b', wall: 'g' };
 const TRAIN_TOTAL = MAGE_TRAINING.reduce((a, t) => a + t.max, 0);
@@ -63,6 +65,7 @@ export function createCamp(root, H = {}) {
           <div class="cp-ss-slots"></div>
           <p class="cp-note cp-ss-note"></p>
         </section>
+        <section class="cp-card sh-prep" aria-label="출정 준비"></section>
         <section class="cp-card cp-goal"></section>
       </section>
       <section class="cp-pane" data-pane="train" hidden>
@@ -82,11 +85,13 @@ export function createCamp(root, H = {}) {
         <div class="cp-thost"></div>
       </section>
       <section class="cp-pane" data-pane="shop" hidden>
-        <div class="cp-shop-top">
-          <span class="cp-shop-art" aria-hidden="true">${emblemImg('gems')}</span>
-          <div><b class="k-num gem-n cp-shop-gems">0</b><p>보석 강화는 카드 선택지·새로고침·시작 스킬·부활처럼 도전을 편하게 만들어요. 보석은 도전이 끝나면 오른 층·보스·신기록만큼 받아요.</p></div>
+        <div class="sh-sec" data-sec="meta">
+          <div class="cp-shop-top">
+            <span class="cp-shop-art" aria-hidden="true">${emblemImg('gems')}</span>
+            <div><b class="k-num gem-n cp-shop-gems">0</b><p>보석 강화는 카드 선택지·새로고침·시작 스킬·부활처럼 도전을 편하게 만들어요. 골드 획득·황금 곡괭이는 만렙 뒤 <i class="sh-hl">보석 돌파</i>로 끝없이 올라요.</p></div>
+          </div>
+          <div class="cp-shop-list cp-meta-list"></div>
         </div>
-        <div class="cp-shop-list cp-meta-list"></div>
       </section>
     </main>
     <footer class="cp-dock">
@@ -105,7 +110,7 @@ export function createCamp(root, H = {}) {
       <button class="cp-tab" data-go="sortie" role="tab" aria-selected="true">${icon('wall')}<span>출정</span></button>
       <button class="cp-tab" data-go="train" role="tab" aria-selected="false">${icon('atk')}<span>수련</span><i class="cp-dot" hidden></i></button>
       <button class="cp-tab" data-go="talent" role="tab" aria-selected="false">${icon('crit')}<span>특성</span><i class="cp-dot" hidden></i></button>
-      <button class="cp-tab" data-go="shop" role="tab" aria-selected="false">${icon('gem')}<span>보석</span><i class="cp-dot" hidden></i></button>
+      <button class="cp-tab" data-go="shop" role="tab" aria-selected="false">${icon('shop')}<span>상점</span><i class="cp-dot" hidden></i></button>
       <button class="cp-tab" data-go="codex">${icon('codex')}<span>도감</span><i class="cp-dot" hidden></i></button>
     </nav>
     <div class="cp-ov" hidden>
@@ -142,6 +147,7 @@ export function createCamp(root, H = {}) {
   const txt = (e, s) => { if (e.textContent !== s) e.textContent = s; };
   let meta = null, pane = 'sortie', preview = 'knight', startSpells = [], sig = '', pickSlot = -1, tCls = null, lastCls = null;
 
+  const shop = createShopUI(el, $('.cp-pane[data-pane="shop"]'), $('.sh-prep'), H);
   const tree = createTalentTree($('.cp-thost'), el, {
     onAllocate: key => !!H.onCampAct?.({ type: 'talent', cls: tCls, key }),
     onReset: () => !!H.onCampAct?.({ type: 'talentReset', cls: tCls }),
@@ -232,7 +238,7 @@ export function createCamp(root, H = {}) {
     on(b, 'click', () => {
       const k = row.dataset.k;
       if (b.classList.contains('is-poor')) { b.classList.remove('shake'); void b.offsetWidth; b.classList.add('shake'); H.toast?.('보석이 부족해요', 'gem'); return; }
-      if (!H.onBuyMeta?.(k)) return;
+      if (!(row.classList.contains('brk') ? H.onCampAct?.({ type: 'gemBreak', key: k }) : H.onBuyMeta?.(k))) return; // 만렙 뒤 = 보석 돌파(shop.js)
       row.animate([{ scale: 1 }, { scale: 1.03, offset: 0.35 }, { scale: 1 }], { duration: 260, easing: 'cubic-bezier(.34,1.56,.64,1)' });
       const sp = document.createElement('i'); sp.className = 'cp-mu-spark'; row.append(sp); setTimeout(() => sp.remove(), 600);
       render(true);
@@ -255,7 +261,7 @@ export function createCamp(root, H = {}) {
     const b = row.querySelector('.cp-mu-buy');
     on(b, 'click', () => {
       if (b.classList.contains('is-poor')) { b.classList.remove('shake'); void b.offsetWidth; b.classList.add('shake'); H.toast?.('골드가 부족해요 — 도전에서 모아 와요', 'coin'); return; }
-      if (!H.onCampAct?.({ type: 'train', stat: row.dataset.k })) return;
+      if (!H.onCampAct?.({ type: row.classList.contains('brk') ? 'trainBreak' : 'train', stat: row.dataset.k })) return; // 만렙 뒤 = 수련 돌파(shop.js)
       row.animate([{ scale: 1 }, { scale: 1.03, offset: 0.35 }, { scale: 1 }], { duration: 260, easing: 'cubic-bezier(.34,1.56,.64,1)' });
       const sp = document.createElement('i'); sp.className = 'cp-mu-spark'; row.append(sp); setTimeout(() => sp.remove(), 600);
       for (const m of $$('.cp-tr-m')) m.animate([{ translate: '0 0' }, { translate: '0 -10px', offset: 0.4 }, { translate: '0 0' }], { duration: 360, easing: 'cubic-bezier(.34,1.56,.64,1)' });
@@ -270,7 +276,7 @@ export function createCamp(root, H = {}) {
 
   const signature = () => {
     const h = meta.hero;
-    return [meta.gems, gold(meta), TRAIN_KEYS.map(k => trainLv(meta, k)).join(), meta.best, meta.runs, h.cls, h.level, Math.floor(h.xp), SLOTS.map(s => h.equip[s]?.id).join(), JSON.stringify(h.talents), h.autoTalent,
+    return [meta.gems, gold(meta), TRAIN_KEYS.map(k => trainLv(meta, k)).join(), JSON.stringify([meta.trainBreak, meta.gemBreak, meta.prep, meta.relicUnlocked, h.bag.length]), meta.best, meta.runs, h.cls, h.level, Math.floor(h.xp), SLOTS.map(s => h.equip[s]?.id).join(), JSON.stringify(h.talents), h.autoTalent,
       Object.values(meta.metaLv).join(), meta.seenSpells.join(), JSON.stringify(meta.lastLoadout), (meta.discovered || []).length].join('|');
   };
 
@@ -287,17 +293,18 @@ export function createCamp(root, H = {}) {
     txt($('.cp-runs'), meta.runs ? `도전 ${meta.runs}회` : '첫 도전');
     txt($('.cp-gemn'), fmt(meta.gems));
     txt($('.cp-goldn'), fmt(gold(meta)));
-    $('.cp-tab[data-go="train"] .cp-dot').hidden = !MAGE_TRAINING.some(t => trainLv(meta, t.key) < trainMax(t.key) && gold(meta) >= trainCost(t.key, trainLv(meta, t.key)));
+    $('.cp-tab[data-go="train"] .cp-dot').hidden = !MAGE_TRAINING.some(t => gold(meta) >= (trainLv(meta, t.key) < trainMax(t.key) ? trainCost(t.key, trainLv(meta, t.key)) : trainBreakCost(t.key, meta.trainBreak?.[t.key])));
     // 탭 알림: 남은 특성 포인트 · 살 수 있는 강화
     const tLeft = talentLeft(hero, cls);
     $('.cp-tab[data-go="talent"] .cp-dot').hidden = !(tLeft > 0);
-    $('.cp-tab[data-go="shop"] .cp-dot').hidden = !META_UPGRADES.some(m => (meta.metaLv[m.key] | 0) < metaMax(m.key) && meta.gems >= metaCost(m.key, meta.metaLv[m.key] | 0));
+    $('.cp-tab[data-go="shop"] .cp-dot').hidden = !shop.dots(meta).any; // 보석 강화·보석 돌파·유물 해금(상자는 반복 소비라 점 없음)
     $('.cp-tab[data-go="codex"] .cp-dot').hidden = !H.codexNew?.();
     el.style.setProperty('--cc', CLS_INFO[pane === 'sortie' ? preview : cls].col);
     if (pane === 'sortie') renderSortie(hero, cls, tLeft);
     if (pane === 'train') renderTrain();
     if (pane === 'talent') renderTalent();
     if (pane === 'shop') renderShop();
+    shop.render(force); // 출정 준비 카드 · 상점 탭 상자/유물
     renderDock(hero, cls);
   }
 
@@ -372,19 +379,24 @@ export function createCamp(root, H = {}) {
       if (lv < metaMax(m.key) && c <= meta.gems && c < bestCost) { bestCost = c; best = m.key; }
     }
     for (const row of $$('.cp-meta-list .cp-mu')) {
-      const k = row.dataset.k, lv = meta.metaLv[k] | 0, max = metaMax(k), isMax = lv >= max, cost = isMax ? 0 : metaCost(k, lv);
-      txt(row.querySelector('.cp-mu-lv'), `Lv.${lv}/${max}`);
+      const k = row.dataset.k, lv = meta.metaLv[k] | 0, max = metaMax(k), isMax = lv >= max;
+      const brk = isMax && GEM_BREAK.some(x => x.key === k) && gemBreakOpen(meta, k), n = brk ? meta.gemBreak[k] | 0 : 0; // 보석 돌파(shop.js)
+      const cost = brk ? gemBreakCost(k, n) : isMax ? 0 : metaCost(k, lv);
+      txt(row.querySelector('.cp-mu-lv'), brk ? `MAX · 돌파 ${n}단` : `Lv.${lv}/${max}`);
       row.querySelector('.cp-mu-bar').style.setProperty('--p', (lv / max).toFixed(3));
-      row.querySelector('.cp-mu-fx').innerHTML = isMax ? `<span class="fx-chip max">${metaDisplay(k, lv)}</span><span class="k-badge max">MAX</span>`
-        : `<span class="fx-chip now">${metaDisplay(k, lv)}</span><i class="fx-arrow" aria-hidden="true"></i><span class="fx-chip next">${metaDisplay(k, lv + 1)}</span>`;
+      row.querySelector('.cp-mu-fx').innerHTML = brk
+        ? `<span class="fx-chip brk">돌파 ${n ? gemBreakText(k, n) : '없음'}</span><i class="fx-arrow" aria-hidden="true"></i><span class="fx-chip next">${gemBreakText(k, n + 1)}</span>`
+        : isMax ? `<span class="fx-chip max">${metaDisplay(k, lv)}</span><span class="k-badge max">MAX</span>`
+          : `<span class="fx-chip now">${metaDisplay(k, lv)}</span><i class="fx-arrow" aria-hidden="true"></i><span class="fx-chip next">${metaDisplay(k, lv + 1)}</span>`;
       const b = row.querySelector('.cp-mu-buy');
-      b.disabled = isMax;
-      b.classList.toggle('is-poor', !isMax && meta.gems < cost);
-      txt(b.querySelector('b'), isMax ? 'MAX' : fmt(cost));
+      b.disabled = isMax && !brk;
+      b.classList.toggle('is-poor', !b.disabled && meta.gems < cost);
+      txt(b.querySelector('b'), b.disabled ? 'MAX' : fmt(cost));
       const nm = row.querySelector('.cp-mu-name b').textContent;
-      b.setAttribute('aria-label', isMax ? `${nm} 최대 레벨` : `${nm} 강화, 보석 ${cost}개`);
+      b.setAttribute('aria-label', b.disabled ? `${nm} 최대 레벨` : brk ? `${nm} 보석 돌파 ${n + 1}단, 보석 ${fmt(cost)}개` : `${nm} 강화, 보석 ${cost}개`);
       row.classList.toggle('best', k === best);
       row.classList.toggle('maxed', isMax);
+      row.classList.toggle('brk', brk);
     }
   }
 
@@ -404,19 +416,21 @@ export function createCamp(root, H = {}) {
     $('.cp-tr-bar').style.setProperty('--p', (sum / TRAIN_TOTAL).toFixed(3));
     txt($('.cp-tr-sum'), `${sum}/${TRAIN_TOTAL}`);
     for (const row of $$('.cp-tr')) {
-      const k = row.dataset.k, lv = trainLv(meta, k), max = trainMax(k), isMax = lv >= max, cost = isMax ? 0 : trainCost(k, lv);
-      txt(row.querySelector('.cp-mu-lv'), `Lv.${lv}/${max}`);
+      const k = row.dataset.k, lv = trainLv(meta, k), max = trainMax(k), isMax = lv >= max, n = meta.trainBreak?.[k] | 0; // 만렙 뒤 = 수련 돌파(shop.js, 끝없음)
+      const cost = isMax ? trainBreakCost(k, n) : trainCost(k, lv);
+      txt(row.querySelector('.cp-mu-lv'), isMax ? `MAX · 돌파 ${n}단` : `Lv.${lv}/${max}`);
       row.querySelector('.cp-mu-bar').style.setProperty('--p', (lv / max).toFixed(3));
-      row.querySelector('.cp-mu-fx').innerHTML = isMax ? `<span class="fx-chip max">${trainDisplay(k, lv)}</span><span class="k-badge max">MAX</span>`
+      row.querySelector('.cp-mu-fx').innerHTML = isMax
+        ? `<span class="fx-chip brk">돌파 ${n ? trainBreakText(k, n) : '없음'}</span><i class="fx-arrow" aria-hidden="true"></i><span class="fx-chip next">${trainBreakText(k, n + 1)}</span>`
         : `<span class="fx-chip now">${lv ? trainDisplay(k, lv) : '기본'}</span><i class="fx-arrow" aria-hidden="true"></i><span class="fx-chip next">${trainDisplay(k, lv + 1)}</span>`;
       const b = row.querySelector('.cp-mu-buy');
-      b.disabled = isMax;
-      b.classList.toggle('is-poor', !isMax && g < cost);
-      txt(b.querySelector('b'), isMax ? 'MAX' : fmt(cost));
+      b.classList.toggle('is-poor', g < cost);
+      txt(b.querySelector('b'), fmt(cost));
       const nm = row.querySelector('.cp-mu-name b').textContent;
-      b.setAttribute('aria-label', isMax ? `${nm} 최대 레벨` : `${nm} 수련, 골드 ${fmt(cost)}`);
+      b.setAttribute('aria-label', isMax ? `${nm} 돌파 ${n + 1}단, 골드 ${fmt(cost)}` : `${nm} 수련, 골드 ${fmt(cost)}`);
       row.classList.toggle('best', k === best);
       row.classList.toggle('maxed', isMax);
+      row.classList.toggle('brk', isMax);
     }
   }
 
@@ -439,6 +453,7 @@ export function createCamp(root, H = {}) {
 
   function show(m) {
     meta = m;
+    shop.setMeta(m);
     preview = cur();
     startSpells = [...(meta.lastLoadout?.startSpells || [])];
     el.hidden = false;
@@ -446,16 +461,23 @@ export function createCamp(root, H = {}) {
     setPane('sortie');
     el.classList.remove('in'); void el.offsetWidth; el.classList.add('in');
     notice.hidden = !meta.hero?.talentNotice;
-    if (!notice.hidden) setTimeout(() => $('.cp-nt-go').focus({ preventScroll: true }), 50);
+    if (!notice.hidden) {
+      // 진행 중이던 도전 때문에 추천 빌드로 이미 다시 찍었으면(save.js) '돌려받았어요' 대신 그 사실 + 무료 초기화 안내
+      const auto = talentPoints(meta.hero) > 0 && talentLeft(meta.hero, meta.hero.cls) === 0;
+      txt($('.cp-nt-lead'), auto ? '특성이 개편되어 추천 빌드로 다시 찍어 두었어요' : '특성이 개편되어 포인트를 돌려받았어요');
+      $('.cp-nt-go').lastChild.textContent = auto ? '특성 보기 · 무료 초기화' : '특성 찍으러 가기';
+      setTimeout(() => $('.cp-nt-go').focus({ preventScroll: true }), 50);
+    }
   }
-  function hide() { el.hidden = true; notice.hidden = true; closePick(); tree.close(); }
+  function hide() { el.hidden = true; notice.hidden = true; closePick(); tree.close(); shop.hide(); }
   function handleBack() {
     if (el.hidden) return false;
     if (!notice.hidden) { closeNotice(false); return true; }
     if (!$('.cp-ov').hidden) { closePick(); return true; }
+    if (shop.handleBack()) return true;
     if (tree.handleBack()) return true;
     if (pane !== 'sortie') { setPane('sortie'); return true; }
     return false;
   }
-  return { show, hide, isOpen: () => !el.hidden, refresh: m => { if (m) meta = m; render(); }, handleBack, el };
+  return { show, hide, isOpen: () => !el.hidden, refresh: m => { if (m) { meta = m; shop.setMeta(m); } render(); }, handleBack, el };
 }

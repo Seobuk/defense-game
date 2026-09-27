@@ -1,7 +1,8 @@
 // 저장 검증 · v1/v2 → v3 마이그레이션 · 오프라인 보상 셀프 체크: node test/save.test.js
 import assert from 'node:assert/strict';
+import { offlineGoldPerHour } from '../public/js/shop.js';
 import { normalize, computeOffline, load, defaults, exportSave, importSave, STORAGE_KEY, SAVE_VERSION, MIGRATE_GEMS_PER_BEST, MIGRATE_TRAIN } from '../public/js/save.js';
-import { offlineGemsPerHour, offlineXpPerMin, OFFLINE_CAP_HOURS, META_KEYS, TRAIN_KEYS, trainMax, goldPerKill } from '../public/js/config.js';
+import { offlineGemsPerHour, offlineXpPerMin, OFFLINE_CAP_HOURS, META_KEYS, TRAIN_KEYS, trainMax, goldPerKill, speedCap, nextSpeed } from '../public/js/config.js';
 import { newRun, restoreRun } from '../public/js/run.js';
 import { serializeRun } from '../public/js/sim.js';
 
@@ -96,7 +97,7 @@ assert.equal(d.runs, 0);
 assert.deepEqual(d.lastLoadout, { cls: null, startSpells: ['tornado', 'gale'] });
 
 // 영웅: 이전 저장(필드 없음) → 새 영웅, 깨진 장비는 버림
-assert.deepEqual(defaults().hero, { cls: null, level: 1, xp: 0, autoEquip: true, talents: {}, autoTalent: false, talentVer: 2, talentNotice: false, equip: { weapon: null, helm: null, armor: null, trinket: null, cape: null }, bag: [] });
+assert.deepEqual(defaults().hero, { cls: null, level: 1, xp: 0, autoEquip: true, talents: {}, autoTalent: false, talentVer: 3, talentNotice: false, equip: { weapon: null, helm: null, armor: null, trinket: null, cape: null }, bag: [] });
 const sword = { id: 'x1', slot: 'weapon', rarity: 'epic', ilvl: 12, name: '검', main: { key: 'atkPct', value: 12.5 }, subs: [{ key: 'gold', value: 2 }, { key: 'bad', value: 1 }] };
 const h = normalize({ hero: { cls: 'ranger', level: 500, xp: 7, autoEquip: true, equip: { weapon: sword, helm: sword, cape: 'x' }, bag: [sword, null, { id: 3 }] } }).hero;
 assert.equal(h.cls, 'ranger');
@@ -108,8 +109,8 @@ assert.deepEqual(h.talents, {}, '특성 필드가 없던 영웅 → 빈 배분')
 assert.equal(normalize({ hero: { autoEquip: false } }).hero.autoEquip, true, '아무것도 안 낀 옛 영웅 → 자동 장착 켬');
 assert.equal(normalize({ hero: { cls: 'knight', autoEquip: false, equip: { weapon: sword } } }).hero.autoEquip, false, '장비를 낀 영웅은 설정 유지');
 
-// 특성 배분 검증(talentVer 2 = 새 구조): 단 해금·택1·최대 랭크·포인트를 지킨 클래스만 유지, 어긴 클래스는 비움(초기화는 무료)
-const th = normalize({ hero: { cls: 'knight', level: 10, autoTalent: true, talentVer: 2, talents: {
+// 특성 배분 검증(talentVer 3 = 현재 구조): 단 해금·택1·최대 랭크·포인트를 지킨 클래스만 유지, 어긴 클래스는 비움(초기화는 무료)
+const th = normalize({ hero: { cls: 'knight', level: 10, autoTalent: true, talentVer: 3, talents: {
   knight: { crusade1: 3, crusade2: 1, crusade3: 2 },  // 정상(6점, 포인트 10)
   ranger: { rapid3: 1 },                              // 2단인데 갈래 0점 → 비움
   sorcerer: { fire1: 9 },                             // 최대 랭크 초과 → 비움
@@ -122,7 +123,7 @@ assert.equal(th.talentNotice, false);
 // 특성 개편 이전: 옛 구조(talentVer 없음 — v0.0.7까지)는 모든 클래스 포인트를 돌려주고 정비 화면 안내 1회. 다시 넣어도 안내는 유지(닫기 전까지)
 const old7 = normalize({ v: 3, hero: { cls: 'knight', level: 40, talents: { knight: { crusade1: 3, crusade2: 3, crusade3: 2 }, ranger: { rapid1: 1 } } } });
 assert.deepEqual(old7.hero.talents, {});
-assert.equal(old7.hero.talentVer, 2);
+assert.equal(old7.hero.talentVer, 3);
 assert.equal(old7.hero.talentNotice, true);
 assert.deepEqual(normalize(JSON.parse(JSON.stringify(old7))), old7, '이전은 한 번만(포인트 중복 없음, 안내 유지)');
 assert.equal(normalize({ hero: { cls: 'knight', level: 40 } }).hero.talentNotice, false, '찍은 게 없던 옛 저장은 안내 없음');
@@ -164,20 +165,20 @@ assert.deepEqual(serializeRun(lg).legacy, ['stormEye']);
 const nw = restoreRun(defaults(), { ...lgRun, v: 3, legacy: [] }, 1);
 assert.equal(nw.book.tornado, 6, '새 규칙 융합의 재료는 만렙으로 발동');
 
-// 오프라인 보상: 보석(소량) + 영웅 경험치, 골드 없음
+// 오프라인 보상: 보석(소량) + 골드(4차 경제, shop.js offlineGoldPerHour) + 영웅 경험치
 const base = { best: 10, metaLv: { pickaxe: 2 }, lastSeen: 1_000_000 };
-const none = { gems: 0, xp: 0, minutes: 0 };
+const none = { gems: 0, gold: 0, xp: 0, minutes: 0 };
 assert.deepEqual(computeOffline(base, 1_000_000 + 59_000), none);         // 1분 미만
 assert.deepEqual(computeOffline(base, 1_000_000 - 999_999), none);        // 시계 역행
 assert.deepEqual(computeOffline({ ...base, lastSeen: 0 }, 5e9), none);   // 기록 없음
 assert.deepEqual(computeOffline(base, 1_000_000 + 90 * 60_000 + 30_000), {
-  gems: Math.floor(offlineGemsPerHour(10, 2) * 90 / 60), xp: Math.floor(offlineXpPerMin(10, 2) * 90), minutes: 90,
+  gems: Math.floor(offlineGemsPerHour(10, 2) * 90 / 60), gold: Math.floor(offlineGoldPerHour(10) * 90 / 60), xp: Math.floor(offlineXpPerMin(10, 2) * 90), minutes: 90,
 });
 const cap = OFFLINE_CAP_HOURS * 60, full = computeOffline(base, 1_000_000 + 3 * 86_400_000);
 assert.equal(full.minutes, cap);
 assert.equal(full.gems, Math.floor(offlineGemsPerHour(10, 2) * OFFLINE_CAP_HOURS));
 assert.ok(full.gems > 0 && full.gems < 100, `방치 보석은 소량(${full.gems})`);
-assert.ok(!('gold' in full));
+assert.equal(full.gold, Math.floor(offlineGoldPerHour(10) * OFFLINE_CAP_HOURS));
 assert.ok(computeOffline({ ...base, metaLv: { pickaxe: 10 } }, 1_000_000 + 3 * 86_400_000).gems > full.gems, '황금 곡괭이');
 
 // 백업 코드: 왕복 = 동일, 손상·남의 코드·미래 버전은 한국어 오류, 옛 버전(v1) 내용은 마이그레이션
@@ -206,4 +207,8 @@ assert.ok(computeOffline({ ...base, metaLv: { pickaxe: 10 } }, 1_000_000 + 3 * 8
   assert.equal(old.data.gems, 5 + 12 * MIGRATE_GEMS_PER_BEST);
   assert.equal(old.data.metaLv.pickaxe, 2);
 }
+// 4차 배속 해금: 1배 → 최고 10층 2배 → 30층 3배, 버튼은 열린 단계만 순환, 저장 배속은 해금 범위로 낮춤
+assert.deepEqual([0, 9, 10, 29, 30, 100].map(speedCap), [1, 1, 2, 2, 3, 3]);
+assert.deepEqual([[1, 0], [1, 10], [2, 10], [2, 30], [3, 30], [3, 10]].map(([c, b]) => nextSpeed(c, b)), [1, 2, 1, 3, 1, 1]);
+assert.deepEqual([5, 15, 40].map(best => normalize({ v: 3, best, settings: { speed: 3 } }).settings.speed), [1, 2, 3], '저장 배속 클램프');
 console.log('save.test OK');

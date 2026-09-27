@@ -1,5 +1,6 @@
 // 스테이지 → 테마, 적/보스 정의, 스케일링, 스폰 스케줄
 import { MAX_STAGE, floorPower } from './config.js';
+import { regionSpeed } from './dungeons.js'; // 4차 던전 특성: 심연 '광기의 행진'(옛 ×1.1과 같은 값)
 
 export const themeOf = stage => Math.min(4, Math.max(0, Math.floor((stage - 1) / 20)));
 
@@ -64,7 +65,7 @@ function knots(k, s) {
   return k[k.length - 1][1];
 }
 export const enemyDmg = stage => 18 * 1.18 ** (stage - 1);
-export const enemySpeedMul = stage => (1 + (stage - 1) * 0.008) * (themeOf(stage) === 4 ? 1.1 : 1);
+export const enemySpeedMul = stage => (1 + (stage - 1) * 0.008) * regionSpeed(themeOf(stage));
 // 엘리트/네임드 체력 배율 보정: 후반일수록 잡몹 대비 배율을 낮춤(단일 대상 화력 한계)
 // BOSS_K: 스킬 중심 개편 — 광역 스킬 위주라 단일 대상 화력이 옛 기본 공격보다 약해 보스·엘리트 체력을 낮췄다
 // NAMED_K: 네임드 보스는 한 번 더 낮춘다 — 보스 층만 넘기 어려운 '관문'이 되면 도달 층이 10층 단위로 뭉쳐 도전마다 들쭉날쭉해진다

@@ -2,7 +2,7 @@
 // DOM HUD(골드·층·웨이브·마나·메뉴·영웅 버튼)는 ui.js/style.css 몫이고, 여기는 전장 위에 캔버스로 그리는 층만.
 // docs/ART.md §4.5, §10.2, §10.8~10.11
 // 소유: UI 에이전트(kit.css · 아이콘 · ui.js/heroui.js 와 함께). 계약은 docs/ART.md §14 참고.
-import { WORLD_W, WORLD_H, WALL_Y, SYNERGIES, COMBO_TIERS, COMBO_WINDOW, FRENZY, LEGEND_T, THEMES } from '../config.js';
+import { WORLD_W, WORLD_H, WALL_Y, SYNERGIES, COMBO_TIERS, THEMES } from '../config.js';
 import { clamp } from '../util.js';
 import { MILESTONES } from '../hero.js';
 const MS_DESC = Object.fromEntries(MILESTONES.map(m => [m.key, m.desc]));
@@ -13,7 +13,6 @@ import {
 } from './core.js';
 import { burst, ring, sprPop, lightBeam, numText, numZone, K_STAR, sparkle, rays, runeCircle, runeBand } from './fx.js';
 import { enemy, itemIcon } from './units.js';
-import { iconImage } from '../icons.js';
 import { emblem, fusionParts } from './emblems.js';
 
 const SYN = Object.fromEntries(SYNERGIES.map(s => [s.key, s]));
@@ -23,7 +22,7 @@ const STAMPS = pool(5, () => ({ life: 0, max: 1, txt: '', col: '#fff', y: 0, siz
 const POPS = pool(8, () => ({ life: 0, max: 1, txt: '', sub: '', col: '#fff', x: 0, y: 0 }));
 const LVUPS = pool(3, () => ({ on: false, t: 0, x: 0, y: 0, level: 1, ms: null }));
 let bossLag = 1, bossName = '', bossA = 0, bossNamed = false;
-const combo = { shown: 0, prev: 0, tier: 0, a: 0, punch: 0, tierPunch: 0 };
+const combo = { shown: 0, tier: 0, pop: 9 }; // 4차: 단계 상승 팝(pop = 경과 초)만 — 평소 숫자는 DOM 알약
 
 export function stamp(str, col, y = 400, size = 64, life = 1.1) {
   // 도장은 한 번에 하나: 떠 있는 도장이 거의 끝날 때까지 기다렸다 찍힌다(두 글자가 겹쳐 읽히지 않게)
@@ -360,84 +359,47 @@ function drawBossBar(view) {
   ht();
 }
 
-// 콤보 카운터(오른쪽 중단, 전용 세로 칸 y 520~660): 킬마다 톡, 단계가 오르면 1→1.4→1 back 슬램 + 단계 색 링.
-// 그 위 칸(y 440~500)은 광란·전설 상태 알약(남은 시간 바) — 도장·조합 줄과 자리를 나눠 겹치지 않는다.
-let frMax = FRENZY.dur, lgMax = LEGEND_T;
 const mergeFull = {}; // 융합 키 → 꽉 찬 슬롯에서 합체했나(fusionMerge.full) — 컷인 리본 문구
 // 보스 체력 겹 색 [밝음, 메인, 어둠] — 마지막 겹(x1)은 붉은색
 const LAYER_COL = [['#ff9ab4', '#ff5a80', '#c0103a'], ['#ffd89a', '#ffa040', '#c05a00'], ['#fff3a0', '#ffd23a', '#c08a00'], ['#c8ff9a', '#6ad84a', '#2a8a1a'], ['#b8f4ff', '#4fc8ff', '#1a70c0'], ['#e0c8ff', '#b07aff', '#6a2ac0']];
-// 콤보·상태 알약 오른쪽 끝(월드 폭 720 — 가장자리에서 58 안쪽, 테두리·기울임 포함 여백).
-// 좁은 화면은 오른쪽 스킬 스택(DOM #side-r)이 전장 위에 겹치므로 그 왼쪽 끝에 맞춘다(setStackLeft — main.js가 넘김)
-let CX = 662;
-export function setStackLeft(x) { CX = Number.isFinite(x) ? clamp(x - 14, 520, 662) : 662; }
+// 4차: 평소 콤보·광란·전설·광폭화는 DOM 상태 줄(진행 바 아래 작은 알약 — ui.js updateCombo · style.css .st-row)이 조용히 보여 준다.
+// 캔버스는 콤보 단계가 오르는 순간(10 좋아! · 30 대단해! · 50 광란! · 100 전설!)만 0.8초 크게 떴다가 알약 자리로 빨려 들며 작아진다.
+// 알약 가운데(HUD 좌표) = main.js가 0.5초마다 재서 render → setComboAnchor. 전장 가운데·스킬 스택 근처엔 머물지 않는다.
+let AX = 360, AY = 60;
+export function setComboAnchor(p) { if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) { AX = p.x; AY = p.y; } }
+
+const POP_T = 0.8;
+const popPos = () => ({ x: WORLD_W / 2, y: AY + 150 }); // 상태 줄 바로 아래 가운데(접근로 위쪽) — 전장 가운데·스킬 스택이 아님
 function drawCombo(view, vis) {
-  if (combo.a > 0) {
-    const x = CX, y = 580, tier = clamp(combo.tier, 0, 4);
-    const col = tier >= 4 ? `hsl(${42 + 14 * Math.sin(RT * 7)},100%,${62 + 10 * Math.sin(RT * 11)}%)` : TIER_COL[tier]; // 전설: 금빛 일렁임
-    const a = combo.a * vis;
-    const u = 1 - combo.tierPunch; // 단계 슬램: 0.3초에 1.4(전설 1.6)까지 → back 으로 1
-    const peak = tier >= 4 ? 0.6 : 0.4;
-    const ts = combo.tierPunch > 0 ? (u < 0.3 ? 1 + peak * easeOut(u / 0.3) : 1 + peak * (1 - easeBack((u - 0.3) / 0.7))) : 1;
-    const size = 50 + tier * 7, str = 'x' + combo.shown; // 단계마다 글자가 커지고 색이 바뀐다
-    ctx.font = `${size}px ${NUM_FONT}`; ctx.textAlign = 'right';
-    const tw = ctx.measureText(str).width;
-    const drop = (1 - combo.a) * 30;
-    if (tier >= 3) { // x50·x100: 숫자 뒤 불꽃/에너지 후광(가산, 회전 광선)
-      additive(true);
-      ctx.globalAlpha = a * (0.45 + 0.15 * Math.sin(RT * 8));
-      placeH(x - tw / 2, y + drop, ts);
-      ctx.rotate(RT * 0.9);
-      spr(rays(tier >= 4 ? '#ffd23a' : '#ff5a2a'), 0, 0, tw + 90, tw + 90);
-      additive(false);
-    }
-    ctx.globalAlpha = a;
-    placeH(x, y + drop, (1 + combo.punch * 0.16) * ts); // 한 킬마다 톡
-    txt('COMBO', 0, -size * 0.72, 19, '#ffffff', '#1a0612', 5, 'right');
-    ctx.font = `${size}px ${NUM_FONT}`; ctx.textAlign = 'right';
-    if (tier >= 2) { ctx.lineWidth = 12; ctx.strokeStyle = '#ffffff'; ctx.strokeText(str, 0, 0); }
-    ctx.lineWidth = 8; ctx.strokeStyle = '#1a0612'; ctx.strokeText(str, 0, 0);
-    const g = ctx.createLinearGradient(0, -size * 0.45, 0, size * 0.45);
-    g.addColorStop(0, '#ffffff'); g.addColorStop(0.45, tier ? '#ffffff' : '#fff6e6'); g.addColorStop(0.5, col); g.addColorStop(1, col);
-    ctx.fillStyle = tier ? g : '#ffffff'; ctx.fillText(str, 0, 0);
-    if (tier > 0 && COMBO_TIERS[tier - 1]) {
-      placeH(x, y + size * 0.62 + 18 + drop, 1 + combo.tierPunch * 0.5);
-      ctx.rotate(-0.05);
-      txt(COMBO_TIERS[tier - 1].label, 0, 0, 24 + tier * 3, col, '#1a0612', 7, 'right');
-    }
-    const c = view.combo; // 남은 시간 바
-    if (c && c.count >= 3) {
-      ht();
-      const bw = 120, uu = clamp(c.timer / COMBO_WINDOW, 0, 1), by = y + size * 0.5;
-      ctx.fillStyle = 'rgba(20,6,20,0.6)';
-      rr(x - bw - 2, by, bw + 4, 10, 5); ctx.fill();
-      ctx.fillStyle = col;
-      rr(x - bw * uu, by + 2, Math.max(4, bw * uu), 6, 3); ctx.fill();
-    }
-    numZone('combo', x - 110, y + 10, 240, 150);
+  const t = combo.pop;
+  if (t >= POP_T || vis <= 0) return;
+  const tier = clamp(combo.tier, 1, 4), p = popPos();
+  const col = tier >= 4 ? `hsl(${42 + 14 * Math.sin(RT * 7)},100%,${62 + 10 * Math.sin(RT * 11)}%)` : TIER_COL[tier] || '#ffd23a';
+  // 0~0.14 슬램(0.5 → 1.15 → 1) · ~0.52 머묾 · 0.52~0.8 알약으로 이동하며 0.22배로 작아지고 흐려짐
+  const fly = t < 0.52 ? 0 : easeOut((t - 0.52) / (POP_T - 0.52));
+  const k = (t < 0.14 ? 0.5 + 0.65 * easeOut(t / 0.14) : t < 0.24 ? 1.15 - 0.15 * (t - 0.14) / 0.1 : 1) * lerp(1, 0.22, fly);
+  const x = lerp(p.x, AX, fly), y = lerp(p.y, AY, fly), a = vis * (1 - fly * 0.85);
+  const n = view.combo && view.combo.count >= 3 ? view.combo.count | 0 : combo.shown, str = 'x' + n, size = 54 + tier * 5;
+  if (tier >= 3) { // x50·x100: 숫자 뒤 회전 광선(가산)
+    additive(true);
+    ctx.globalAlpha = a * 0.5;
+    placeH(x, y, k);
+    ctx.rotate(RT * 0.9);
+    spr(rays(tier >= 4 ? '#ffd23a' : '#ff5a2a'), 0, 0, 230, 230);
+    additive(false);
   }
-  ht();
-  // 광란 / 전설 상태 알약 (아이콘 + 이름 + 남은 시간 바)
-  let ly = 472;
-  if (view.frenzyT > 0) { frMax = Math.max(frMax, view.frenzyT); statusPill(ly, '광란 시전 x2', 'el-fire', '#ff6a3a', view.frenzyT / frMax, vis, 14); ly -= 46; }
-  else frMax = FRENZY.dur;
-  if (view.legendT > 0) { lgMax = Math.max(lgMax, view.legendT); statusPill(ly, '전설의 학살 골드 x2', 'coin', '#ffd23a', view.legendT / lgMax, vis, 8); ly -= 46; }
-  else lgMax = LEGEND_T;
-  // 광폭화는 DOM 상태 칩(ui.js '광폭화! 적 피해 xN')이 보여 준다 — 캔버스 알약까지 두 번 그리지 않는다
+  ctx.globalAlpha = a;
+  placeH(x, y, k);
+  txt('COMBO', 0, -size * 0.72, 19, '#ffffff', '#1a0612', 5);
+  ctx.font = `${size}px ${NUM_FONT}`; ctx.textAlign = 'center';
+  if (tier >= 2) { ctx.lineWidth = 12; ctx.strokeStyle = '#ffffff'; ctx.strokeText(str, 0, 0); }
+  ctx.lineWidth = 8; ctx.strokeStyle = '#1a0612'; ctx.strokeText(str, 0, 0);
+  const g = ctx.createLinearGradient(0, -size * 0.45, 0, size * 0.45);
+  g.addColorStop(0, '#ffffff'); g.addColorStop(0.5, col); g.addColorStop(1, col);
+  ctx.fillStyle = g; ctx.fillText(str, 0, 0);
+  if (COMBO_TIERS[tier - 1]) { ctx.rotate(-0.05); txt(COMBO_TIERS[tier - 1].label, 0, size * 0.62 + 12, 26 + tier * 3, col, '#1a0612', 7); }
+  if (fly < 0.5) numZone('combo', p.x, p.y + 10, 300, 150);
   ctx.globalAlpha = 1;
-}
-function statusPill(y, label, ico, col, u, vis, hz) {
-  ctx.font = `18px ${FONT}`;
-  const tw = ctx.measureText(label).width + 58, x = CX + 4 - tw;
-  ctx.globalAlpha = vis;
-  placeH(x + tw / 2, y, 1 + 0.04 * Math.sin(RT * hz));
-  rr(-tw / 2, -18, tw, 36, 18);
-  ctx.fillStyle = 'rgba(24,8,30,0.92)'; ctx.fill();
-  ctx.lineWidth = 3; ctx.strokeStyle = '#22163a'; ctx.stroke();
-  ctx.lineWidth = 2; ctx.strokeStyle = col; rr(-tw / 2 + 3, -15, tw - 6, 30, 15); ctx.stroke();
-  ctx.fillStyle = col; rr(-tw / 2 + 36, 9, (tw - 50) * clamp(u, 0, 1), 4, 2); ctx.fill(); // 남은 시간
-  const im = iconImage(ico);
-  if (im) ctx.drawImage(im, -tw / 2 + 4, -15, 30, 30);
-  txt(label, -tw / 2 + 38, -2, 18, '#ffffff', '#1a0612', 5, 'left');
   ht();
 }
 
@@ -730,12 +692,12 @@ export function events(view, evs, opts) {
         mergeFull[ev.fusion] = ev.full !== false;
         if (!evs.some(e => e.type === 'synergy' && e.key === ev.fusion && e.first)) pop(ev.full !== false ? '슬롯 해제!' : '합체!', (SYN[ev.fusion] ? SYN[ev.fusion].name : '') + (ev.full !== false ? ' 합체' : ''), '#ffc8ff', 300, 846); // 내 마법사 머리 위(합체 줄기가 닿는 곳)
         break;
-      case 'combo': {
-        combo.tierPunch = 1;
+      case 'combo': { // 단계 상승: 0.8초 크게 → 상단 콤보 알약으로
         if (quiet || moment) break;
-        const col = ev.tier >= 4 ? '#ffd23a' : TIER_COL[clamp(ev.tier | 0, 0, 3)] || '#ffd23a';
-        burst(K_STAR, CX - 50, 580, 10 + ev.tier * 4, 80, 320, 0.7, 20, [col, '#ffffff'], 200, 1.5, 60);
-        if (ev.tier >= 4) ring(CX - 60, 575, 20, 170, 0.45, '#ffd23a', 8); // x100: 카운터 자리 금빛 고리 하나
+        combo.pop = 0; combo.tier = ev.tier | 0; combo.shown = view.combo ? view.combo.count | 0 : combo.shown;
+        const col = ev.tier >= 4 ? '#ffd23a' : TIER_COL[clamp(ev.tier | 0, 0, 3)] || '#ffd23a', p = popPos();
+        burst(K_STAR, p.x, p.y, 10 + ev.tier * 4, 80, 320, 0.7, 20, [col, '#ffffff'], 200, 1.5, 60);
+        if (ev.tier >= 4) ring(p.x, p.y, 20, 170, 0.45, '#ffd23a', 8);
         if (ev.tier >= 3) shake(0.15);
         break;
       }
@@ -806,15 +768,7 @@ export function update(view, da, dt) {
     }
   }
   if (MQ.length > 6) MQ.splice(1, MQ.length - 6); // 폭주 방지
-  // 콤보 표시
-  const c = view.combo, cnt = c ? c.count | 0 : 0;
-  if (cnt >= 3) {
-    if (cnt > combo.prev) combo.punch = 1;
-    combo.shown = cnt; combo.tier = c.tier | 0; combo.a = 1;
-  } else if (combo.a > 0) combo.a = Math.max(0, combo.a - dt * 1.4);
-  combo.prev = cnt;
-  combo.punch = Math.max(0, combo.punch - dt * 7);
-  combo.tierPunch = Math.max(0, combo.tierPunch - dt * 3);
+  combo.pop += dt; // 콤보 단계 팝(평소 숫자는 DOM 알약)
   for (const L of LVUPS) { // 컷인·배너가 떠 있으면 LEVEL UP 은 시작을 미룬다(큰 연출은 한 번에 하나)
     if (!L.on || (moment && L.t < 0.05)) continue;
     if ((L.t += dt) > 1.9) L.on = false;

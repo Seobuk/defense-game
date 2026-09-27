@@ -1,5 +1,5 @@
 // 영웅 특성 트리 UI (DOM) — 정비 화면 '특성' 탭과 영웅 화면 '특성' 탭(도전 중 빠른 배분)이 같이 쓴다.
-// 갈래마다 6단(행) × 노드 격자, 왼쪽 레일이 단 해금(그 갈래 포인트)을 보여 준다. 택1 노드는 '또는'으로 묶고 한쪽을 고르면 다른 쪽이 흐려진다.
+// 갈래마다 6단(행) × 노드 격자, 왼쪽 레일이 단 해금(그 갈래 포인트)을 보여 준다. 택1 노드는 '또는'으로 묶고(두 쪽마다 싸우는 방식 분류 알약 + 한 줄 요약, 시트는 다른 쪽 비교 카드) 한쪽을 고르면 다른 쪽이 흐려진다.
 // 궁극 특성은 클래스당 하나(다른 갈래 궁극은 자물쇠) · 핵심 노드 · 혼합 노드(두 갈래 사이) · 추천 다음 노드 · 상세 시트 · 무료 초기화(정비 화면만)
 // 좁은 화면(폰)은 갈래 탭으로 하나씩, 넓은 화면(폴드·태블릿, 컨테이너 600px↑)은 3갈래를 나란히. 재질 kit.css(.k-*), 배치 hero.css(.tt-*)
 import {
@@ -12,15 +12,21 @@ import { emblemImg } from './art/emblems.js';
 
 // 노드 그림: 효과 키 → SVG 아이콘(icon) 또는 그린 엠블럼('em:' 접두사)
 const FX_ICON = {
-  atk: 'atk', aspd: 'rate', move: 'speed', hp: 'hero', crit: 'crit', critDmg: 'crit', range: 'multi', pierce: 'em:pierce',
+  atk: 'atk', aspd: 'rate', move: 'speed', hp: 'hero', crit: 'crit', critDmg: 'crit', range: 'multi',
   multi: 'multi', boss: 'em:giant', dr: 'wall', taunt: 'wall', thorns: 'em:thorns', killHeal: 'el-holy', wallKill: 'wall',
-  holy: 'el-holy', undead: 'el-holy', aura: 'em:twin', ultCd: 'reroll', ultPow: 'meteor', wolf: 'el-summon', wolfPow: 'el-summon',
+  holy: 'el-holy', aura: 'em:twin', ultCd: 'reroll', ultPow: 'meteor', wolf: 'el-summon', wolfPow: 'el-summon',
   burn: 'el-fire', splash: 'em:fireball', slow: 'el-frost', freeze: 'freeze', mana: 'em:chain', heal: 'el-holy', regen: 'em:holyLight',
   wallRegen: 'wall', smite: 'em:judgment', gold: 'coin', xp: 'hero', blink: 'el-wind', ambush: 'crit', poison: 'el-dark',
-  spread: 'em:curseMark', poisonAmp: 'el-dark', execute: 'em:soulHarvest', bossExec: 'em:giant', tauntAmp: 'em:twin', collab: 'partner',
+  spread: 'em:curseMark', poisonAmp: 'el-dark', execute: 'em:soulHarvest', tauntAmp: 'em:twin', collab: 'partner',
   bash: 'em:thorns', critBurst: 'em:critBoom', ultRefresh: 'em:chain', firstCrit: 'em:pierce', frenzy: 'em:frenzy', packHunt: 'el-summon',
   overheat: 'em:flame', shatter: 'em:glacier', surge: 'em:twin', emergency: 'em:holyLight', holyNova: 'em:judgment', grace: 'em:flawless',
   shadowStrike: 'em:double', neuro: 'em:curseMark', momentum: 'em:chainboom',
+  // 택1(4차) — 한 묶음의 두 쪽은 서로 다른 그림
+  hunt: 'em:giant', guardWall: 'em:stoneGolem', cull: 'em:soulHarvest', focus: 'em:pierce', hold: 'wall', charge: 'em:gale',
+  pointBlank: 'multi', chillAura: 'em:glacier', killBlink: 'em:double', longshot: 'em:homing', heavy: 'em:wallBroken', cleave: 'em:flame',
+  bounce: 'em:chainLightning', split: 'em:flameBullet', corpse: 'em:chainboom', evade: 'el-wind', wolfStun: 'el-summon',
+  ultCharge: 'em:lightningStrike', soulFeed: 'rate', lifesteal: 'em:holyLight', berserk: 'em:frenzy', wolfUlt: 'em:babyDragon',
+  mark: 'em:curseMark', pull: 'em:tornado', ultBless: 'em:golden', wolfGuard: 'em:frostWard', wolfFocus: 'em:homing',
 };
 const CAP_ICON = {
   shieldToss: 'thorns', judgeBolt: 'judgment', warcry: 'frenzy', snipe: 'pierce', arrowStorm: 'double', wolfPack: 'babyDragon',
@@ -62,7 +68,7 @@ export function createTalentTree(host, sheetHost, H = {}) {
         <div class="tt-sh-meta"></div>
         <div class="tt-sh-ranks"></div>
         <div class="tt-sh-desc"><b class="tt-sh-lbl"></b><p class="tt-sh-txt"></p></div>
-        <p class="tt-sh-alt" hidden></p>
+        <div class="tt-sh-alt" hidden></div>
         <p class="tt-sh-why"></p>
         <button class="k-btn success l wide tt-sh-go"></button>
       </div>
@@ -87,6 +93,7 @@ export function createTalentTree(host, sheetHost, H = {}) {
     <button class="tt-node${n.cap ? ' cap' : ''}${n.ks ? ' ks' : ''}${n.hybrid ? ' hyb' : ''}" data-key="${n.key}" style="--i:${bi}">
       <span class="tt-disc"><span class="tt-ico">${nodeArt(n)}</span><span class="tt-lock">${icon('lock')}</span><span class="tt-plus" aria-hidden="true"></span>${n.ks ? '<em class="tt-kst">핵심</em>' : ''}<em class="tt-rec">추천</em></span>
       <span class="tt-rank k-num"></span><span class="tt-name">${esc(n.name)}</span>${cap ? '<span class="tt-capnote">궁극은 하나만</span>' : ''}
+      ${n.brief ? `<span class="tt-brief" data-tag="${esc(n.tag)}"><i>${esc(n.tag)}</i>${esc(n.brief)}</span>` : ''}
     </button>`;
 
   // 트리 뼈대는 클래스가 바뀔 때만 다시 만든다(노드 상태만 갱신)
@@ -238,13 +245,19 @@ export function createTalentTree(host, sheetHost, H = {}) {
     const where = b ? `${esc(b.name)} ${n.tier + 1}단` : `혼합 · ${n.req.map(k => esc(TALENTS[cls].find(x => x.key === k).name)).join(' + ')}`;
     $s('.tt-sh-meta').innerHTML = `<span class="tt-sh-branch">${esc(HERO_CLASSES[cls].name)} · ${where}</span>`
       + (n.cap ? '<span class="tt-sh-tag cap">궁극 특성</span>' : n.ks ? '<span class="tt-sh-tag ks">핵심</span>' : '')
-      + (n.or ? '<span class="tt-sh-tag or">택1</span>' : '') + (n.hybrid ? '<span class="tt-sh-tag hy">혼합</span>' : '');
+      + (n.or ? '<span class="tt-sh-tag or">택1</span>' : '') + (n.tag ? `<span class="tt-sh-tag st" data-tag="${esc(n.tag)}">${esc(n.tag)}</span>` : '') + (n.hybrid ? '<span class="tt-sh-tag hy">혼합</span>' : '');
     $s('.tt-sh-ranks').innerHTML = Array.from({ length: n.max }, (_, i) => `<i class="${i < r ? 'on' : ''}"></i>`).join('') + `<b class="k-num">${r} / ${n.max}</b>`;
     $s('.tt-sh-lbl').textContent = n.cap ? '전투 방식이 바뀌어요 · 클래스당 하나' : n.ks ? '핵심 — 싸우는 방식이 바뀌어요' : n.max > 1 ? '랭크마다' : '효과';
     $s('.tt-sh-txt').textContent = n.desc;
     const alt = n.or ? b.nodes.find(x => x.or === n.or && x !== n) : null, altEl = $s('.tt-sh-alt');
     altEl.hidden = !alt;
-    if (alt) altEl.innerHTML = `또는 〈<b>${esc(alt.name)}</b>〉 ${esc(alt.desc)}`;
+    if (alt) { // 택1: 다른 쪽을 나란히 — 누르면 그쪽 시트로
+      const took = talentRank(hero, cls, alt.key) > 0; // 이미 다른 쪽을 골랐으면 아래 사유 줄이 같은 말을 한다
+      altEl.innerHTML = `<span class="tt-vs">또는</span>
+        <button class="tt-alt-card${took ? ' on' : ''}" data-alt="${alt.key}"><span class="tt-alt-ico">${nodeArt(alt)}</span>
+          <span class="tt-alt-txt"><b>${esc(alt.name)}</b><em data-tag="${esc(alt.tag)}">${esc(alt.tag)}</em><span>${esc(alt.desc)}</span></span></button>
+        ${took ? '' : `<small>둘 중 하나만 — ${H.onReset ? '초기화하면 다시 고를 수 있어요' : '바꾸려면 정비 화면에서 무료 초기화'}</small>`}`;
+    }
     const bl = talentBlock(hero, cls, n.key), can = !bl;
     const whyEl = $s('.tt-sh-why');
     whyEl.textContent = can ? `남은 포인트 ${talentLeft(hero, cls)}점` : bl.msg;
@@ -263,6 +276,7 @@ export function createTalentTree(host, sheetHost, H = {}) {
     shBox.querySelector('.tt-sh-art').animate([{ scale: 1 }, { scale: 1.15, offset: 0.3 }, { scale: 1 }], { duration: 300, easing: 'cubic-bezier(.34,1.56,.64,1)' });
   });
   $s('.tt-sh-close').addEventListener('click', closeSheet);
+  $s('.tt-sh-alt').addEventListener('click', e => { const k = e.target.closest('[data-alt]')?.dataset.alt; if (k) openSheet(k); });
   sheet.addEventListener('click', e => { if (e.target === sheet) { closeSheet(); cfBox.hidden = true; } });
 
   // ── 초기화(무료, 확인) · 자동 배분 ──

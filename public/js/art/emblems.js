@@ -481,3 +481,5 @@ export function emblemURL(key, px = 128) {
 }
 // DOM: <img> 한 줄 (없으면 빈 문자열)
 export const emblemImg = (key, cls = 'em') => { const u = hasEmblem(key) ? emblemURL(key) : ''; return u ? `<img class="${cls}" src="${u}" alt="" draggable="false">` : ''; };
+// 4차 유물 엠블럼(art/relicart.js)이 같은 손(잉크 외곽·셀 셰이딩·광택)으로 그리게 그리기 도구를 내보낸다
+export const EM = { C, E, P, ink, stroke2, glowBack, orb, star4, burstShape, coinG, gem, skull, bolt, tongue, fireGrad, ca, LW };

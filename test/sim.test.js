@@ -15,6 +15,7 @@ import { pickCard, botSpendGems, botSpendGold, botLoadout, botTalents, randomTal
 import { newRun, restoreRun, endRun, buyMeta, buyTraining, validLoadout, startSpellChoices, campAct, applyOffline } from '../public/js/run.js';
 import { defaults } from '../public/js/save.js';
 import { spellCooldown } from '../public/js/spells.js';
+import { MUTATIONS } from '../public/js/mutations.js'; // 4차 변이: 각성은 만렙 + 변이까지 끝난 뒤
 import { campaign, playRun, playStage, resolvePick, earlyPacing, humanPlayer, HERO_CLASS_KEYS as CLASS_KEYS } from './harness.js';
 import {
   newHero, HERO_CLASSES, HERO_CLASS_KEYS, unlockedClasses, xpToNext, heroTier, hasMilestone, MILESTONES,
@@ -40,6 +41,7 @@ const WALL = buff(0, 999); // 성벽 ×81 — 적이 쌓여도 버틴다
 // 페이즈가 바뀌거나 시간 초과까지 진행, 이벤트 수집
 function runUntilEnd(g, maxT = 600, collect = null) {
   for (let t = 0; t < maxT && g.phase === 'play'; t += DT) {
+    if (g.relicPick) { act(g, 0, { type: 'relic', index: 0 }); continue; } // 4차 유물: 보스 층 클리어 뒤 유물 후보(전투 정지)
     if (g.pick) { resolvePick(g, collect); continue; }
     step(g, DT);
     const ev = drainEvents(g);
@@ -518,7 +520,7 @@ function fantasyPick() {
   for (let i = 0; i < 20; i++) {
     for (const c of genOffer(sg)) assert.ok(c.awaken || six.includes(c.spell), '슬롯이 차면 보유 스킬만');
   }
-  six.forEach(k => { sg.spells[k] = SPELL_MAX_LV; });
+  six.forEach(k => { sg.spells[k] = SPELL_MAX_LV; sg.mutations[k] = MUTATIONS[k][0].key; }); // 4차: 변이까지 끝낸 만렙(변이 카드는 test/mutations.test.js)
   sg.spells[six[0]] = SPELL_MAX_LV - 1;
   let cards = genOffer(sg);
   assert.deepEqual(cards.map(c => [c.spell, c.level]), [[six[0], SPELL_MAX_LV]], '남은 강화 1장뿐(각성 카드로 채우지 않는다)');
@@ -1637,7 +1639,7 @@ function earlyPace() {
   console.log('초반 템포 통과');
 }
 
-// ── 5d) 사람처럼 하는 첫 도전(자동 진행 + 카드 자동 선택, 운석·빙결은 안 누름 — 봇의 autoSkill 없음) ──
+// ── 5d) 사람처럼 하는 첫 도전(자동 진행 + 카드 자동 선택 — 4차부터 자동 진행이 운석·빙결도 누른다, 망각은 안 씀) ──
 // 새 저장에서 열린 클래스 × 시작 무료 카드(STARTER) 전부: 1~2층에서 지지 않는다(회오리 + 기사 1층 패배 재발 방지). 첫 도전 층수도 목표(8~15) 안
 function humanFirstRun() {
   const play = (cls, seed, first) => {
@@ -1664,7 +1666,7 @@ function humanFirstRun() {
   const floors = [];
   for (const cls of unlockedClasses(0)) for (const seed of [1, 2, 3, 4]) floors.push(play(cls, seed));
   const m = avg(floors);
-  console.log(`사람 첫 도전(운석·빙결 없음): 평균 ${m.toFixed(1)}층 (${floors.join(',')})`);
+  console.log(`사람 첫 도전(자동 진행): 평균 ${m.toFixed(1)}층 (${floors.join(',')})`);
   assert.ok(m >= 8 && m <= 15, `사람 첫 도전 ${m.toFixed(1)}층 (목표 8~15)`);
   console.log('사람 첫 도전 통과');
 }
@@ -1700,6 +1702,16 @@ function campaignReport(seed, rows, ms) {
   };
   console.log(`결과: 첫 도전 ${res.first}층 · 도전당 +${gain.toFixed(2)}층 · ${res.runs}회 · ${hours.toFixed(1)}h · 절반 이하 층 평균 ${res.half.toFixed(1)}s · 새 층 평균 ${res.newT.toFixed(1)}s · 영웅 Lv${res.heroLv} · 특성 완성 영웅 기여도 ${(res.fullShare * 100).toFixed(1)}% · 11층부터 마법사 스킬 비중 평균 ${(res.skill * 100).toFixed(1)}%(최저 ${(res.skillMin * 100).toFixed(0)}%) · 수련 ${last.train}`);
   console.log(`융합: 3번째 도전부터 도전당 ${res.fus.toFixed(2)}회 · 후반 도전 ${res.fusLate.toFixed(2)}개 · 첫 합체 평균 ${res.firstFuse.toFixed(1)}층`);
+  // 4차 전략 지표: 초반을 넘긴 도전(20층+)마다 변이·유물·망각 중 무엇을 썼나 · 유물 분포 · 도전이 끝난 지역 · '살 게 없는' 정비 방문
+  const mid = rows.filter(r => r.reached >= 20), cnt = {}, ends = [0, 0, 0, 0, 0];
+  for (const r of rows) { for (const k of r.relics || []) cnt[k] = (cnt[k] || 0) + 1; if (!(r.reached >= MAX_STAGE)) ends[Math.min(4, Math.floor(r.reached / 20))]++; }
+  Object.assign(res, {
+    mid: mid.length, choiceless: mid.filter(r => !(r.muts || []).length && !(r.relics || []).length && !r.forgets).length,
+    muts: avg(mid.map(r => (r.muts || []).length)), relicN: avg(mid.map(r => (r.relics || []).length)), forgets: avg(mid.map(r => r.forgets || 0)),
+    idleGold: rows.filter(r => r.idle && r.idle.gold).length, idleGems: rows.filter(r => r.idle && r.idle.gems).length, shop: rows.some(r => r.idle),
+  });
+  console.log(`전략(20층+ 도전 ${res.mid}회): 변이 ${res.muts.toFixed(1)} · 유물 ${res.relicN.toFixed(1)} · 망각 ${res.forgets.toFixed(1)} /도전 · 셋 다 없는 도전 ${res.choiceless}회 · 끝난 지역(초원/동굴/묘지/화산/심연) ${ends.join('/')} · 살 게 없는 방문 골드 ${res.idleGold} · 보석 ${res.idleGems}${res.shop ? '' : '(상점 안 씀)'}`);
+  console.log(`유물 분포: ${Object.entries(cnt).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(' · ')}`);
   return res;
 }
 
@@ -1720,6 +1732,10 @@ function campaignCheck(all) {
   console.log(`융합(시드 평균): 3번째 도전부터 도전당 ${m('fus').toFixed(2)}회 · 후반 빌드 ${m('fusLate').toFixed(2)}개 · 첫 합체 ${m('firstFuse').toFixed(1)}층`);
   if (!(m('fus') >= 1)) bad.push(`3번째 도전부터 도전당 합체 ${m('fus').toFixed(2)}회 (목표 1~2회 이상)`);
   if (!(m('fusLate') >= 2 && m('fusLate') <= 4)) bad.push(`후반 빌드 융합 ${m('fusLate').toFixed(2)}개 (목표 2~4)`);
+  all.forEach((r, i) => { // 4차: 초반을 넘긴 도전은 늘 변이·유물·망각 중 하나 이상을 썼다 · 상점 캠페인이면 정비 방문마다 살 것이 있다
+    if (r.choiceless) bad.push(`시드 ${i}: 20층+ 도전 중 변이·유물·망각이 하나도 없는 도전 ${r.choiceless}회`);
+    if (r.idleGold || r.idleGems) bad.push(`시드 ${i}: 살 게 없는 정비 방문 골드 ${r.idleGold} · 보석 ${r.idleGems} (목표 0)`);
+  });
   if (!(m('fullShare') >= 0.25 && m('fullShare') <= 0.4)) bad.push(`특성 완성 영웅 기여도 ${(m('fullShare') * 100).toFixed(1)}% (목표 25~40%)`);
   assert.deepEqual(bad, [], bad.join('\n'));
 }

@@ -42,7 +42,7 @@ const ABILITY_EM = { knight: ['thorns', 'flawless'], ranger: ['pierce', 'homing'
 const RARITY_BY_KEY = Object.fromEntries(RARITIES.map(r => [r.key, r]));
 const SUB_NAME = Object.fromEntries(SUBSTATS.map(s => [s.key, s.name]));
 // hero.js 내부 SLOT_MAIN_KEY와 동일(문서 §캐릭터 성장 & 장비) — export가 없어 여기서 재정의
-const MAIN_STAT_NAME = { atkPct: '영웅 공격력', heroHpPct: '영웅 체력', dmgReducePct: '피해 감소', critDmgPct: '치명타 피해', atkSpeedPct: '영웅 공격 속도' };
+export const MAIN_STAT_NAME = { atkPct: '영웅 공격력', heroHpPct: '영웅 체력', dmgReducePct: '피해 감소', critDmgPct: '치명타 피해', atkSpeedPct: '영웅 공격 속도' };
 const SLOT_MAIN_KEY = { weapon: 'atkPct', helm: 'heroHpPct', armor: 'dmgReducePct', trinket: 'critDmgPct', cape: 'atkSpeedPct' };
 // 클래스 쇼케이스 수치(장식용, 1~5) · 역할 배지 · 대표 색 — 조정은 이 표만
 export const CLS_INFO = {

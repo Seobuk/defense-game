@@ -481,6 +481,9 @@ body { font-synthesis: none; }
 .spd:active { transform: translateY(2px) scale(.95); }
 #speed-text { font-size: 20px; line-height: 1; color: #fff; }
 .lock { font-size: 9px; font-weight: 900; color: #7a4300; text-shadow: none; }
+/* 4차 배속 해금 순간: 금빛 고리가 퍼지며 톡 */
+.spd.unlock { animation: spdUnlock 1.3s var(--spring) 2; }
+@keyframes spdUnlock { 0% { transform: scale(1); } 18% { transform: scale(1.28); box-shadow: 0 3px 0 #a35f00, 0 0 0 0 rgba(255, 228, 90, .95); } 60% { transform: scale(1); box-shadow: 0 3px 0 #a35f00, 0 0 0 16px rgba(255, 228, 90, 0); } }
 /* 좁은 폰: 스킬 3개 + 토글 2개 + 배속이 한 줄에 */
 @media (max-width: 400px) {
   #controls { gap: 5px; }
@@ -848,18 +851,38 @@ body { font-synthesis: none; }
 .mana.spent .mana-card { animation: none; background: #4a3f8a; box-shadow: none; }
 @keyframes manaCard { 0% { scale: .4; rotate: -30deg; } 100% { scale: 1; rotate: 8deg; } }
 
-/* 광폭화 경고(80초 10초 전) · 광폭화 중 */
-.berserk {
-  position: absolute; top: calc(100% + max(8px, calc(var(--u) * 14))); left: 50%; translate: -50% 0; z-index: 1;
-  display: flex; align-items: center; gap: 5px; height: max(24px, calc(var(--u) * 42)); padding: 0 12px 0 6px; border-radius: 999px; white-space: nowrap;
-  border: 2px solid var(--ink); background: linear-gradient(180deg, #ff7a7a 0 50%, #d11f3a 54%); box-shadow: 0 3px 0 #6a0714, 0 0 16px rgba(255, 60, 60, .7);
-  font-family: var(--font-display); font-size: max(12px, calc(var(--u) * 22)); color: #fff; -webkit-text-stroke: 3px #5a0714; paint-order: stroke fill;
-  animation: berserkPulse .8s ease-in-out infinite;
+/* 4차: 전투 상태 한 줄(진행 바 아래, 전장 가운데·스킬 스택을 비켜 작게) — 콤보 · 광란 · 전설의 학살 · 광폭화 */
+.st-row {
+  position: absolute; top: calc(100% + max(5px, calc(var(--u) * 8))); left: 50%; translate: -50% 0; z-index: 1; pointer-events: none;
+  display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 4px; width: max-content; max-width: min(260px, calc(100vw - 196px)); /* 왼쪽 지역 칩 · 오른쪽 영웅 버튼을 비켜 넘치면 두 줄 */
 }
-.berserk .k-ico { --ico: max(18px, calc(var(--u) * 32)); }
-.berserk.warn { background: linear-gradient(180deg, #ffe45a 0 50%, #ff9d1a 54%); box-shadow: 0 3px 0 #8a4a00; -webkit-text-stroke-color: #6a2a00; animation-duration: 1.2s; }
-#stage.boss-on .berserk { top: calc(var(--u) * 236); }
-@keyframes berserkPulse { 50% { scale: 1.06; } }
+#stage.boss-on .st-row { top: calc(var(--u) * 236); }
+#stage.boss-on .hud-left { top: calc(var(--u) * 236); } /* 4차 FIX: 지역·부활 칩도 보스 바(초상·이름) 아래로 */
+.st-pill, .berserk {
+  position: relative; display: flex; align-items: center; gap: 3px; height: max(20px, calc(var(--u) * 34)); padding: 0 9px 0 5px; border-radius: 999px; white-space: nowrap; overflow: hidden;
+  border: 2px solid var(--ink); background: linear-gradient(180deg, rgba(58, 42, 120, .9), rgba(24, 16, 58, .9)); box-shadow: 0 2px 0 rgba(0, 0, 0, .4), inset 0 1px 0 rgba(255, 255, 255, .22);
+  font-family: var(--font-display); font-size: max(10px, calc(var(--u) * 18)); color: #fff; -webkit-text-stroke: 2.2px var(--ink); paint-order: stroke fill;
+}
+.st-pill .k-ico, .berserk .k-ico { --ico: max(14px, calc(var(--u) * 26)); }
+.st-pill b { color: var(--pc, #fff); font-size: 1.12em; }
+/* 남은 시간 = 알약 아래 가는 게이지(끊기기 직전이 한눈에) */
+.st-g { position: absolute; left: 8px; right: 8px; bottom: 1px; height: 2px; border-radius: 2px; background: rgba(0, 0, 0, .45); }
+.st-g > i { position: absolute; inset: 0; border-radius: inherit; background: var(--pc, #fff); transform-origin: left center; }
+.combo { --pc: #fff; padding-left: 8px; }
+.combo .cb-l { font-size: .74em; opacity: .85; }
+.combo em { font-style: normal; font-size: .82em; color: var(--pc); }
+.combo em:empty { display: none; }
+.combo[data-t="1"] { --pc: #7fe3ff; } .combo[data-t="2"] { --pc: #ffc23a; } .combo[data-t="3"] { --pc: #ff7a3a; }
+.combo[data-t="4"] { --pc: #ffd23a; border-color: #5a3000; background: linear-gradient(180deg, rgba(122, 64, 8, .92), rgba(58, 26, 6, .92)); box-shadow: 0 2px 0 rgba(0, 0, 0, .4), 0 0 10px rgba(255, 200, 60, .55); }
+.combo.bump { animation: cbBump .22s ease-out; }
+.combo.catch { animation: cbCatch .38s var(--spring); }
+@keyframes cbBump { 40% { scale: 1.08; } }
+@keyframes cbCatch { 0% { scale: 1.35; filter: brightness(1.8); } 100% { scale: 1; filter: none; } }
+.frenzy { --pc: #ff8a4a; }
+.legend { --pc: #ffd23a; }
+.berserk { padding-right: 10px; background: linear-gradient(180deg, #ff7a7a 0 50%, #d11f3a 54%); box-shadow: 0 2px 0 #6a0714, 0 0 10px rgba(255, 60, 60, .6); -webkit-text-stroke-color: #5a0714; animation: berserkPulse .8s ease-in-out infinite; }
+.berserk.warn { background: linear-gradient(180deg, #ffe45a 0 50%, #ff9d1a 54%); box-shadow: 0 2px 0 #8a4a00; -webkit-text-stroke-color: #6a2a00; animation-duration: 1.2s; }
+@keyframes berserkPulse { 50% { scale: 1.05; } }
 
 /* 왼쪽 상태 칩(골드 알약 아래): 부활 결계 · 각성 누적 */
 .hud-left { position: absolute; left: calc(var(--u) * 14); top: calc(100% + 2px); display: flex; flex-direction: column; align-items: flex-start; gap: 5px; pointer-events: none; }

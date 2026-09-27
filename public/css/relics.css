@@ -1,0 +1,155 @@
+/* 유물 · 망각 화면 (js/relicui.js) — kit.css 토큰·style.css 키프레임(fadeIn·dropIn·fadeUp·spin·shine)을 쓴다 */
+
+/* ── 유물 3택: 금빛 광선 + 메달 카드(장점 초록 ▲ / 대가 빨강 ▼) ── */
+.relic-ov { z-index: 6; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: calc(var(--u) * 18); pointer-events: auto; overflow: hidden;
+  padding: calc(var(--u) * 28) max(16px, calc(var(--u) * 28));
+  background: radial-gradient(ellipse at 50% 34%, rgba(255, 196, 60, .28), rgba(70, 30, 120, .45) 38%, rgba(8, 6, 22, .92) 74%); }
+.relic-ov[hidden] { display: none; }
+.relic-ov.in { animation: fadeIn .25s; }
+.relic-rays { position: absolute; left: 50%; top: 34%; width: 160vmax; height: 160vmax; margin: -80vmax 0 0 -80vmax; pointer-events: none; opacity: .5;
+  background: repeating-conic-gradient(from 0deg, rgba(255, 220, 120, .22) 0 7deg, transparent 7deg 20deg);
+  -webkit-mask: radial-gradient(circle, #000 4%, transparent 42%); mask: radial-gradient(circle, #000 4%, transparent 42%); animation: spin 40s linear infinite; }
+.relic-head { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; animation: dropIn .4s var(--ease-back); }
+.relic-ribbon { padding: 4px 18px 6px; border-radius: 999px; font-family: var(--font-display); font-size: max(12px, calc(var(--u) * 21)); color: #fff;
+  background: linear-gradient(180deg, #ffe45a 0 50%, #f0a020 54%); box-shadow: 0 0 0 2px var(--ink), 0 3px 0 #8a4a00, 0 0 18px rgba(255, 200, 60, .7);
+  -webkit-text-stroke: 3px #6b3300; paint-order: stroke fill; }
+.relic-head h2 { margin: 0; font-family: var(--font-display); font-weight: 400; font-size: max(20px, calc(var(--u) * 38)); color: #fff; text-align: center;
+  -webkit-text-stroke: 4px var(--ink); paint-order: stroke fill; text-shadow: 0 3px 0 var(--ink), 0 0 22px rgba(255, 210, 90, .55); }
+.relic-sub { margin: 0; padding: 3px 12px 4px; border-radius: 999px; background: rgba(10, 6, 30, .62); box-shadow: inset 0 0 0 1.5px rgba(255, 228, 90, .4);
+  font-family: var(--font-body); font-weight: 700; font-size: max(11.5px, calc(var(--u) * 20)); color: #efe6ff; }
+.relic-sub b { color: #ff9aa6; }
+
+/* 한 줄에 한 장(메달 | 이름 · 장점 · 대가) — 넓은 화면도 3열로 쪼개면 대가 문구가 두 줄로 꺾여 읽기 어렵다 */
+.relic-cards { position: relative; display: grid; grid-template-columns: 1fr; gap: max(10px, calc(var(--u) * 16)); width: 100%; max-width: 540px; }
+.relic-card { --rc: #7b6cff; position: relative; display: flex; align-items: center; gap: 12px; min-height: 84px; padding: 10px 14px 10px 10px; border: 0; border-radius: 18px; cursor: pointer; text-align: left;
+  color: #fff; touch-action: manipulation; isolation: isolate; overflow: hidden;
+  background: radial-gradient(120% 140% at 0% 50%, color-mix(in srgb, var(--rc) 55%, transparent), transparent 62%), linear-gradient(180deg, var(--night-700), var(--night-900));
+  box-shadow: 0 0 0 3px var(--ink), 0 0 0 5.5px #e8b43a, 0 0 18px rgba(255, 196, 60, .35), 0 7px 0 rgba(0, 0, 0, .4), 0 14px 24px rgba(0, 0, 0, .5);
+  opacity: 0; transform: translateY(26px) scale(.9); animation: relicIn .5s var(--ease-back) forwards; animation-delay: calc(.12s + var(--i) * .11s);
+  transition: transform .18s var(--ease-back), box-shadow .2s, opacity .2s; }
+.relic-card::after { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: linear-gradient(105deg, transparent 38%, rgba(255, 255, 255, .22) 50%, transparent 62%); transform: translateX(-100%); animation: shine 3s 1s ease-in-out infinite; }
+.relic-card:active { transform: scale(.96); }
+@keyframes relicIn { to { opacity: 1; transform: none; } }
+.rc-medal { position: relative; flex: none; width: 64px; height: 64px; display: grid; place-items: center; }
+.rc-medal::before { content: ""; position: absolute; inset: -8px; border-radius: 50%; background: radial-gradient(circle, color-mix(in srgb, var(--rc) 70%, #fff 10%), transparent 68%); opacity: .75; }
+.rc-medal img { position: relative; width: 100%; height: 100%; filter: drop-shadow(0 3px 0 rgba(10, 6, 24, .55)); animation: emFloat 3.2s ease-in-out infinite; }
+.rc-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.rc-name { font-family: var(--font-display); font-weight: 400; font-size: 18px; line-height: 1.1; color: #fff4c8; -webkit-text-stroke: 3px var(--ink); paint-order: stroke fill; text-shadow: 0 2px 0 var(--ink); word-break: keep-all; }
+.rc-line { display: flex; align-items: flex-start; gap: 6px; padding: 3px 8px 4px 5px; border-radius: 9px; font-family: var(--font-body); font-weight: 700; font-size: 13px; line-height: 1.25; word-break: keep-all; }
+.rc-line i { flex: none; display: grid; place-items: center; width: 17px; height: 17px; margin-top: 1px; border-radius: 50%; font-style: normal; font-size: 10px; color: #fff; box-shadow: 0 0 0 1.5px var(--ink); }
+.rc-line.up { background: rgba(40, 170, 80, .22); color: #d8ffd8; box-shadow: inset 0 0 0 1px rgba(79, 224, 106, .35); }
+.rc-line.up i { background: var(--ok-lo); }
+.rc-line.down { background: rgba(200, 30, 50, .22); color: #ffd6da; box-shadow: inset 0 0 0 1px rgba(255, 77, 94, .35); }
+.rc-line.down i { background: var(--bad-lo); }
+.relic-card.rec { box-shadow: 0 0 0 3px var(--ink), 0 0 0 5.5px #fff3a8, 0 0 26px rgba(255, 228, 90, .85), 0 7px 0 rgba(0, 0, 0, .4); }
+.relic-card.chosen { transform: scale(1.06); box-shadow: 0 0 0 3px var(--ink), 0 0 0 6px #fff, 0 0 36px 10px rgba(255, 228, 120, .9), 0 7px 0 rgba(0, 0, 0, .4); }
+.relic-card.chosen .rc-medal img { animation: relicGot .6s var(--ease-back) forwards; }
+@keyframes relicGot { 40% { transform: scale(1.35) rotate(-8deg); filter: brightness(1.7) drop-shadow(0 0 12px #fff3a8); } 100% { transform: scale(1.15); } }
+.relic-card.faded { opacity: 0 !important; transform: translateY(18px) scale(.9) !important; transition: opacity .22s, transform .22s; }
+
+.relic-foot { position: relative; display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 10px 14px; animation: fadeUp .35s .5s both; }
+.relic-skip { min-height: 44px; padding: 0 18px; border: 0; border-radius: 999px; cursor: pointer; touch-action: manipulation; background: rgba(10, 6, 30, .62);
+  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, .22); color: #c9c1ea; font-family: var(--font-display); font-size: 14px; }
+.relic-skip:active { transform: scale(.95); }
+.relic-auto { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-display); font-size: 13px; color: #fff3c4; }
+.relic-auto[hidden] { display: none; }
+.relic-auto svg { width: 30px; height: 30px; transform: rotate(-90deg); }
+.relic-auto circle { fill: none; stroke-width: 4; }
+.relic-auto .pr-bg { stroke: rgba(255, 255, 255, .22); }
+.relic-auto .pr-fg { stroke: #ffe45a; stroke-linecap: round; stroke-dasharray: 106.8; transition: stroke-dashoffset .2s linear; }
+.relic-auto b { width: 30px; margin-left: -36px; text-align: center; font-size: 12px; }
+.relic-auto em { font-style: normal; }
+
+/* ── 전투 HUD: 왼쪽 열 맨 위 유물 줄 ── */
+.relic-box { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.relic-box[hidden] { display: none; }
+.relic-h { padding-left: 2px; }
+.relic-row { display: grid; grid-template-columns: repeat(3, 28px); gap: 4px; }
+.rl-chip { width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; background: none; cursor: pointer; touch-action: manipulation; }
+.rl-chip img { width: 100%; height: 100%; filter: drop-shadow(0 2px 0 rgba(10, 6, 24, .55)); }
+.rl-chip:active { transform: scale(.9); }
+.rl-chip.pop { animation: relicPop .7s var(--ease-back); }
+@keyframes relicPop { 0% { transform: scale(0) rotate(-90deg); } 60% { transform: scale(1.5) rotate(8deg); filter: brightness(1.8); } 100% { transform: none; } }
+#stage.wide .relic-box { padding: 10px 10px 12px; border-radius: 20px; border: 2px solid var(--ink); background: linear-gradient(180deg, rgba(43, 35, 102, .82), rgba(20, 15, 46, .86)); }
+#stage.wide .relic-row { grid-template-columns: repeat(3, 36px); gap: 6px; }
+#stage.wide .rl-chip { width: 36px; height: 36px; }
+.relic-tip .rc-line { margin-top: 4px; font-size: 12px; }
+
+/* 봉인된 비상 스킬 · 왕관이 잠근 스킬 칸 */
+.skill.sealed .sk-ico, .skill.sealed .sk-name { opacity: .35; filter: grayscale(1); }
+.skill.sealed { animation: none; }
+.skill.sealed::after, .skill.sealed.ready::after { content: ""; position: absolute; inset: 0; border-radius: 50%; animation: none; transform: none;
+  background: url(../assets/icons/lock.svg) center 40% / 46% no-repeat, rgba(12, 8, 30, .55); }
+.ss.relic-lock .ss-art::before { border: 0; width: 46%; height: 46%; background: url(../assets/icons/lock.svg) center / contain no-repeat; opacity: .75; }
+.ss.relic-lock .ss-orb { background: radial-gradient(circle at 50% 40%, rgba(90, 30, 140, .8), rgba(12, 8, 32, .85) 70%); }
+
+/* ── 망각(비우기): 카드 화면 아래 버튼 + 고르기 시트 ── */
+.forget-btn { min-height: 44px; padding: 8px 14px; gap: 6px; font-size: 16px; }
+.forget-btn[hidden] { display: none; }
+.forget-btn svg { width: 1.2em; height: 1.2em; }
+.forget-btn b { display: grid; place-items: center; min-width: 22px; height: 22px; padding: 0 5px; border-radius: 999px; background: #ff3a5a; box-shadow: 0 0 0 2px #1f124f; font-size: 13px; -webkit-text-stroke: 0; }
+.forget-sheet { position: absolute; inset: 0; z-index: 8; display: grid; place-items: center; padding: 16px; background: rgba(8, 6, 22, .72); animation: fadeIn .18s; }
+.forget-sheet[hidden] { display: none; }
+.fs-card { width: min(100%, 420px); max-height: 100%; overflow: auto; padding: 16px 16px 18px; border-radius: 22px; border: 2px solid var(--ink);
+  background: linear-gradient(180deg, #2b2366, #1d1745); box-shadow: 0 0 0 4px #5a46d6, 0 10px 0 rgba(0, 0, 0, .4), 0 20px 40px rgba(0, 0, 0, .55); animation: sheetIn .3s var(--ease-back); }
+.fs-list, .fs-confirm { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.fs-list[hidden], .fs-confirm[hidden] { display: none; }
+.fs-card h3 { margin: 0; font-family: var(--font-display); font-weight: 400; font-size: 20px; color: #fff; text-align: center; -webkit-text-stroke: 3px var(--ink); paint-order: stroke fill; word-break: keep-all; }
+.fs-sub { margin: 0; font-family: var(--font-body); font-weight: 700; font-size: 13px; color: #cfc4ff; text-align: center; }
+.fs-sub b { color: #ffe45a; }
+.fs-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; width: 100%; }
+.fs-skill { display: flex; flex-direction: column; align-items: center; gap: 3px; min-height: 44px; padding: 8px 4px 7px; border: 0; border-radius: 14px; cursor: pointer; color: #fff;
+  background: rgba(10, 6, 30, .5); box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, .14); touch-action: manipulation; transition: transform .12s var(--ease-back), box-shadow .15s; }
+.fs-skill:hover, .fs-skill:focus-visible { box-shadow: inset 0 0 0 2px #ff7a8a; }
+.fs-skill:active { transform: scale(.94); }
+.fs-orb { width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; border: 2.5px solid var(--ink);
+  background: radial-gradient(circle at 50% 36%, var(--el-hi, #fff) 0, var(--el, #7b6cff) 52%, var(--el-lo, #1d1745) 100%); box-shadow: 0 3px 0 rgba(10, 6, 24, .55), inset 0 2px 0 rgba(255, 255, 255, .45); }
+.fs-orb.fusion { background: radial-gradient(circle at 50% 36%, rgba(255, 255, 255, .55), transparent 45%), linear-gradient(135deg, var(--fa) 0 50%, var(--fb) 50% 100%); box-shadow: 0 3px 0 rgba(10, 6, 24, .55), 0 0 0 2px #ffd23a; }
+.fs-orb img, .fs-orb .k-ico { width: 78%; height: 78%; --ico: 26px; }
+.fs-name { font-family: var(--font-display); font-weight: 400; font-size: 13px; line-height: 1.1; text-align: center; word-break: keep-all; -webkit-text-stroke: 2.5px var(--ink); paint-order: stroke fill; }
+.fs-lv { font-family: var(--font-impact); font-size: 11px; color: #ffe45a; }
+.fs-big { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.fs-big .fs-orb { width: 72px; height: 72px; animation: shakeX .5s .1s; }
+.fs-big .fs-name { font-size: 16px; }
+.fs-notes { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 5px; width: 100%; }
+.fs-notes li { position: relative; padding: 6px 10px 7px 26px; border-radius: 10px; background: rgba(10, 6, 30, .5); font-family: var(--font-body); font-weight: 700; font-size: 13px; line-height: 1.3; color: #e8e0ff; word-break: keep-all; }
+.fs-notes li::before { content: ""; position: absolute; left: 10px; top: 12px; width: 7px; height: 7px; border-radius: 50%; background: #ff7a8a; }
+.fs-notes b { color: #ffe45a; }
+.fs-btns { display: flex; gap: 10px; width: 100%; }
+.fs-btns .k-btn { flex: 1; }
+
+/* ── 결과 화면: 이번 도전의 유물 ── */
+.res-relic-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px 12px; }
+.res-relic { display: flex; flex-direction: column; align-items: center; gap: 3px; width: 72px; animation: dropIn .4s var(--ease-back) both; animation-delay: calc(.4s + var(--i) * .08s); }
+.res-relic img { width: 52px; height: 52px; filter: drop-shadow(0 3px 0 rgba(10, 6, 24, .55)); }
+.res-relic b { font-family: var(--font-display); font-weight: 400; font-size: 12px; line-height: 1.1; text-align: center; color: #fff4c8; word-break: keep-all; -webkit-text-stroke: 2.4px var(--ink); paint-order: stroke fill; }
+.res-relic-none { margin: 0; text-align: center; font-family: var(--font-body); font-size: 13px; color: #a79fd0; }
+.res-forget { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 8px 0 0; font-family: var(--font-body); font-weight: 700; font-size: 13px; color: #cfc4ff; }
+.res-forget svg { width: 16px; height: 16px; color: #b8a8ff; }
+
+/* ── 4차 FIX: 유물 카드 '지금 내 빌드' 한 줄 · 20·40·60·80층 다음 지역 띠 · 비우기 경고 ── */
+.rc-ctx { padding: 2px 8px 3px; border-radius: 8px; background: rgba(120, 180, 255, .14); box-shadow: inset 0 0 0 1px rgba(150, 200, 255, .3);
+  font-family: var(--font-body); font-weight: 700; font-size: 12px; line-height: 1.25; color: #d6e8ff; word-break: keep-all; }
+.rc-ctx b { color: #fff; }
+.rc-ctx.bad { background: rgba(255, 150, 60, .16); box-shadow: inset 0 0 0 1px rgba(255, 170, 80, .4); color: #ffe0c2; }
+.rc-ctx.bad b { color: #ffb07a; }
+.relic-next { position: relative; display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 4px 8px; max-width: 540px; padding: 5px 12px 6px; border-radius: 999px;
+  background: rgba(10, 6, 30, .72); box-shadow: inset 0 0 0 1.5px rgba(160, 200, 255, .35); font-family: var(--font-body); font-weight: 700; font-size: 12.5px; color: #e8e4ff; animation: dropIn .4s var(--ease-back) .1s backwards; }
+.relic-next[hidden] { display: none; }
+.relic-next .rn-k { padding: 1px 8px 2px; border-radius: 999px; background: #3a4f86; font-size: 11px; color: #cfe0ff; }
+.relic-next b { font-family: var(--font-display); font-weight: 400; font-size: 14px; color: var(--gold-hi); -webkit-text-stroke: 2.5px var(--ink); paint-order: stroke fill; }
+.relic-next .rn-w { color: #9dff8a; } .relic-next .rn-r { color: #c9cfdb; } .relic-next .rn-rule { color: #ffd6a0; }
+.fs-notes b.fs-warn { color: #ff9aa6; }
+/* 폰(짧은 화면): 문맥 줄 · 다음 지역 띠가 늘어난 만큼 카드를 줄여 머리글·'유물 없이 계속'이 화면 안에 */
+@media (max-height: 760px) {
+  .relic-ov { gap: 8px; padding-top: 12px; padding-bottom: 12px; }
+  .relic-ov:has(.relic-next:not([hidden])) .relic-sub { display: none; }
+  .relic-cards { gap: 9px; }
+  .relic-card { min-height: 0; gap: 9px; padding: 7px 10px 7px 7px; }
+  .rc-medal { width: 46px; height: 46px; }
+  .rc-body { gap: 3px; }
+  .rc-name { font-size: 16px; }
+  .rc-line { font-size: 12px; padding: 2px 6px 3px 4px; }
+  .rc-ctx { font-size: 11.5px; }
+}

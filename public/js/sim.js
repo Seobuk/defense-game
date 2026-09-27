@@ -19,6 +19,14 @@ import {
   equipItem, sellItem, sellItemsByRarity, autoEquipAll, hasMilestone,
 } from './hero.js';
 import { allocateTalent, branchSpent } from './talents.js';
+import { pendingMutations, mutationCard, applyMutation, normalizeMutations, pruneMutations } from './mutations.js'; // 4차 변이 — 훅 한 줄씩(// 변이 표시)
+import { elemMul, applyReach, undying, regionKill } from './dungeons.js'; // 4차 던전(지역) 특성 — 훅 한 줄씩(// 던전 표시)
+// 유물·망각(4차): 표·효과·흐름은 relics.js, 여기엔 훅 한 줄씩(// 유물 표시)
+import {
+  relicFx, applyRelicFx, relicHitMul, slotCap, cardStep, relicSealed, relicRevive, onRelicKill, onRelicClear, onRelicUlt,
+  relicAct, normalizeRelicRun, relicRunSave, initRelics, relicManaCard, START_RELICS as START_POOL,
+} from './relics.js';
+import { normRunPrep, applyShopBonus, prepWardReady, PREP_RARE_MUL } from './shop.js'; // 4차 경제: 출정 준비 · 돌파 보너스
 
 const KINDS = ['human', 'bot', 'remote'];
 const BOT_INTERVAL = 0.25;
@@ -61,7 +69,7 @@ function makePlayer(init, i, fx, stage = 1) {
     name: String(init.name ?? `P${i + 1}`).slice(0, 16),
     kind: KINDS.includes(init.kind) ? init.kind : 'human',
     gold: Number.isFinite(gold) && gold > 0 ? gold : 0,
-    auto: !!init.auto,         // 자동 진행: 영웅 궁극기 자동(다음 층 자동은 main.js) — 카드와는 무관
+    auto: !!init.auto,         // 자동 진행: 영웅 궁극기·운석·빙결 자동(다음 층 자동은 main.js) — 카드와는 무관
     autoPick: !!init.autoPick, // 카드 화면의 '자동 선택'(기본 OFF) — 켠 사람만 PICK_AUTO_T초 뒤 추천 카드
     lv,
     cd: { meteor: 0, freeze: 0 },
@@ -110,6 +118,7 @@ export function normalizeRun(raw) {
     stage: toInt(r.stage, 1, MAX_STAGE),
     players: [0, 1].map(i => ({ gold: posNum(o(pl[i]).gold) })), // 이번 도전에서 번 골드(도전 종료 때 meta.gold로). [1]은 잠든 협동 자리
     spells, fusionParts, // 옛 저장의 allySpells(AI 동료 주문)·auto(→ settings.autoNext)는 버린다
+    mutations: normalizeMutations(r.mutations, spells), // 변이: { [Lv6 스킬]: 변이 키 } (옛 저장엔 없음 → {})
     rerollLeft: r.rerollLeft == null ? null : toInt(r.rerollLeft, 0, 99),
     awaken, gems,
     reviveUsed: !!r.reviveUsed,
@@ -121,6 +130,8 @@ export function normalizeRun(raw) {
     flawless: toInt(r.flawless, 0, MAX_STAGE),
     time: posNum(r.time),
     startBest: toInt(r.startBest, 0, MAX_STAGE),
+    ...normalizeRelicRun(r), // 유물: relics · relicPick · forgetLeft · forgets · relicRevives
+    prep: normRunPrep(r.prep), // 출정 준비(shop.js) {card, rare, ward, forget, wardUsed}
     loadout: {
       cls: typeof lo.cls === 'string' && Object.hasOwn(HERO_CLASSES, lo.cls) ? lo.cls : null,
       startSpells: [...new Set(Array.isArray(lo.startSpells) ? lo.startSpells : [])].filter(k => SPELL_KEYS.includes(k)).slice(0, SPELL_SLOTS),
@@ -135,9 +146,12 @@ export function serializeRun(g) {
     v: 3, stage: g.stage, legacy: g.fusions.filter(k => g.run.legacy.includes(k)),
     players: g.players.map(p => ({ gold: p.gold })),
     spells: { ...g.spells }, fusionParts: JSON.parse(JSON.stringify(g.fusionParts)), rerollLeft: g.rerollLeft,
+    mutations: { ...g.mutations }, // 변이
     awaken: { ...r.awaken }, gems: { ...r.gems },
     reviveUsed: r.reviveUsed, heroRevive: r.heroRevive, arcane: r.arcane, floors: r.floors, bosses: r.bosses, firstClears: r.firstClears, flawless: r.flawless,
     time: r.time, startBest: r.startBest,
+    ...relicRunSave(g), // 유물
+    prep: { ...r.prep }, // 출정 준비
     loadout: { cls: r.loadout.cls, startSpells: [...r.loadout.startSpells] },
   };
 }
@@ -149,9 +163,9 @@ function computeFx(g) {
   f.rateMul *= 1 + A.haste.rate * k * a.haste;
   f.wallMul *= 1 + A.ward.wall * k * a.ward;
   f.goldMul *= 1 + A.fortune.gold * k * a.fortune;
-  return f;
+  return applyShopBonus(applyRelicFx(f, g.rfx), g.bonus); // 유물 · 수련/보석 돌파(shop.js)
 }
-function refreshFx(g) {
+export function refreshFx(g) { // export: relics.js(유물을 고른 뒤)
   g.fx = computeFx(g);
   for (const p of g.players) p.stats = cannonStats(p.lv, g.fx, g.stage);
   const max = wallCap(g);
@@ -200,6 +214,7 @@ export function createGame(opts = {}) {
     // 판타지 스킬 (런 전체 누적 빌드)
     mana: { cur: 0, max: MANA_MAX }, spells: { ...run.spells }, fusions: [], pick: null, pickQ: 0,
     fusionParts: run.fusionParts, // { [융합 키]: [재료 a, 재료 b] }
+    mutations: run.mutations, // 변이(mutations.js): { [Lv6 스킬·융합]: 변이 키 } — 스킬당 1회, 합체·망각으로 빠지면 사라진다
     book: {},          // 실제로 발동하는 스킬 레벨 = 기본 스킬 + 융합 스킬이 품은 재료(만렙) — spells.js가 읽는다
     fusionProgress: [], // UI: 발견한 융합 중 짝이 모인 것의 진행도(config.js fusionProgress) — refreshFusion이 갱신
     collabs: [], collabT: {}, collabOff: !!opts.collabOff, // 켜진 협공 키 · collabProc 간격 · 테스트용 끄기
@@ -212,7 +227,13 @@ export function createGame(opts = {}) {
       firstClears: run.firstClears, flawless: run.flawless, time: run.time,
       startBest: opts.run ? run.startBest : toInt(opts.best, 0, MAX_STAGE), loadout: run.loadout, legacy: run.legacy,
       over: false, victory: false, ended: false, checkpoint: null,
+      forgets: run.forgets, relicRevives: run.relicRevives, relicCards: run.relicCards, // 유물: 쓴 망각 수 · 쓴 불사조 부활 · 쌍둥이 달 카드 카운터
+      prep: run.prep, // 출정 준비(shop.js)
     },
+    // 유물(보스 보상): 고른 유물 · 효과 합산 · 떠 있는 후보 · 후보 풀(run.js가 meta로) · 남은 망각
+    relics: run.relics, rfx: relicFx(run.relics), relicPick: null, forgetLeft: 0,
+    relicPool: Array.isArray(opts.relicPool) ? opts.relicPool : null,
+    bonus: opts.bonus && typeof opts.bonus === 'object' ? opts.bonus : null, // 수련·보석 돌파(shop.js runBonus — run.js가 넘김)
     rerollLeft: 0,
     spawnT: 0,
     // 영웅(클래스 필드 유닛) — opts.hero 없으면 완전히 비활성(기존 동작과 100% 동일)
@@ -231,6 +252,8 @@ export function createGame(opts = {}) {
   g.players = [makePlayer(pl[0], 0, g.fx, st0), makePlayer(pl[1], 1, g.fx, st0)];
   // 새로고침: 영웅 Lv5(1회) + 영구 강화. 런 전체에서 쓰는 횟수(이어하기면 저장값)
   g.rerollLeft = run.rerollLeft ?? (g.hero && hasMilestone(g.hero.level, 'reroll1') ? 1 : 0) + g.fx.rerolls;
+  if (!g.relicPool) g.relicPool = START_POOL; // 유물 풀(없으면 시작 풀)
+  initRelics(g, run, opts); // 유물: 남은 망각 · 이어하기로 복원된 유물 후보
   initSpells(g);
   refreshFusion(g); // 시작 스킬끼리 융합 조건이면 바로 합체
   startStage(g, st0);
@@ -247,6 +270,7 @@ export function startStage(g, stage) {
   const carry = g.phase === 'clear'; // 클리어 직후 다음 판이면 콤보·광란·전설 이어감
   g.stage = stage;
   g.theme = themeOf(stage);
+  applyReach(g); // 던전: 카드·유물이 떠 있어 step이 멈춘 층 시작에도 렌더러(전역 REACH)가 이 판 기준(지난 도전의 동굴 어둠이 남지 않게)
   g.phase = 'play';
   g.phaseT = 0;
   g.freezeT = 0;
@@ -333,8 +357,12 @@ export function drainEvents(g) {
 
 // ── 판타지 스킬 카드 뽑기 ──
 // 이 카드를 고르면 융합이 완성(합체)되는가: 짝이 이미 만렙이고 이 카드가 이 스킬을 만렙으로 만들 때(UI는 ✦ "이걸 찍으면 융합!")
+// 카드 한 장이 올리는 레벨: 1(유물 쌍둥이 달 2) + 따라잡기(4차 FIX — CATCHUP_FROM층 뒤 Lv3 미만 기본 스킬은 +1: 후반 남은 Lv1 스킬·새 스킬도 변이·합체까지 닿게)
+export const CATCHUP_FROM = 30;
+export const catchUp = (g, key) => g.stage > CATCHUP_FROM && !FUSION_BY_KEY[key] && (g.spells[key] || 0) < 3;
+const cardGain = (g, key) => cardStep(g) + (catchUp(g, key) ? 1 : 0);
 function wouldFuse(g, key) {
-  if (FUSION_BY_KEY[key] || (g.spells[key] || 0) + 1 < SPELL_MAX_LV) return false;
+  if (FUSION_BY_KEY[key] || (g.spells[key] || 0) + cardGain(g, key) < SPELL_MAX_LV) return false; // 유물 쌍둥이 달: 한 장에 2레벨
   const hyp = { ...g.spells, [key]: SPELL_MAX_LV };
   return FUSIONS.some(f => !g.spells[f.key] && !f.ready(g.spells) && f.ready(hyp) && f.groups.some(gr => gr.includes(key)));
 }
@@ -342,7 +370,9 @@ function wouldFuse(g, key) {
 // 영웅 Lv50 마일스톤: 전설 카드 확률 상승
 function rarityWeight(g, key) {
   const r = SKILL_BY_KEY[key].rarity, w = RARITY_WEIGHT[r];
-  return g.hero && r === 'legend' && hasMilestone(g.hero.level, 'legendBoost') ? w * 2 : w;
+  const rel = r === 'legend' ? g.rfx.legendMul : r === 'rare' ? g.rfx.rareMul : 1; // 유물 도박사의 주사위
+  const prep = g.stage === 1 && r !== 'common' && g.run.prep.rare ? PREP_RARE_MUL : 1; // 출정 준비 '행운의 부적'(shop.js)
+  return (g.hero && r === 'legend' && hasMilestone(g.hero.level, 'legendBoost') ? w * 2 : w) * rel * prep;
 }
 function weightedKey(g, keys) {
   let sum = 0;
@@ -353,7 +383,7 @@ function weightedKey(g, keys) {
 }
 
 // 선택지 수 = 3 + 영웅 Lv15(+1) + 영구 강화 '카드 선택지'(+1)
-export const cardCount = g => 3 + (g.hero && hasMilestone(g.hero.level, 'choose4') ? 1 : 0) + g.fx.choices;
+export const cardCount = g => Math.max(2, 3 + (g.hero && hasMilestone(g.hero.level, 'choose4') ? 1 : 0) + g.fx.choices); // fx.choices에 유물(±1)도 들어 있다 — 최소 2장
 // 쓰는 슬롯 수(기본 스킬·융합 스킬 모두 1칸)
 export const slotsUsed = g => Object.keys(g.spells).length;
 
@@ -364,24 +394,29 @@ export const STARTER = ['fireball', 'lightningStrike', 'iceLance', 'tornado', 'j
 const starterFor = g => (g.hero && HERO_CLASSES[g.hero.cls]?.melee ? STARTER.filter(k => k !== 'tornado') : STARTER);
 function genCards(g, starter = false) {
   const n = cardCount(g);
-  const full = slotsUsed(g) >= SPELL_SLOTS;
+  const full = slotsUsed(g) >= slotCap(g) || g.rfx.noNew; // 유물: 광기의 왕관 5칸 · 혼돈의 구슬 새 스킬 금지
   const fused = new Set(Object.values(g.fusionParts).flat()); // 보유 융합이 품은 재료는 새 카드로 다시 나오지 않는다(이미 융합 안에서 발동)
   let pool = SKILL_KEYS.filter(k => (g.spells[k] || 0) < SPELL_MAX_LV && (g.spells[k] > 0 || (!full && !FUSION_BY_KEY[k] && !fused.has(k))));
   const st = starter && starterFor(g);
   if (st && pool.some(k => st.includes(k))) pool = pool.filter(k => st.includes(k));
   const cards = [];
+  // 변이: Lv6이 된 스킬·융합은 두 갈래 중 하나를 고르는 변이 카드(스킬당 1회). 대기 중이면 한 장은 늘 나오고, 나머지는 자리가 남을 때
+  const muts = starter ? [] : pendingMutations(g);
+  if (muts.length) cards.push(mutationCard(g, muts.splice(Math.floor(g.rng() * muts.length), 1)[0]));
   while (cards.length < n && pool.length) {
     const k = weightedKey(g, pool);
     pool = pool.filter(x => x !== k);
-    cards.push({ spell: k, level: (g.spells[k] || 0) + 1, rarity: SKILL_BY_KEY[k].rarity, fusionHint: wouldFuse(g, k), fusion: !!FUSION_BY_KEY[k] });
+    const from = g.spells[k] || 0; // from = 지금 레벨(0 = 새 스킬) — UI '전 → 후'
+    cards.push({ spell: k, from, level: Math.min(SPELL_MAX_LV, from + cardGain(g, k)), rarity: SKILL_BY_KEY[k].rarity, fusionHint: wouldFuse(g, k), fusion: !!FUSION_BY_KEY[k], catchUp: catchUp(g, k) });
   }
-  const aw = cards.length ? [] : AWAKEN_KEYS.slice(); // 각성 카드는 더 강화할 것도 새로 넣을 것도 없을 때만
+  while (cards.length < n && muts.length) cards.push(mutationCard(g, muts.splice(Math.floor(g.rng() * muts.length), 1)[0])); // 변이
+  const aw = cards.length ? [] : AWAKEN_KEYS.slice(); // 각성 카드는 더 강화할 것도 · 변이도 · 새로 넣을 것도 없을 때만
   const skills = cards.length;
   while (cards.length < n && aw.length) {
     const k = aw.splice(Math.floor(g.rng() * aw.length), 1)[0];
     cards.push({ spell: null, awaken: k, level: g.run.awaken[k] + 1, rarity: 'common', fusionHint: false });
   }
-  cards.fixed = skills ? !pool.length : !aw.length; // 후보를 전부 보여 줬다 = 새로고침해도 같은 카드(새로고침 막음)
+  cards.fixed = skills ? !pool.length && !muts.length : !aw.length; // 후보를 전부 보여 줬다 = 새로고침해도 같은 카드(새로고침 막음)
   return cards;
 }
 
@@ -417,7 +452,7 @@ function gainMana(g) {
     }
   }
   g.mana.cur = MANA_MAX;
-  triggerPick(g);
+  if (relicManaCard(g)) triggerPick(g); // 유물: 쌍둥이 달(두 번에 한 번) · 혼돈의 구슬(마나 카드 없음)
 }
 
 // 실제로 발동하는 스킬 레벨: 기본 스킬 + 융합 스킬이 품은 재료 두 스킬(만렙으로 합쳤으니 만렙 그대로)
@@ -449,6 +484,9 @@ export function refreshFusion(g) {
   }
   for (const k of Object.keys(g.fusionParts)) if (!g.spells[k]) delete g.fusionParts[k];
   g.fusions = FUSION_KEYS.filter(k => g.spells[k] > 0);
+  if (g.run.legacy.length) g.run.legacy = g.run.legacy.filter(k => g.spells[k]); // 옛 도전 융합을 비우면(망각·왕관) 다시 만든 융합은 새 규칙
+  g._res = null; // 유물 원소 공명 캐시(relics.js resonant)
+  pruneMutations(g); // 변이: 합체된 재료·빠진 스킬의 변이는 사라진다
   g.book = bookOf(g);
   g.fusionProgress = fusionProgress(g.spells, g.discovered);
   refreshCollab(g);
@@ -492,13 +530,16 @@ export function reofferPick(g, pick) {
   return true;
 }
 
-function applyPick(g, i, index) {
+function applyPick(g, i, index, choice) { // choice = 변이 카드의 갈래 0|1(없으면 추천 갈래)
   if (i !== 0 || !g.pick) return false; // 카드는 플레이어(0번) 전용
   const cards = g.pick.cards;
   if (!Number.isInteger(index) || index < 0 || index >= cards.length) return false;
   const card = cards[index];
   g.pick = null;
-  if (card.awaken) { // 각성: 런 동안 소폭 스탯 누적
+  if (card.mutate) { // 변이: Lv6 스킬의 두 갈래 중 하나(mutations.js). spellPick{ mutate: 변이 키 } — level 없음(MAX 연출 X)
+    const mut = applyMutation(g, card, choice);
+    if (mut) emit(g, { type: 'spellPick', spell: card.spell, mutate: mut, rarity: 'legend' });
+  } else if (card.awaken) { // 각성: 런 동안 소폭 스탯 누적
     g.run.awaken[card.awaken]++;
     refreshFx(g);
     emit(g, { type: 'spellPick', spell: null, awaken: card.awaken, level: card.level, rarity: card.rarity });
@@ -541,7 +582,7 @@ export function tickPick(g, dtReal) {
 // i = 마법사 번호: 솔로에선 0(나)만. 1은 협동 모드(g.coop)에서만 받는다
 export function act(g, i, action) {
   if ((i !== 0 && i !== 1) || (i === 1 && !g.coop) || !action || typeof action !== 'object') return false;
-  if (action.type === 'pick') return applyPick(g, i, action.index);
+  if (action.type === 'pick') return applyPick(g, i, action.index, action.choice); // choice: 변이 카드 갈래
   if (action.type === 'reroll') return rerollPick(g, i);
   const p = g.players[i];
   // 자동 진행(ON = 영웅 궁극기 자동 · 다음 층 자동은 main.js). 카드 선택과는 무관 — 선택 중에도 받는다
@@ -552,19 +593,20 @@ export function act(g, i, action) {
     if (i === 0 && g.pick) g.pick.autoLeft = pickT(g);
     return true;
   }
-  if (g.pick) return false; // 카드 선택 중엔 다른 조작 불가(전투 정지)
+  if (action.type === 'relic' || action.type === 'forget') return relicAct(g, i, action); // 유물 고르기 · 망각(비우기)
+  if (g.pick || g.relicPick) return false; // 카드·유물 선택 중엔 다른 조작 불가(전투 정지)
   // 도전 중 골드 강화('upgrade')는 없다 — 마법사 수련은 정비 화면(run.js buyTraining)
   if (action.type === 'skill') {
     const sk = action.skill;
-    if (g.phase !== 'play' || !Object.hasOwn(SKILLS, sk) || p.cd[sk] > 0) return false;
-    p.cd[sk] = SKILLS[sk].cd;
+    if (g.phase !== 'play' || !Object.hasOwn(SKILLS, sk) || p.cd[sk] > 0 || relicSealed(g, sk)) return false; // 유물 봉인
+    p.cd[sk] = SKILLS[sk].cd * (sk === 'meteor' ? g.rfx.meteorCd : g.rfx.freezeCd); // 유물 인장·심장
     emit(g, { type: 'skill', o: i, skill: sk });
     // 이중 필살: 상대가 1.5초 안에 같은 스킬을 썼으면 효과 2배
     const prev = g.lastSkill[sk];
     const dbl = !!prev && prev.o !== i && g.phaseT - prev.t <= FX.doubleWindow;
     g.lastSkill[sk] = { o: i, t: g.phaseT }; // 상대 쿨타임(≥40초)이 창(1.5초)보다 길어 3연속은 불가
     if (dbl) synergy(g, 'double', -1, WORLD_W / 2, WALL_Y / 2);
-    if (sk === 'freeze') g.freezeT = Math.max(g.freezeT, dbl ? FX.doubleFreeze : SKILLS.freeze.dur);
+    if (sk === 'freeze') g.freezeT = Math.max(g.freezeT, (dbl ? FX.doubleFreeze : SKILLS.freeze.dur) * g.rfx.freezeDur);
     else meteor(g, i, dbl);
     return true;
   }
@@ -599,6 +641,7 @@ export function act(g, i, action) {
   if (action.type === 'heroUlt') {
     if (!g.heroUnit || !castHeroUlt(g, HERO_API)) return false;
     g.linkT = COLLAB_FX.linkT; // 합동 필살: 3초 안에 마법사 쿨타임 스킬이 터지면 2배(spells.js)
+    onRelicUlt(g); // 유물: 궁극기 쿨타임 · 영웅의 깃발
     return true;
   }
   if (action.type === 'equip') {
@@ -660,14 +703,16 @@ function meteor(g, o, dbl) {
 // ── 메인 스텝 ──
 export function step(g, dt) {
   if (!(dt > 0)) return;
-  if (g.pick) return; // 카드 선택 중엔 전투 정지(시간도 멈춤). 실시간 진행은 tickPick()이 맡는다
+  if (g.pick || g.relicPick) return; // 카드·유물 선택 중엔 전투 정지(시간도 멈춤). 실시간 진행은 tickPick()·tickRelic()이 맡는다
   if (dt > 0.1) dt = 0.1;
+  applyReach(g); // 던전: 동굴 어둠 = 사거리 윗선
   g.phaseT += dt;
   // 봇 비상 스킬(kind 'bot' — 테스트 러너) · 영웅 자동 처리(자동 장착·자동 특성은 늘, 궁극기는 자동 진행 ON일 때만 — bot.js autoHero)
   g.botT += dt;
   if (g.botT >= BOT_INTERVAL) {
     g.botT -= BOT_INTERVAL;
-    for (let i = 0; i < mages(g); i++) if (g.players[i].kind === 'bot' && g.phase === 'play') autoSkill(g, i);
+    // 4차: 자동 진행 ON(방치 플레이)이면 사람도 운석·빙결 자동(옛 AI 동료가 대신 누르던 몫)
+    for (let i = 0; i < mages(g); i++) if ((g.players[i].kind === 'bot' || g.players[i].auto) && g.phase === 'play') autoSkill(g, i);
     autoHero(g); // 영웅은 플레이어(0번) 소유
   }
   if (g.phase !== 'play') return;
@@ -750,6 +795,7 @@ export function step(g, dt) {
       heroGainXp(g, heroClearXp(g.stage, firstClear), HERO_API);
       lootDrop(g, 'chest', WORLD_W / 2, WALL_Y - 120, HERO_API); // 클리어 보물상자
     }
+    onRelicClear(g); // 유물: 혼돈의 구슬 · 네임드 보스 층이면 유물 후보(g.relicPick — 아래 체크포인트에 함께 저장)
     if (g.stage >= MAX_STAGE) endOfRun(g, true); // 100층 돌파 = 도전 완료
     // 이어하기는 다음 층부터(클리어 화면에서 앱이 꺼져도 첫 돌파 보석·경험치를 다시 잃지 않게). startStage가 같은 모양으로 덮어쓴다
     else g.run.checkpoint = { ...serializeRun(g), stage: g.stage + 1 };
@@ -844,7 +890,7 @@ function updateCannons(g, dt) {
     if (p.fireT >= iv) {
       p.fireT -= iv;
       if (p.fireT > iv) p.fireT = iv;
-      fire(g, i, p, c, tx, ty);
+      if (!g.rfx.basicOff) fire(g, i, p, c, tx, ty); // 유물 시간 도둑: 기본 주문 봉인
     }
   }
 }
@@ -865,7 +911,7 @@ function fire(g, i, p, c, tx, ty) {
     angles[k] = a;
     g.bullets.push({
       x: mx, y: my, vx: Math.cos(a) * BULLET_SPEED, vy: Math.sin(a) * BULLET_SPEED, owner: i, caster: i, kind: B.key, syn: mod,
-      hit: [], pierce: B.pierce + (pierce ? FX.pierce : 0), // 이미 맞은 적 id · 최대 명중 수(서리 화살 2, 관통탄 +2)
+      hit: [], pierce: B.pierce + (pierce ? FX.pierce : 0) + g.rfx.basicPierce, // 이미 맞은 적 id(유물 외알 안경 관통) · 최대 명중 수(서리 화살 2, 관통탄 +2)
       tgt: homing ? null : false,    // 유도: null=탐색 필요, false=안 함
       life: 0,
     });
@@ -945,11 +991,16 @@ function steer(g, b, dt) {
 function spellHit(g, e, raw, o, kind, card = false, dot = false, crit = !dot && g.rng() < g.players[o].stats.crit) {
   const p = g.players[o], st = p.stats, prev = g._skill;
   if (card) g._skill = true;
+  const em = card ? elemMul(g, g._src, kind) : 1; // 던전: 스킬 원소 약점·내성(시전 중 스킬 g._src, 없으면 kind)
+  raw *= em;
+  g._hitSrc = card ? g._src || kind : null; // 던전: 묘지 망자는 신성 스킬로 쓰러지면 못 일어난다
   raw *= dot ? 1 + st.crit * (st.critMult - 1) : crit ? st.critMult : 1;
   if (g.duo.includes('twin')) raw *= FX.twin;
   if (g.heroBuff) raw *= g.heroBuff.mul; // 전군 강화 함성
+  if (card) raw *= relicHitMul(g, e, kind); // 유물: 사냥꾼의 표식 · 원소 공명
   if (crit && e.isBoss && p.syn.includes('giant')) raw *= FX.giant;
   const h = g.heroUnit;
+  if (h && h.tb && h.tb.mark && e.markAt > g.phaseT) raw *= 1 + h.tb.mark; // [특성] 표식: 영웅이 3초 안에 때린 적(hero.js heroHit)
   if (h && h.state !== 'down' && h.engageR > 0 && (e.x - h.x) ** 2 + (e.y - h.y) ** 2 <= (h.engageR + e.r) ** 2) {
     const anvil = collabOn(g, 'anvil');
     const amp = (anvil ? COLLAB_FX.anvil * collabPow(g) : 0) + (h.tb ? h.tb.tauntAmp : 0);
@@ -957,14 +1008,15 @@ function spellHit(g, e, raw, o, kind, card = false, dot = false, crit = !dot && 
     if (anvil && !dot) collabProc(g, 'anvil', e.x, e.y);
   }
   const maxHp = e.maxHp, dealt = damage(g, e, raw, o, !dot);
-  emit(g, { type: 'hit', x: e.x, y: e.y, dmg: dealt, crit, o: card ? 3 : o, caster: o, kind, big: dealt >= maxHp * 0.05 || (e.isBoss && crit) });
+  g._hitSrc = null;
+  emit(g, { type: 'hit', x: e.x, y: e.y, dmg: dealt, crit, o: card ? 3 : o, caster: o, kind, em, big: dealt >= maxHp * 0.05 || (e.isBoss && crit) }); // em = 던전 원소 배율(숫자 연출)
   if (crit && e.isBoss && g.critStopT <= 0) {
     g.critStopT = 0.3;
     emit(g, { type: 'hitstop', ms: 60 });
   }
   if (crit && p.syn.includes('chain')) chainArc(g, e, raw * FX.chainPct, o);
   if (crit) critBoom(g, e, st, raw, o);
-  if (!dot) { g._skill = true; onSpellHit(g, e, raw, o, SPELL_API); } // 불꽃 마탄·연쇄 번개(고른 스킬의 피해)
+  if (!dot) { g._skill = true; onSpellHit(g, e, raw / em, o, SPELL_API); } // 불꽃 마탄·연쇄 번개(고른 스킬의 피해) — 던전: 원소 배율 전 값(제 원소로 다시 곱한다)
   g._skill = prev;
   return raw;
 }
@@ -985,7 +1037,7 @@ function critBoom(g, e, st, raw, o) {
 // 기본 주문 명중: 화염구는 작은 폭발(주변 splashPct), 서리 화살은 둔화. 불꽃 산탄 = 화상 + 화염구 파편
 function basicHit(g, e, b) {
   const o = b.owner, p = g.players[o], B = BASIC_SPELLS[o];
-  const x = e.x, y = e.y, raw = spellHit(g, e, p.stats.dmg * B.dmg, o, b.kind);
+  const x = e.x, y = e.y, raw = spellHit(g, e, p.stats.dmg * B.dmg * g.rfx.basicMul, o, b.kind); // 유물 현자의 외알 안경
   const flame = p.syn.includes('flame'), es = g.enemies;
   const burn = q => { if (flame && !q.dead) { q.burn += raw * FX.burn; q.burnT = FX.burnT; q.burnO = o; } };
   if (!e.dead) {
@@ -1036,7 +1088,7 @@ function chainArc(g, e, dmg, o, n = FX.chainN) {
 // 방어(방패병 감소) → 보호막 → 체력. 실제 피해량 반환
 function damage(g, e, dmg, o, flash = true) {
   if (e.dead) return 0;
-  dmg *= e.reduce * curseMul(g); // 저주 낙인(판타지 스킬): 받는 피해 배율
+  dmg *= e.reduce * curseMul(g, e) * (o === 2 ? g.rfx.heroMul : 1); // 저주 낙인(판타지 스킬): 받는 피해 배율 · 유물 영웅의 서약(영웅 피해)
   if (e.cursed && g.fusions.includes('twilight')) dmg *= 1 + FUSION_FX.cursedAmp; // 황혼의 저주
   let d = dmg;
   if (e.shield > 0) {
@@ -1053,7 +1105,7 @@ function damage(g, e, dmg, o, flash = true) {
   }
   e.hp -= d;
   if (flash) e.hitT = 0.12;
-  if (e.hp <= 0) killEnemy(g, e, o, true);
+  if (e.hp <= 0 && !undying(g, e, emit)) killEnemy(g, e, o, true); // 던전: 묘지 망자 부활
   return dmg;
 }
 
@@ -1063,6 +1115,7 @@ function killEnemy(g, e, o, effects) {
   e.hp = 0;
   g.progress.killed++;
   gainMana(g); // 판타지 스킬: 처치 진행률로 마나 채우기
+  onRelicKill(g, e); // 유물 흡혈 수정
   addCombo(g, e);
   countFrenzy(g, e);
   const tier = g.combo.tier;
@@ -1076,6 +1129,7 @@ function killEnemy(g, e, o, effects) {
   const prev = g._skill;
   g._skill = true;
   onSpellKill(g, e, o, gold, SPELL_API); // 영혼 수확·황혼·증기 폭발·망령 군단
+  regionKill(g, e, emit); // 던전: 초원 들불(화상 전염)
   g._skill = prev;
   if (g.hero && g.hero.cls) heroOnKill(g, e, HERO_API, o); // 영웅 경험치 + 장비 드롭
   if (e.named) {
@@ -1190,11 +1244,13 @@ function damageWall(g, dmg, src = null) {
       emit(g, { type: 'hitstop', ms: 400 });
       return;
     }
-    if (g.fx.revive && !g.run.reviveUsed) { // 부활 결계: 도전마다 1회
-      g.run.reviveUsed = true;
+    const ward = prepWardReady(g, g.stage % 10 === 0); // 출정 준비 '보스 결계석'(shop.js): 네임드 보스 층 1회 — 부활 결계보다 먼저
+    const base = g.fx.revive && !g.run.reviveUsed, rel = !ward && !base && relicRevive(g); // 유물 불사조 깃털: 다른 부활이 없을 때 1회 더
+    if (ward || base || rel) { // 부활 결계: 도전마다 1회
+      if (ward) g.run.prep.wardUsed = true; else if (base) g.run.reviveUsed = true;
       g.wall.hp = g.wall.max * REVIVE_HP;
       g.freezeT = Math.max(g.freezeT, REVIVE_FREEZE);
-      emit(g, { type: 'revive', x: WORLD_W / 2, y: WALL_Y, hp: g.wall.hp });
+      emit(g, { type: 'revive', x: WORLD_W / 2, y: WALL_Y, hp: g.wall.hp, prep: ward, relic: rel });
       emit(g, { type: 'hitstop', ms: 400 });
       return;
     }

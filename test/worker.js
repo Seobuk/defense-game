@@ -7,7 +7,7 @@ if (w.job === 'campaign') {
   // 새 저장 → 100층까지. snaps[b] = 최고 기록이 처음 b 이상이 된 메타(동등성 측정용)
   const snaps = {}, t0 = Date.now();
   const { rows } = campaign({
-    seed: w.seed, maxRuns: 60,
+    seed: w.seed, maxRuns: 60, shop: w.shop !== false, // 4차: 상점(출정 준비·돌파·유물 해금·상자)까지 쓰는 캠페인이 기준
     onRun: (r, m) => { for (const b of w.parityAt) if (m.best >= b && !snaps[b]) snaps[b] = JSON.stringify(m); },
   });
   parentPort.postMessage({ rows, snaps, ms: Date.now() - t0 });

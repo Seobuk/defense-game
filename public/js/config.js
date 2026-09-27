@@ -19,7 +19,9 @@ export const MAX_STAGE = 100;
 // 영웅도 이 선 아래 전장 가운데를 전선으로 싸운다.
 // → 적이 스폰 직후 녹지 않고 전장 중앙까지 밀려와, 마법과 영웅 전투가 화면 가운데에서 계속 보인다(DESIGN.md '초반 난이도와 연출')
 export const FRONT_Y = 380, ENTRY_RUSH = 2.5;
-export const inReach = e => !e.dead && (e.named || e.y >= FRONT_Y);
+// 4차 던전 특성: 사거리 윗선 REACH.y(기본 FRONT_Y). 동굴 '칠흑의 어둠'이 성벽 쪽으로 내린다(dungeons.js applyReach가 매 스텝 설정)
+export const REACH = { y: FRONT_Y };
+export const inReach = e => !e.dead && (e.named || e.y >= REACH.y);
 
 // ── 마법사 수련 (정비 화면, 골드로 사는 영구 강화) ──
 // 도전 중 골드 강화는 없다. 옛 인게임 강화 5종(키 atk/rate/crit/multi/wall 그대로)이 정비 화면의 영구 수련으로 옮겨 왔고,
@@ -70,10 +72,10 @@ export function cannonStats(lv, fx = {}, stage = 1) {
   return {
     dmg: floorPower(stage) * (1 + tr('atk', lv.atk)) * (fx.atkMul || 1),
     rate: BASIC_RATE * (1 + tr('rate', lv.rate)) * (fx.rateMul || 1),
-    crit: CRIT_BASE + tr('crit', lv.crit),
+    crit: CRIT_BASE + tr('crit', lv.crit) + (fx.critAdd || 0), // critAdd = 수련 돌파(shop.js)
     critMult: CRIT_MULT,
-    cdMul: Math.min(SPELL_CAST.cdCap, (1 + SPELL_CAST.cdPer * (lv.rate | 0)) * (fx.rateMul || 1)), // 쿨타임 주문 쿨타임 ÷ cdMul
-    echo: tr('multi', m),                                                                             // 쿨타임 주문 연속 시전 확률
+    cdMul: Math.min(SPELL_CAST.cdCap, (1 + SPELL_CAST.cdPer * (lv.rate | 0)) * (fx.rateMul || 1)) * (fx.cdMul || 1), // 쿨타임 주문 쿨타임 ÷ cdMul(fx.cdMul = 유물 시간 도둑·외알 안경, 상한 밖)
+    echo: tr('multi', m) + (fx.echo || 0), // 쿨타임 주문 연속 시전 확률(+ fx.echo = 유물 메아리 반지 · 수련 돌파 — relics.js/shop.js)
     shots: SHOTS[m],
     spread: SPREAD[m],
     boomR: critBoomRadius(fx.critBoom | 0),
@@ -123,6 +125,7 @@ export const META_UPGRADES = [
   { key: 'critBoom', name: '치명타 폭발', desc: '치명타 시 주변 적에게 스플래시 피해', max: 10, c0: 20, grow: 1.25 },
   { key: 'awaken', name: '각성 숙련', desc: '각성 카드(슬롯이 다 찬 뒤의 카드) 효과 +15%', max: 10, c0: 80, grow: 1.35 },
   { key: 'pickaxe', name: '황금 곡괭이', desc: '오프라인(방치) 보상 증가 (최대 8시간)', max: 20, c0: 10, grow: 1.18 },
+  { key: 'forget', name: '망각 숙련', desc: '도전마다 망각(카드 화면의 스킬 비우기) +1회', max: 1, c0: 180, grow: 1 }, // 4차(유물·망각 relics.js가 fx.forgets를 읽음)
 ];
 export const META_KEYS = META_UPGRADES.map(m => m.key);
 export const META_BY_KEY = Object.fromEntries(META_UPGRADES.map(m => [m.key, m]));
@@ -140,6 +143,7 @@ export function metaFx(m = {}) {
     xpMul: mul('wisdom'), choices: lv('choice'),
     rerolls: lv('reroll'), startSlots: lv('startSlot'), revive: lv('revive') > 0, critBoom: lv('critBoom'),
     awakenMul: 1 + 0.15 * lv('awaken'),
+    forgets: lv('forget'),
   };
 }
 
@@ -156,6 +160,7 @@ export function metaDisplay(key, lv) {
     case 'critBoom': return lv > 0 ? `반경 ${critBoomRadius(lv)} · ${Math.round(critBoomRatio(lv) * 100)}%` : '없음';
     case 'awaken': return `각성 효과 +${lv * 15}%`;
     case 'pickaxe': return `방치 보상 +${lv * 15}%`;
+    case 'forget': return `망각 ${2 + lv}회`;
   }
   return '';
 }
@@ -497,7 +502,10 @@ export const CODEX_SYN = SYNERGIES.filter(s => s.kind !== 'duo');
 export const codexFound = d => { const s = new Set(d || []); return CODEX_SYN.filter(x => s.has(x.key)).length; };
 
 export const SPEEDS = [1, 2, 3];
-export const SPEED3_UNLOCK = 20; // best ≥ 20 이면 3배속
+// 4차 배속 해금(spec 8): 처음엔 1배만 · 최고 기록 10층 돌파 = 2배 · 30층 = 3배. 버튼은 열린 단계만 돈다
+export const SPEED_UNLOCK = { 2: 10, 3: 30 };
+export const speedCap = best => SPEEDS.filter(s => (SPEED_UNLOCK[s] || 0) <= (best | 0)).pop() || 1;
+export const nextSpeed = (cur, best) => ((cur | 0) >= speedCap(best) ? 1 : (cur | 0) + 1);
 
 export const THEMES = [
   { key: 'meadow', name: '슬라임 초원' },

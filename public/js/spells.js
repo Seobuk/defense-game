@@ -8,6 +8,8 @@ import {
   COLLAB_FX, collabOn, collabPow, FRONT_Y, inReach,
 } from './config.js';
 import { heroBonuses } from './hero.js';
+import { elemMul, castRateMul } from './dungeons.js'; // 4차 던전 특성: 원소 약점·내성 · 화산 열기
+import { mutCast, mutTick, mutOnHit, mutOnKill, mutSlow, mutCurse, mutCdMul, mutOwns } from './mutations.js'; // 4차 변이(Lv6 스킬 진화 분기) — 훅 한 줄씩(// 변이 표시)
 
 const COOLDOWN = ['fireball', 'lightningStrike', 'iceLance', 'tornado', 'judgment'];
 const timers = () => {
@@ -21,6 +23,7 @@ export function initSpells(g) {
   g.spellFx = { tornadoes: [], lances: [], beams: [], ghosts: [], storms: [], dragon: null, golem: null, frostWard: null };
   g.spellT = timers();     // 렌더러가 judgment 예고·스킬 스택 쿨타임 링에 읽는다
   g._emp = 1;              // 합동 필살 위력(시전 한 번 동안만 2)
+  g._src = null;           // 4차 던전: 지금 피해를 내는 스킬 키(sim.spellHit의 원소 배율 — 융합은 두 원소)
 }
 
 // 성벽 근처 서리 결계 감속 배율(0~1). 소유하지 않으면 1
@@ -28,20 +31,20 @@ export function frostSlowMul(g, e) {
   const lv = g.book.frostWard;
   if (!lv) return 1;
   const p = SPELL_BY_KEY.frostWard.lv[lv - 1];
-  return e.y + e.r > WALL_Y - p.r ? 1 - p.slow : 1;
+  return (e.y + e.r > WALL_Y - p.r ? 1 - p.slow : 1) * mutSlow(g, e); // 변이 영구 동토: 얼어붙은 땅
 }
 const chilled = (g, e) => e.frozen || e.slowT > 0 || e.stunT > 0 || frostSlowMul(g, e) < 1;
 
 // 질풍: P1의 모든 주문 시전 속도 배율(기본 주문 시전 간격 · 쿨타임 스킬 쿨타임 · 드래곤 브레스 주기)
 export function spellRateMul(g) {
   const lv = g.book.gale;
-  return lv ? 1 + SPELL_BY_KEY.gale.lv[lv - 1].mul : 1;
+  return (lv ? 1 + SPELL_BY_KEY.gale.lv[lv - 1].mul : 1) * castRateMul(g); // × 화산 '들끓는 열기'(dungeons.js)
 }
 
 // 저주 낙인: 모든 피해 배율
-export function curseMul(g) {
+export function curseMul(g, e) {
   const lv = g.book.curseMark;
-  return lv ? 1 + SPELL_BY_KEY.curseMark.lv[lv - 1].mul : 1;
+  return lv ? 1 + SPELL_BY_KEY.curseMark.lv[lv - 1].mul * mutCurse(g, e) : 1; // 변이 저주 장막: 장막 안 ↑ · 밖 ↓(e 없으면 그대로)
 }
 
 // 돌 골렘이 성벽 대신 흡수. 남은 피해를 반환
@@ -61,12 +64,13 @@ export function onSpellHit(g, e, raw, o, api) {
   const s = g.book;
   if (s.flameBullet && !e.dead) {
     const p = SPELL_BY_KEY.flameBullet.lv[s.flameBullet - 1];
-    burnOn(e, raw * p.burn, p.dur, o);
+    burnOn(e, raw * p.burn * elemMul(g, 'flameBullet'), p.dur, o); // raw = 원소 배율 전(sim.spellHit) → 제 원소로
   }
   if (s.chainLightning) {
     const p = SPELL_BY_KEY.chainLightning.lv[s.chainLightning - 1];
-    if (g.rng() < p.chance) api.chainArc(g, e, raw * p.mul, o, p.n);
+    if (g.rng() < p.chance && !g.mutations?.chainLightning) api.chainArc(g, e, raw * p.mul * elemMul(g, 'chainLightning'), o, p.n); // 변이하면 전이 대신 변이 효과
   }
+  mutOnHit(g, e, raw, api, KIT); // 변이: 불바다 · 구전 · 전류 사슬
 }
 
 // 처치 시: 영혼 수확(골드·회복) · 황혼(저주 처치 회복) · 증기 폭발(화상+둔화 처치 폭발) · 망령 군단(유령 소환)
@@ -93,6 +97,7 @@ export function onKill(g, e, o, gold, api) {
   if (g.fusions.includes('ghostLegion') && g.spellFx.ghosts.length < 40) {
     g.spellFx.ghosts.push({ x: e.x, y: e.y, dmg: pd(g, 0) * FUSION_FX.ghostDmg, tgt: null, life: 0 });
   }
+  mutOnKill(g, e, api, KIT); // 변이: 들불 · 영혼 일제 사격 · 사신의 낫
 }
 
 // ── 매 프레임 (phase === 'play' 일 때만 호출) ──
@@ -100,21 +105,26 @@ export function updateSpells(g, dt, api) {
   const fx = g.spellFx;
   // 쿨타임 주문 로테이션: 주문서의 스킬을 각자 쿨타임대로 + 융합 스킬의 전용 시전
   const s0 = g.book, T = g.spellT;
-  for (const key of COOLDOWN) if (s0[key]) tick(g, api, 0, T, key, s0[key], SPELL_BY_KEY[key].lv[s0[key] - 1], dt, CAST[key]);
-  for (const key of g.fusions) tick(g, api, 0, T, key, g.spells[key], FUSION_BY_KEY[key].lv[g.spells[key] - 1], dt, FCAST[key]);
+  for (const key of COOLDOWN) if (s0[key]) tick(g, api, 0, T, key, s0[key], SPELL_BY_KEY[key].lv[s0[key] - 1], dt, mutCast(g, key) || CAST[key]); // 변이: 시전을 대신
+  for (const key of g.fusions) tick(g, api, 0, T, key, g.spells[key], FUSION_BY_KEY[key].lv[g.spells[key] - 1], dt, mutCast(g, key) || FCAST[key]);
   moveLances(g, dt, api, fx);
   moveTornadoes(g, dt, api, fx);
+  g._src = 'stormEye'; // 4차 던전: 머무는 효과도 제 스킬 원소로(아래 드래곤·유령도)
   updateStorms(g, dt, api, fx);
   for (let i = fx.beams.length - 1; i >= 0; i--) if ((fx.beams[i].t -= dt) <= 0) fx.beams.splice(i, 1);
   // 지속형(오라·소환)은 P1 카드 빌드에만
   const s = g.book;
   fx.frostWard = s.frostWard ? { r: SPELL_BY_KEY.frostWard.lv[s.frostWard - 1].r } : null;
   if (s.holyLight) updateHolyLight(g, dt, api);
-  if (s.babyDragon) updateDragon(g, dt, api, g.spellT, fx);
+  g._src = 'babyDragon';
+  if (s.babyDragon) { if (!mutOwns(g, 'babyDragon')) updateDragon(g, dt, api, g.spellT, fx); } // 변이한 드래곤은 mutTick이 난다
   else fx.dragon = null;
   if (s.stoneGolem) updateGolem(g, fx, api);
   else fx.golem = null;
+  g._src = 'ghostLegion';
   updateGhosts(g, dt, api, fx);
+  mutTick(g, dt, api, KIT); // 변이: 지속·소환 효과 + 전장 물체(g.spellFx.mut)
+  g._src = null;
 }
 
 // 쿨타임이 다 되면 시전. 합동 필살: 영웅 궁극기 3초 안의 첫 시전은 2배 위력 + 슬로 모션.
@@ -123,10 +133,13 @@ function tick(g, api, o, T, key, lv, p, dt, fn) {
   if ((T[key] -= dt) > 0) return;
   const link = o === 0 && g.linkT > 0;
   if (link) g._emp = COLLAB_FX.linkMul;
+  g._rmul = FUSION_BY_KEY[key] ? g.rfx.fusionCastMul : 1; // 4차 유물 대마법사의 지팡이: 융합 전용 시전 배율(pd)
   const n0 = g.events.length;
-  const cd = fn(g, api, o, p);
+  g._src = key; // 4차 던전: 이 시전의 피해 원소 = 이 스킬(융합 = 두 원소)
+  const cd = fn(g, api, o, p, KIT); // KIT: 변이 시전(mutations.js)이 쓰는 공용 도구
+  g._src = null;
   for (let i = n0; i < g.events.length; i++) { const ev = g.events[i]; if (ev.type === 'cast' || ev.type === 'spell') ev.lv = lv; }
-  g._emp = 1;
+  g._emp = 1; g._rmul = 1;
   if (cd == null) { T[key] = 0.3; return; } // 표적 없음: 잠시 뒤 다시
   if (link) {
     g.linkT = 0;
@@ -151,12 +164,12 @@ function rearm(g, o, T, key, cd) {
 export function spellCooldown(g, key) {
   const lv = g.spells[key], d = FUSION_BY_KEY[key] || (COOLDOWN.includes(key) && SPELL_BY_KEY[key]);
   if (!lv || !d) return null;
-  const total = d.lv[lv - 1].cd / (g.players[0].stats.cdMul * spellRateMul(g));
+  const total = d.lv[lv - 1].cd * mutCdMul(g, key) / (g.players[0].stats.cdMul * spellRateMul(g)); // × 변이 쿨타임 배율
   return { left: Math.max(0, Math.min(total, g.spellT[key] || 0)), total };
 }
 
-// 스킬 피해 기준 = 시전자 마력 × 장비 스킬 피해% × 합동 필살
-function pd(g, o) { return g.players[o].stats.dmg * (g.hero ? heroBonuses(g.hero).spellMul : 1) * g._emp; }
+// 스킬 피해 기준 = 시전자 마력 × 장비 스킬 피해% × 합동 필살 × 유물(스킬 피해 · 융합 전용 시전 — relics.js)
+function pd(g, o) { return g.players[o].stats.dmg * (g.hero ? heroBonuses(g.hero).spellMul : 1) * g._emp * g.rfx.skillMul * (g._rmul || 1); }
 
 // 시전 연출 이벤트(마법진·지팡이 섬광·주문별 시전 동작). 시전 위치 = 성벽 위 마법사(솔로 = 성벽 중앙). support = 영웅이 싸우는 적을 노린 지원 사격
 function cast(g, api, o, spell, tx, ty, support = false) {
@@ -180,6 +193,14 @@ function densest(g, api, r = 110) {
   }
   return best || api.frontMost(g);
 }
+
+// 변이(mutations.js)가 쓰는 공용 도구 — 변이 시전·지속 효과가 기본 스킬과 같은 피해·연출 규칙을 따르게
+const KIT = {
+  pd, sHit, cast, densest, burnOn, chilled, isSupport,
+  base: null, // 기본 시전(CAST) — 아래 정의 뒤에 채운다(십자 심판이 기본 심판 광선 위에 가로 광선을 더한다)
+  lv: (g, key) => SPELL_BY_KEY[key].lv[g.book[key] - 1],
+  rate: g => g.players[0].stats.cdMul * spellRateMul(g),
+};
 
 // 각 쿨타임 주문의 1회 시전. 쿨타임(초)을 반환, 표적이 없으면 null
 const CAST = {
@@ -254,6 +275,8 @@ const CAST = {
     return p.cd;
   },
 };
+
+KIT.base = CAST; // 변이 도구: 기본 시전
 
 // 융합(합체) 스킬 전용 시전 — 재료 두 스킬의 효과(g.book)에 더해진다. spell{key: 융합 키, shape}
 const FCAST = {
@@ -359,7 +382,7 @@ function moveLances(g, dt, api, fx) {
         sHit(g, api, e, l.dmg * (amp ? ecoAmp : 1), l.o, 'frost');
         if (amp) api.collabProc(g, collabOn(g, 'frostEcho') ? 'frostEcho' : 'frostBastion', e.x, e.y);
         l.hit.push(e.id);
-        if (l.hit.length >= 5) { gone = true; break; }
+        if (l.hit.length >= (l.pierce || 5)) { gone = true; break; } // 변이 빙창 부채·빙하 파편: 관통 수
       }
     }
     if (gone) fx.lances.splice(i, 1);
@@ -370,7 +393,9 @@ function moveTornadoes(g, dt, api, fx) {
   const blaze = g.fusions.includes('blazeTornado');
   for (let i = fx.tornadoes.length - 1; i >= 0; i--) {
     const tn = fx.tornadoes[i], hot = tn.fire || (blaze && tn.o === 0);
+    g._src = hot ? 'blazeTornado' : 'tornado'; // 4차 던전: 불붙은 회오리 = 융합 두 원소
     tn.y -= tn.spd * dt;
+    if (tn.vx) tn.x += tn.vx * dt; // 변이 횡단 돌풍: 가로로 휩쓴다
     tn.t += dt;
     if (hot) tn.r += FUSION_FX.blazeGrow * dt;
     if (tn.y < FRONT_Y - 40 || tn.t > tn.life) { fx.tornadoes.splice(i, 1); continue; } // 전선 위(접근로)까지는 안 올라간다

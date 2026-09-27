@@ -42,7 +42,6 @@ export const HF = { atk: 9, tx: 0, ty: 0, hurt: 0, down: 0, pop: 1, walk: 0, lx:
 const GF = { on: false, pop: 1, hit: 0, lastHp: 0 };   // 돌 골렘
 const DF = { on: false, pop: 1 };                      // 새끼 드래곤
 export const stuns = new Map();          // 적 id → 기절 표시 끝 시각(RT)
-export const upGlow = [0, 0];            // 강화 직후 마법사 빛
 const AFTER = pool(14, () => ({ life: 0, max: 0.4, x: 0, y: 0, face: 1, img: null }));
 // 영웅 잔상 (암살자 공격·궁극기)
 export function afterImage(x, y, face, life) {
@@ -2549,7 +2548,6 @@ export function drawMages(view, opts) {
     }
     if (golden) { place(c.x, MAGE_FEET - 70, RT * 0.8 * (i ? -1 : 1), 1, 1); ctx.globalAlpha = 0.55 + 0.2 * Math.sin(RT * 4); spr(rays('#ffd23a'), 0, 0, 180, 180); wt(); }
     if (frenzy) { ctx.globalAlpha = 0.55 + 0.3 * Math.sin(RT * 14); spr(gl('#ff3a1a'), c.x, MAGE_FEET - 70, 180, 210); }
-    if (upGlow[i] > 0) { ctx.globalAlpha = upGlow[i]; spr(gl(OWN[i].c), c.x, MAGE_FEET - 70, 160, 190); }
     if (tier >= 2) { ctx.globalAlpha = 0.32 + 0.12 * Math.sin(RT * 2.5 + i); spr(gl(orbCol), c.x, MAGE_FEET - 2, 150, 44); }
     if (tier >= 4) groundRune(runeCircle(orbCol), c.x, MAGE_FEET - 2, 1.85, RT * 0.8 * P.side, 0.6);
     ctx.globalAlpha = 1;
@@ -2624,7 +2622,7 @@ function orbit(i, n, cx, cy, col, front) {
 
 // ═════════════ 이벤트 → 유닛 반응 (render.js 가 매 프레임 한 번 호출) ═════════════
 export function events(view, evs, opts) {
-  let ups = 0, pops = 0;
+  let pops = 0;
   for (const ev of evs) {
     switch (ev.type) {
       case 'cast': { // 주문 시전: 지팡이를 겨누고(기본 주문) / 머리 위로 치켜들고(쿨타임 주문) + 오브 앞 마법진 + 발밑 룬
@@ -2653,16 +2651,6 @@ export function events(view, evs, opts) {
         if (!Array.isArray(ev.angles) || ev.angles.length < 3 || M.fanT > 0) break;
         M.fanT = 0.15;
         for (const a of ev.angles) part(K_GLOW, M.ox + Math.cos(a) * 18, M.oy + Math.sin(a) * 18, Math.cos(a) * 260, Math.sin(a) * 260, 0.1, 20, M.col, 0, 4);
-        break;
-      }
-      case 'upgrade': {
-        const o = ev.o === 1 ? 1 : 0, c = { x: MF[o].cx, y: MAGE_FEET - 62 };
-        upGlow[o] = 1;
-        if (ups++ < 3) {
-          ring(c.x, c.y, 20, 70, 0.35, OWN[o].c, 4);
-          sprPop(runeCircle(OWN[o].c), c.x, MAGE_FEET - 2, 0.4, 1.3, 0.45, Math.PI / 2, 2, 0.36);
-          burst(K_STAR, c.x, c.y - 10, 3, 40, 120, 0.5, 14, OWN[o].c, -60, 2, 80);
-        }
         break;
       }
       case 'kill': if (pops++ < 10) deathPop(ev); break;
@@ -2721,7 +2709,6 @@ export function update(view, da, dt) {
     if (e.state === 'charge' && rnd() < da * 20) part(K_SMOKE, e.x + (rnd() - 0.5) * e.r * 1.6, e.y - e.r * 0.6, 0, -40, 0.6, 30, 'rgba(160,130,100,0.5)', 0, 1);
     if (e.state === 'cast' && rnd() < da * 30) part(K_GLOW, e.x + (rnd() - 0.5) * e.r * 2, e.y + e.r * 0.5, 0, -120, 0.6, 14, e.type === 'magmaGolem' ? '#ff8a2a' : '#c07aff', 0, 1);
   }
-  for (let i = 0; i < 2; i++) upGlow[i] = Math.max(0, upGlow[i] - dt * 3);
   for (const a of AFTER) if (a.life > 0) a.life -= da;
   for (const p of POPS) if (p.life > 0) p.life -= dt;
   MF.fall = view.phase === 'defeat' ? Math.min(1, (MF.fall || 0) + dt * 2.5) : 0;

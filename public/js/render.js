@@ -11,6 +11,8 @@ import * as units from './art/units.js';
 import * as world from './art/world.js';
 import * as fx from './art/fx.js';
 import * as hud from './art/hud.js';
+import * as mutfx from './art/mutfx.js'; // 4차 변이 연출(44 변이)
+import * as dungeon from './art/dungeonfx.js'; // 4차 던전(지역) 특성 연출
 
 // UI 정렬용 월드 좌표 (ui.js 가 DOM 위치를 맞춘다): 장비 드롭이 날아가 꽂히는 가방 버튼 / 마나 게이지 반짝임 위치
 export const BAG_POS = C.BAG_POS;
@@ -115,14 +117,17 @@ export function createRenderer(canvas) {
     C.setClock(T, RT, dt, ++frameNo);
     meter.next(W * H);
     const evs = Array.isArray(events) ? events : [];
-    hud.setStackLeft(opts.stackLeft); // 좁은 화면: 오른쪽 스킬 스택 왼쪽 끝(월드 x) — 콤보·상태 알약이 그 왼쪽에
+    hud.setComboAnchor(opts.comboAt); // 4차: 콤보 단계 팝이 빨려 드는 상단 콤보 알약 자리(HUD 좌표)
     // 이벤트: 각 모듈이 자기 몫을 처리 (fx 가 먼저 — 피해 숫자 예산·운석/파이어볼 사전 처리)
     fx.events(view, evs, opts);
+    mutfx.events(view, evs); // 변이: mutFx · spell{mut} · 변이 선택
     units.events(view, evs, opts);
     world.events(view, evs, opts);
     hud.events(view, evs, opts);
+    dungeon.events(view, evs, opts); // 던전: 부활·들불·'약점!'
     // 갱신
     fx.update(view, da, dt);
+    mutfx.update(view, da);
     units.update(view, da, dt);
     world.update(view, da, dt);
     hud.update(view, da, dt);
@@ -155,6 +160,7 @@ export function createRenderer(canvas) {
     world.drawBackground(theme);
     fx.drawDecals();
     fx.drawFrostWard(view);
+    mutfx.drawGround(view); // 변이 장판(불바다·영구 동토·소용돌이·지뢰·저주 장막…)
     world.drawAmbient(theme, da);
     units.drawWarn(view);
     units.drawGroundFx(view);
@@ -162,6 +168,7 @@ export function createRenderer(canvas) {
     units.drawGolem(view);
     units.drawEnemies(view);
     fx.drawEshots(view);
+    dungeon.draw(view); // 던전: 동굴 어둠(적 위 · 마법 아래 — 마법이 어둠을 밝힌다)
     fx.drawTornadoes(view);
     units.drawGhosts(view);
     fx.drawLances(view);
@@ -175,6 +182,7 @@ export function createRenderer(canvas) {
     units.drawHero(view);
     units.drawMages(view, opts);
     units.drawDragon(view);
+    mutfx.draw(view); // 변이 물체(태양 구체·뇌운·빙하 창·낫·기사·일식…)
     fx.drawParticles();
     fx.drawSprs();
     fx.drawBolts();

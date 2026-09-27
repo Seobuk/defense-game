@@ -1,13 +1,15 @@
 // localStorage 저장/불러오기 + 오프라인 보상 계산. 절대 throw 하지 않는다.
 // v3(스킬 중심): 메타(영구, 골드·마법사 수련 포함) + 진행 중 도전(run, 스테이지 시작 시점). v1·v2 → v3 마이그레이션 포함
 import {
-  META_KEYS, metaMax, SYN_KEYS, SPEEDS, MAX_STAGE, SPELL_KEYS, TRAIN_KEYS, trainMax, goldPerKill,
+  META_KEYS, metaMax, SYN_KEYS, SPEEDS, speedCap, MAX_STAGE, SPELL_KEYS, TRAIN_KEYS, trainMax, goldPerKill,
   offlineGemsPerHour, offlineXpPerMin, OFFLINE_CAP_HOURS,
 } from './config.js';
 import { toInt } from './util.js';
 import { newHero, HERO_CLASS_KEYS, MAX_HERO_LV, SLOTS, RARITY_KEYS, SUBSTATS, BAG_SIZE } from './hero.js';
 import { normalizeRun } from './sim.js';
 import { migrateTalents, TALENT_VER, recommendNext, allocateTalent } from './talents.js';
+import { normShop, offlineGoldPerHour, offlineMul } from './shop.js'; // 4차 경제: 돌파·출정 준비 저장 · 방치 골드
+import { lockedRelics } from './relics.js'; // 4차 유물: 보석으로 해금한 유물(meta.relicUnlocked)
 
 export const STORAGE_KEY = 'wallDefense.save.v1'; // 키는 그대로, 안의 스키마가 v:3
 export const SAVE_VERSION = 3;
@@ -68,7 +70,7 @@ export function normalize(d) {
       dmgNumbers: DMG_MODES.includes(s.dmgNumbers) ? s.dmgNumbers : 'full',
       sound: bool(s.sound, true),
       shake: bool(s.shake, true),
-      speed: SPEEDS.includes(s.speed) ? s.speed : 1,
+      speed: SPEEDS.includes(s.speed) ? Math.min(s.speed, speedCap(best)) : 1, // 4차: 해금 범위를 넘는 저장 배속은 가능한 최대로
       // '자동 진행' 하나(다음 층 자동 · 영웅 궁극기 자동 — sim players[0].auto). 카드는 늘 직접 고른다. 옛 '자동 전투'(최상위 auto)는 버리고
       // 기존 저장은 autoNext 값을 따른다. 새 저장은 ON(카드는 어차피 직접 고르므로)
       autoNext: bool(s.autoNext, true),
@@ -84,6 +86,8 @@ export function normalize(d) {
     },
     run: ver > 1 && d.run && typeof d.run === 'object' ? normalizeRun(ver === 2 ? migrateRun(d.run) : d.run) : null, // 이어하기(스테이지 시작 시점)
     lastSeen: num(d.lastSeen),
+    ...normShop(d), // 4차 경제(shop.js): trainBreak · gemBreak · prep — 없던 저장은 0/false
+    relicUnlocked: keys(d.relicUnlocked, lockedRelics({})), // 4차 유물: 해금한 유물(시작 풀 8종은 늘 열려 있어 빼고 저장)
   };
   // 특성 개편 환불 + 진행 중 도전: 그 도전의 클래스는 추천 빌드로 한 번 다시 찍어 전력을 지킨다(정비에서 무료 초기화 가능)
   const c = out.run?.loadout?.cls;
@@ -211,17 +215,20 @@ export function importSave(code) {
   return { ok: true, data: normalize(raw) };
 }
 
-// 방치 보상: 보석(소량) + 영웅 경험치. 1분 미만 무시, 최대 8시간, 시계가 거꾸로 가면 0
+// 방치 보상: 보석(소량) + 골드(shop.js offlineGoldPerHour) + 영웅 경험치. 1분 미만 무시, 최대 8시간, 시계가 거꾸로 가면 0
+// 보석 돌파 '심층 채굴'(gemBreak.pickaxe)이 셋 다 곱한다
 export function computeOffline(data, nowMs = Date.now()) {
-  const none = { gems: 0, xp: 0, minutes: 0 };
+  const none = { gems: 0, gold: 0, xp: 0, minutes: 0 };
   const seen = Number(data?.lastSeen), now = Number(nowMs);
   if (!(seen > 0) || !(now > seen)) return none;
   const minutes = Math.min(OFFLINE_CAP_HOURS * 60, Math.floor((now - seen) / 60000));
   if (minutes < 1) return none;
   const best = toInt(data.best, 0, MAX_STAGE), pick = toInt(data.metaLv?.pickaxe, 0, metaMax('pickaxe'));
+  const k = offlineMul({ gemBreak: { pickaxe: toInt(data.gemBreak?.pickaxe, 0, 999) } });
   return {
-    gems: Math.floor(offlineGemsPerHour(best, pick) * minutes / 60),
-    xp: Math.floor(offlineXpPerMin(best, pick) * minutes),
+    gems: Math.floor(offlineGemsPerHour(best, pick) * k * minutes / 60),
+    gold: Math.floor(offlineGoldPerHour(best) * k * minutes / 60),
+    xp: Math.floor(offlineXpPerMin(best, pick) * k * minutes),
     minutes,
   };
 }

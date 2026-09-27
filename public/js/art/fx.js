@@ -14,6 +14,7 @@ import { MF, mageOn, HF, visOf, stuns, afterImage, MAGE_FEET, bone, visR, bossDY
 import { emblem } from './emblems.js';
 import { coins } from './world.js';
 import { stamp, pop } from './hud.js';
+import { numStyle } from './dungeonfx.js'; // 4차 던전: 약점·내성 피해 숫자 색
 
 // 기본 주문 탄 팔레트 [코어, 메인, 에지, 꼬리 길이, 크기] — p0fire = P1 화염구, p1 = P2 서리 화살
 export const MSTY = {
@@ -1785,11 +1786,19 @@ function heroProcFx(view, ev) {
       sprPop(starFlash('#ff5a6a'), x, y, 0.3, 0.9, 0.2);
       break;
     case 'nova': { // [특성 트랙] 핵심 노드 발동(talents.js ks): 색 고리 + 불꽃 몇 개 — 짧고 하얗게 덮지 않는다
-      const col = { bash: '#8fd0ff', critBurst: '#ffe07a', holyNova: '#ffd23a', shadowStrike: '#b04dff', grace: '#fff0a8', surge: '#c07aff', ultRefresh: '#7cf0ff' }[ev.sub] || '#ffe07a';
+      const col = { bash: '#8fd0ff', critBurst: '#ffe07a', holyNova: '#ffd23a', shadowStrike: '#b04dff', grace: '#fff0a8', surge: '#c07aff', ultRefresh: '#7cf0ff' }[ev.sub] || ev.col || '#ffe07a';
+      if (ev.sub === 'pull') { // [특성 4차] 끌어모으기: 고리가 조여 들고 끌려온 적 자리에서 빛 알갱이가 모인다
+        ring(x, y, r, 12, 0.34, col, 6);
+        if (Array.isArray(ev.pts)) for (const p of ev.pts.slice(0, 6)) mote(p[0], warpY(p[0], p[1]), x, y, col, 0.3, 20, 0.7);
+        break;
+      }
       ring(x, y, 8, r, 0.28, col, 5);
       burst(K_SPARK, x, y, 6, 200, 480, 0.18, 2.4, [col, '#ffffff'], 0, 6);
       break;
     }
+    case 'bolt': // [특성 4차] 도탄·비전 연쇄·분열 화염: 한 적에서 다음 적으로 튀는 작은 탄
+      shot(ev.cls === 'sorcerer' ? 'sorcerer' : 'ranger', x, y - 16, +ev.tx, warpY(+ev.tx, +ev.ty), false, 1300);
+      break;
     case 'cardBless': { // 카드 축복: 영웅 → 내 마법사로 금빛 구슬 + 알림
       const h = view.heroUnit, M = MF[0];
       if (h) mote(h.x, h.y - 50, M.ox, M.oy, '#ffe07a', 0.45, 120, 1.4);
@@ -2792,7 +2801,8 @@ export function events(view, evs, opts) {
             const hero = ev.o === 2, el = EL[ev.kind];
             const col = hero ? '#ff6fd8' : el ? el[1] : '#c89aff', ink = hero ? HERO_NUM[1] : el ? dim(el[2], 0.35) : '#3a1a5a';
             const y2 = e2 ? e2.y + bossDY(e2) - visR(e2) * 0.85 : ev.y - 20;
-            dmgNum(ev.x, y2, d2, ev.o, ev.crit ? 'C' : 'N', col, ink, 1, !!ev.crit, ev.crit ? 0.75 : 0.45, '', e2, hero ? '#ffe8fb' : '#ffffff');
+            const dg = !hero && numStyle(ev.em); // 던전: 약점 = 라임 · 내성 = 흐린 회색(dungeonfx.js)
+            dmgNum(ev.x, y2, d2, ev.o, ev.crit ? 'C' : 'N', dg ? dg[0] : col, dg ? dg[1] : ink, 1, !!ev.crit, ev.crit ? 0.75 : 0.45, '', e2, dg ? dg[2] : hero ? '#ffe8fb' : '#ffffff');
           }
           break;
         }

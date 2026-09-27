@@ -6,12 +6,16 @@ import { TALENTS, branchSpent, branchMax } from '../public/js/talents.js';
 import { mulberry32 } from '../public/js/util.js';
 import { newRun, endRun } from '../public/js/run.js';
 import { defaults } from '../public/js/save.js';
+import { botShop, shopOffers, affordable } from '../public/js/shop.js';
 import { HERO_CLASS_KEYS, unlockedClasses } from '../public/js/hero.js';
+import { pickRelic, forgetChoice } from '../public/js/relics.js'; // 4차 유물·망각 봇
 
 // 카드가 뜨면 봇 휴리스틱으로 즉시 선택(시간은 멈춰 있음)
 export function resolvePick(g, collect) {
   const ev0 = drainEvents(g);
   if (collect) collect.push(...ev0);
+  const fk = forgetChoice(g); // 망각: 짝이 안 되는 낮은 레벨 스킬을 비워 새 짝을 노린다(카드는 새로 뽑힘)
+  if (fk) act(g, 0, { type: 'forget', spell: fk });
   act(g, 0, { type: 'pick', index: pickCard(g) });
   const ev1 = drainEvents(g);
   if (collect) collect.push(...ev1);
@@ -20,6 +24,7 @@ export function resolvePick(g, collect) {
 // 한 층을 끝날 때까지(클리어/패배/시간 초과) 진행
 export function playStage(g, maxT = 900, collect = null) {
   for (let t = 0; t < maxT && g.phase === 'play'; t += DT) {
+    if (g.relicPick) { act(g, 0, { type: 'relic', index: pickRelic(g) }); continue; } // 유물(보스 보상 · 이어하기 복원)
     if (g.pick) { resolvePick(g, collect); continue; }
     step(g, DT);
     const ev = drainEvents(g);
@@ -32,7 +37,7 @@ export function botPlayer(g) {
   g.players[0].auto = true;
   g.players[0].kind = 'bot';
 }
-// 사람 플레이어(폰에서 자동 진행 ON + 카드 '자동 선택' ON): 궁극기·다음 층·카드는 자동, 운석·빙결은 안 누른다(autoSkill 없음)
+// 사람 플레이어(폰에서 자동 진행 ON + 카드 '자동 선택' ON): 궁극기·다음 층·카드·운석·빙결 자동(4차: 자동 진행 = autoSkill도). 망각은 안 쓴다
 export function humanPlayer(g) {
   g.players[0].auto = true;
   g.players[0].kind = 'human';
@@ -71,12 +76,13 @@ export function playRun(meta, loadout, seed, talents = 'build', opts = {}) {
   if (saved) meta.hero.talents = saved;
   const full = !saved && TALENTS[g.hero.cls].some(b => branchSpent(meta.hero, g.hero.cls, b.key) >= branchMax(g.hero.cls, b.key)); // 특성 완성 = 도전이 끝날 때 한 갈래를 마스터했나
   const d = g.dmgDone, share = d[2] / Math.max(1, d[0] + d[1] + d[2]);
-  return { g, summary: endRun(g, meta), floors, share, skillShare, full, collabs: [...g.collabs], fusions: g.fusions.length, firstFuse };
+  return { g, summary: endRun(g, meta), floors, share, skillShare, full, collabs: [...g.collabs], fusions: g.fusions.length, firstFuse, relics: [...g.relics], forgets: g.run.forgets, muts: Object.values(g.mutations || {}) }; // relics·forgets·muts = 4차 유물·망각·변이 지표
 }
 
 // 새 저장부터 100층 돌파까지 도전 반복. cls: 고정 클래스(없으면 해금된 클래스 순환)
-export function campaign({ seed = 1, maxRuns = 60, cls = null, onRun = null, until = () => false } = {}) {
-  const meta = defaults();
+// shop: 4차 경제 싱크도 쓴다(shop.js botShop — 출정 준비·돌파·유물·상자, 소비는 row.shop) · onVisit(row, meta) = 정산 직후·소비 전(test/economy.js)
+export function campaign({ seed = 1, maxRuns = 60, cls = null, onRun = null, until = () => false, shop = false, onVisit = null } = {}) {
+  const meta = defaults(), shopRng = mulberry32(seed + 99);
   meta.hero.autoEquip = true;
   const rows = [];
   let total = 0;
@@ -84,16 +90,23 @@ export function campaign({ seed = 1, maxRuns = 60, cls = null, onRun = null, unt
     const open = unlockedClasses(meta.best);
     const c = cls || open[i % open.length];
     const lo = botLoadout(meta, c);
-    const { summary, floors, share, skillShare, full, collabs, fusions, firstFuse } = playRun(meta, lo, seed * 1000 + i);
+    const { summary, floors, share, skillShare, full, collabs, fusions, firstFuse, relics, forgets, muts } = playRun(meta, lo, seed * 1000 + i);
     total += summary.time;
     const row = {
       run: i + 1, cls: lo.cls, start: lo.startSpells, reached: summary.floorsCleared, stage: summary.stageReached,
       prevBest: summary.prevBest, time: summary.time, gems: summary.rewards.gems, gold: summary.rewards.gold, total, floors, heroLv: meta.hero.level,
-      share, skillShare, full, collabs, fusions, firstFuse, train: TRAIN_KEYS.map(k => meta.training[k]).join('/'),
+      share, skillShare, full, collabs, fusions, firstFuse, relics, forgets, muts, train: TRAIN_KEYS.map(k => meta.training[k]).join('/'),
     };
+    if (shop) { // 4차 경제: 정산 직후(소비 전) 통화별로 살 수 있는(효과 있는) 것이 있나 — 목표: '살 게 없는' 방문 0
+      const aff = affordable(meta, shopOffers(meta));
+      row.idle = { gold: !aff.some(o => o.cur === 'gold'), gems: !aff.some(o => o.cur === 'gems') };
+    }
     rows.push(row);
+    if (onVisit) onVisit(row, meta);
+    if (shop) botShop(meta, shopRng, row.shop = {}, 'pre'); // 출정 준비는 수련보다 먼저
     botSpendGems(meta);
     botSpendGold(meta);
+    if (shop) botShop(meta, shopRng, row.shop, 'post');
     if (onRun) onRun(row, meta);
     if (summary.victory || until(meta, row)) break;
   }

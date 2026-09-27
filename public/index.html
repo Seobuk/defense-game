@@ -13,6 +13,10 @@
 <link rel="stylesheet" href="css/kit.css">
 <link rel="stylesheet" href="style.css">
 <link rel="stylesheet" href="hero.css">
+<link rel="stylesheet" href="shop.css">
+<link rel="stylesheet" href="css/relics.css">
+<link rel="stylesheet" href="css/dungeon.css">
+<link rel="stylesheet" href="css/mutation.css">
 <!-- iPhone/웹 PWA (docs/pwa-head.html). Capacitor APK에선 js/pwa.js가 스스로 비활성 -->
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="mobile-web-app-capable" content="yes">
@@ -39,7 +43,13 @@
             <div class="hud-stage"><b id="stage-no" class="num">1층</b><span id="theme-name">슬라임 초원</span></div>
             <div id="wave" class="wave" role="progressbar" aria-label="웨이브 진행" aria-valuemin="0" aria-valuemax="100"><i></i><span id="wave-text">0/0</span></div>
             <div id="mana" class="mana" role="progressbar" aria-label="마나 — 가득 차면 스킬 카드" aria-valuemin="0" aria-valuemax="100" hidden><i></i><span class="mana-card" aria-hidden="true"></span></div>
-            <div id="berserk" class="berserk" role="status" hidden><img class="k-ico" src="assets/icons/el-fire.svg" alt=""><b id="berserk-text">광폭화</b></div>
+            <!-- 4차: 전투 상태 한 줄(진행 바 아래 작은 알약) — 콤보 · 광란 · 전설의 학살 · 광폭화. 콤보 단계가 오를 때만 캔버스(art/hud.js)가 0.8초 크게 띄우고 여기로 빨려 든다 -->
+            <div id="st-row" class="st-row">
+              <div id="combo" class="st-pill combo" role="status" hidden><span class="cb-l">콤보</span><b id="combo-n" class="num">0</b><em id="combo-t"></em><i class="st-g"><i id="combo-g"></i></i></div>
+              <div id="st-frenzy" class="st-pill frenzy" hidden><img class="k-ico" src="assets/icons/el-fire.svg" alt=""><span>광란 <b>x2</b></span><i class="st-g"><i id="frenzy-g"></i></i></div>
+              <div id="st-legend" class="st-pill legend" hidden><img class="k-ico" src="assets/icons/coin.svg" alt=""><span>골드 <b>x2</b></span><i class="st-g"><i id="legend-g"></i></i></div>
+              <div id="berserk" class="berserk" role="status" hidden><img class="k-ico" src="assets/icons/el-fire.svg" alt=""><b id="berserk-text">광폭화</b></div>
+            </div>
           </div>
           <div id="hud-left" class="hud-left">
             <button id="st-revive" class="st-chip revive" type="button" hidden><img class="k-ico" src="assets/icons/wall.svg" alt=""><span>부활</span></button>
@@ -145,7 +155,7 @@
       <button id="sk-heroult" class="skill heroult" aria-label="영웅 궁극기" hidden><span class="sk-sweep"></span><span id="heroult-ico" class="sk-ico" aria-hidden="true"></span><span class="sk-cd num"></span><span id="heroult-name" class="sk-name"></span></button>
       <span class="ctl-gap"></span>
       <button id="btn-speed" class="spd" aria-label="게임 속도"><b id="speed-text" class="num">1x</b><span id="speed-lock" class="lock">3x <img class="k-ico" style="--ico:11px" src="assets/icons/lock.svg" alt=""></span></button>
-      <button id="btn-autonext" class="tog" aria-pressed="false" aria-label="자동 진행: 영웅 궁극기 자동 사용 · 다음 층 자동 시작"><span class="tog-label">자동 진행</span><span class="tog-sw"></span></button>
+      <button id="btn-autonext" class="tog" aria-pressed="false" aria-label="자동 진행: 영웅 궁극기·운석·빙결 자동 사용 · 다음 층 자동 시작"><span class="tog-label">자동 진행</span><span class="tog-sw"></span></button>
     </div>
   </div>
 
@@ -262,6 +272,7 @@
           <div class="off-rewards">
             <div class="big-reward"><img class="k-ico" src="assets/icons/gem.svg" alt="">+<b id="off-gems" class="k-num gem-n">0</b></div>
             <div class="off-xp"><img class="k-ico" src="assets/icons/hero.svg" alt="">영웅 경험치 <b id="off-xp" class="k-num">+0</b></div>
+            <div class="off-xp off-gold"><img class="k-ico" src="assets/icons/coin.svg" alt="">골드 <b id="off-gold" class="k-num gold">+0</b></div>
           </div>
           <button id="btn-claim" class="k-btn l wide">받기</button>
         </div>

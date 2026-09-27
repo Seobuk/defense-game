@@ -2,21 +2,27 @@
 // 로그라이트 구조(docs/DESIGN.md '로그라이트 구현 계약'): 타이틀 → (이어하기 | 정비) → 도전 → 결과 → 정비.
 // 모든 상태 변경은 handlers(H.*)로 호출측(main.js)에 넘긴다 — 아래 createUI 주석이 계약이다.
 import {
-  SKILLS, THEMES, SYNERGIES, CODEX_SYN, codexFound, SPEED3_UNLOCK, OFFLINE_CAP_HOURS, FUSIONS, fusionParts, fusionProgress,
+  SKILLS, THEMES, SYNERGIES, CODEX_SYN, codexFound, SPEED_UNLOCK, SPEEDS, OFFLINE_CAP_HOURS, FUSIONS, fusionParts, fusionProgress,
   SKILL_BY_KEY, FUSION_BY_KEY, COLLAB_BY_KEY, COLLAB_FX, PICK_AUTO_T, SPELL_SLOTS, SPELL_MAX_LV, AWAKENINGS, AWAKEN_BY_KEY,
 } from './config.js';
 import { collabSlots, BERSERK_T } from './sim.js';
+import { COMBO_TIERS, COMBO_WINDOW, FRENZY, LEGEND_T } from './config.js'; // 4차 전투 상태 한 줄
 import { ultWorth, pickCard } from './bot.js';
 import { spellCooldown } from './spells.js';
 import { HERO_CLASSES, heroTitle, RARITIES, MILESTONES, heroPower, heroClearXp, heroTier } from './hero.js';
 import { heroPortrait, bestRarityIdx, CLS_INFO } from './heroui.js';
 import { TALENTS, talentLeft } from './talents.js';
 import { createCamp } from './camp.js';
-import { fmt } from './util.js';
+import { createRelicUI } from './relicui.js'; // 4차 유물·망각 화면
+import { slotCap } from './relics.js';
+import { fmt, clamp } from './util.js';
 import { icon } from './icons.js';
 import { momentLeft } from './art/hud.js';
 import { heroPortraitURL, magePortraitURL, enemyURL, itemIconURL } from './art/units.js';
 import { emblemImg } from './art/emblems.js';
+import { createDungeonUI } from './dungeonui.js'; // 4차 던전(지역) 특성: 배너 · HUD 칩 · 카드/칸 배지
+import { mutOptionsHTML, mutCardLabel, mutBadgeHTML, mutName, mutTipHTML, upgradeHTML, createMutSheet } from './mutui.js'; // 4차 변이: 카드 A/B · 칸 배지 · 강화 수치 줄
+import { mutChoice } from './mutations.js';
 
 const SYN_BY_KEY = Object.fromEntries(SYNERGIES.map(s => [s.key, s]));
 const KIND_TAG = { cannon: '마법', duo: '협동', event: '이벤트' };
@@ -105,7 +111,7 @@ const collabNames = c => {
   showResult(summary, game)        결과 화면(run.js endRun 의 Summary + 끝난 game — 영웅 기여도 game.dmgDone).
                                    패배 도장·클리어 연출이 떠 있으면 그 뒤에 자연스럽게 이어서 뜬다. [정비하러 가기] → H.onResultDone()
   update(view | null, meta)        매 프레임. view = game(ViewState) 또는 null(타이틀·정비 화면). meta = { gems, best, speed, autoNext,
-                                   unlocked3x, settings, discovered, gold?(영구 골드 — 결과 화면 '보유 골드'), version? }
+                                   speedCap(열린 최고 배속), settings, discovered, gold?(영구 골드 — 결과 화면 '보유 골드'), version? }
   onEvents(events, view)           매 프레임 drainEvents 결과 — 반드시 renderer.frame 뒤, update 앞(합체 연출이 바뀌기 전 스택 위치를 읽는다)
   toast(msg, iconName?) · showOfflineReward({ gems, xp, minutes }, onClaim) · isBusy() · handleBack()
   isPickShown()                    카드가 화면에 떠 있나('자동 선택' 카운트다운은 카드가 보일 때만 흐른다 — 합체·보스 연출 뒤로 밀린 동안엔 멈춤)
@@ -147,7 +153,7 @@ export function createUI(root, handlers = {}) {
   const E = {};
   for (const id of [
     'stage-wrap', 'panel', 'title', 'hud-gold', 'gold', 'stage-no', 'theme-name', 'wave', 'wave-text', 'gems',
-    'btn-menu', 'menu-new', 'mana', 'berserk', 'berserk-text', 'st-revive', 'st-awaken', 'st-awaken-n',
+    'btn-menu', 'menu-new', 'mana', 'berserk', 'berserk-text', 'combo', 'combo-n', 'combo-t', 'combo-g', 'st-frenzy', 'frenzy-g', 'st-legend', 'legend-g', 'st-revive', 'st-awaken', 'st-awaken-n',
     'side-l', 'side-r', 'stack', 'stack-count', 'beams', 'hero-card', 'hc-img', 'hc-cls', 'hc-title', 'hc-lv', 'hc-hp-fill', 'hc-ring-fg', 'hc-state',
     'link-chip', 'link-bar', 'collab-h', 'collab-list', 'flinks',
     'toasts', 'clear', 'clear-stage', 'clear-gems', 'clear-gold', 'clear-xp', 'clear-drops', 'badge-flawless', 'badge-first', 'btn-next',
@@ -172,8 +178,10 @@ export function createUI(root, handlers = {}) {
   }
   const stage = root.querySelector('#stage');
   const stars = [...E.clear.querySelectorAll('.star')];
+  let dg = null; // 던전 특성 화면(dungeonui.js) — showTip 뒤에 만든다
 
   let view = null, meta = {};
+  let rel = null; // 유물·망각 화면(relicui.js) — 아래 카드 선택 절에서 만든다
   let lastGold = 0, lastGems = 0;
   const fresh = new Set();   // 새로 발견, 도감을 아직 안 봄(NEW 배지)
   const seen = new Set();    // synergy 이벤트로 본 키 (meta.discovered가 늦게 와도 도감에 반영)
@@ -207,6 +215,7 @@ export function createUI(root, handlers = {}) {
     }
     spellTipTimer = setTimeout(hideSpellTip, ms);
   }
+  dg = createDungeonUI({ stage, hudLeft: $('hud-left'), showTip }); // 던전
   on(stage, 'pointerdown', e => { if (!e.target.closest('.ss, .cb, .hero-card, .pc-spark, .st-chip')) hideSpellTip(); });
 
   // ── 모달 스택 ──
@@ -243,8 +252,9 @@ export function createUI(root, handlers = {}) {
     E['stage-wrap'].inert = modal || cover;
     E.panel.inert = modal || cover;
     // 카드 선택 중엔 하단 패널을 잠그되(sim도 거부) '자동 진행'만 살려 둔다 — 고르는 도중에 켜고 끌 수 있게
-    for (const c of E.controls.children) if (c !== E['btn-autonext']) c.inert = pickOpen;
-    E.panel.classList.toggle('dim', pickOpen);
+    const picking = pickOpen || !!rel?.isOpen(); // 유물 3택도 카드처럼 전투 정지
+    for (const c of E.controls.children) if (c !== E['btn-autonext']) c.inert = picking;
+    E.panel.classList.toggle('dim', picking);
     E.title.inert = modal;
     camp.el.inert = modal;
   }
@@ -272,7 +282,7 @@ export function createUI(root, handlers = {}) {
     return { k, b, cd: b.querySelector('.sk-cd'), ready: null, cool: null, label: '' };
   });
   function updateSkill(s, cdLeft, phase) {
-    const tot = SKILLS[s.k].cd;
+    const tot = SKILLS[s.k].cd * (view?.rfx?.[s.k === 'meteor' ? 'meteorCd' : 'freezeCd'] ?? 1); // 유물 인장·심장
     prop(s.b, '--cd', frac(Math.ceil(cdLeft / tot * 360) / 360));
     const sec = cdLeft > 0 ? Math.ceil(cdLeft) : 0;
     txt(s.cd, sec ? (sec >= 60 ? `${sec / 60 | 0}:${String(sec % 60).padStart(2, '0')}` : String(sec)) : '');
@@ -292,12 +302,19 @@ export function createUI(root, handlers = {}) {
     meta = { ...meta, autoNext: next }; // 다음 update 전에도 바로 반영(카드 링·다음 층 버튼)
     attr(E['btn-autonext'], 'aria-pressed', String(next));
     H.onToggleAutoNext?.(next);
-    if (view && !camp.isOpen()) toast(next ? '자동 진행 켜짐 — 다음 층·영웅 궁극기 자동' : '자동 진행 꺼짐 — 다음 층·궁극기는 직접', next ? 'auto' : 'hero');
+    if (view && !camp.isOpen()) toast(next ? '자동 진행 켜짐 — 다음 층·궁극기·운석·빙결 자동' : '자동 진행 꺼짐 — 다음 층·궁극기·운석·빙결은 직접', next ? 'auto' : 'hero');
   });
+  // 4차 배속 해금: 열린 단계만 돈다. 끝(최고 열린 단계)에서 누르면 다음 잠긴 단계를 알려 준다
   on(E['btn-speed'], 'click', () => {
-    if (!meta.unlocked3x && view && view.speed >= 2) toast(`3배속은 ${SPEED3_UNLOCK}층을 클리어하면 열려요`, 'speed');
+    const cap = meta.speedCap || 1, cur = view ? view.speed : meta.speed;
+    if (cap < SPEEDS.length && cur >= cap) toast(`${cap + 1}배속: ${SPEED_UNLOCK[cap + 1]}층 돌파 시 해금`, 'lock');
     H.onSpeed?.();
   });
+  function speedUnlocked(n) { // main.js: 최고 기록이 해금 층을 넘은 순간
+    toast(`${n}배속 해금! 배속 버튼을 눌러 보세요`, 'speed');
+    E['btn-speed'].classList.remove('unlock'); void E['btn-speed'].offsetWidth; E['btn-speed'].classList.add('unlock');
+    setTimeout(() => E['btn-speed'].classList.remove('unlock'), 2600);
+  }
 
   // ── 영웅 궁극기 버튼 ──
   const heroUlt = { b: E['sk-heroult'], cd: E['sk-heroult'].querySelector('.sk-cd'), ready: null, cool: null, cls: null, label: '' };
@@ -455,6 +472,8 @@ export function createUI(root, handlers = {}) {
     showTip(s.b, f ? '' : 'el-' + d.element, `<b>${esc(d.name)} Lv.${lv}</b>${f ? ` <span class="tip-dim">융합</span>` : ''}<br>${esc(d.desc[lv - 1] || '')}`
       + (f && parts ? `<span class="tip-fu">${parts.map(p => esc(SKILL_BY_KEY[p]?.name || p)).join(' + ')} 합체 — 둘의 효과를 모두 품었어요</span>` : '')
       + road
+      + dg.tip(view, k) // 던전: 이 지역 약점·내성
+      + mutTipHTML(k, lv, view?.mutations?.[k]) // 변이
       + (lv < SPELL_MAX_LV ? `<small>다음 Lv.${lv + 1}: ${esc(d.desc[lv] || '')}</small>` : '<small>최대 레벨 MAX</small>'), 4600);
   });
   function paintSlot(s, key, lv) {
@@ -480,6 +499,18 @@ export function createUI(root, handlers = {}) {
       s.b.querySelector('.ss-pips').animate(BUMP, bumpOpts);
       if (lv >= SPELL_MAX_LV && prevLv < SPELL_MAX_LV) maxBurst(s);
     }
+  }
+  // 변이 배지(4차): 칸 왼쪽 위 보석(갈래 A/B · 변이 색) + 넓은 화면 이름 줄 '변이 · 이름'. 새로 변이하면 프리즘 폭발
+  function paintMut(s, mk) {
+    if (mk) txt(s.lv, '변이 · ' + mutName(mk));
+    if (s.mk === mk) return;
+    const fresh = !!mk && s.mk == null && s.key && !pendingMerge;
+    s.mk = mk;
+    if (!s.mb) { s.mb = document.createElement('span'); s.mb.className = 'ss-mut'; s.b.append(s.mb); }
+    s.mb.hidden = !mk;
+    s.mb.innerHTML = mk ? mutBadgeHTML(mk) : '';
+    s.b.classList.toggle('mut', !!mk);
+    if (fresh) { s.b.classList.remove('mut-now'); void s.b.offsetWidth; s.b.classList.add('mut-now'); setTimeout(() => s.b.classList.remove('mut-now'), 1400); }
   }
   // 만렙(Lv6) 도달: 칸이 금빛으로 터지고 'MAX!' 도장 한 번(합체로 바로 사라지는 칸은 합체 연출이 대신한다)
   function maxBurst(s) {
@@ -535,13 +566,15 @@ export function createUI(root, handlers = {}) {
   }
   function updateStack(v) {
     const sp = v.spells || {}, keys = Object.keys(sp);
-    const key = keys.map(k => k + sp[k]).join(',');
+    const cap = slotCap(v); // 유물 광기의 왕관: 5칸
+    const mu = v.mutations || {}; // 변이(칸 배지)
+    const key = keys.map(k => k + sp[k] + (mu[k] || '')).join(',') + '|' + cap;
     if (key !== stackKey) {
       stackKey = key;
-      slots.forEach((s, i) => { const k = keys[i]; if (s.key !== (k || null) || s.level !== (sp[k] || 0)) paintSlot(s, k, sp[k]); });
+      slots.forEach((s, i) => { const k = keys[i]; if (s.key !== (k || null) || s.level !== (sp[k] || 0)) paintSlot(s, k, sp[k]); paintMut(s, (k && mu[k]) || null); });
       const n = Math.min(SPELL_SLOTS, keys.length);
-      txt(E['stack-count'], `${n}/${SPELL_SLOTS}`);
-      E['stack-count'].parentElement.classList.toggle('full', n >= SPELL_SLOTS);
+      txt(E['stack-count'], `${n}/${cap}`);
+      E['stack-count'].parentElement.classList.toggle('full', n >= cap);
     }
     // 쿨타임 고리(지속형 = 도는 빛) · 합동 필살 창(다음 쿨타임 스킬 2배)
     const link = (v.linkT || 0) > 0;
@@ -556,6 +589,7 @@ export function createUI(root, handlers = {}) {
       }
       s.b.classList.toggle('hl', link && !passive);
     }
+    dg.slots(v, slots); // 던전: 칸 ▲ 약점 · ▼ 내성
   }
   // 시전 순간: 그 칸(또는 그 스킬을 품은 융합 칸)이 톡
   function slotOf(v, spell) {
@@ -713,13 +747,14 @@ export function createUI(root, handlers = {}) {
   // ── 상태 칩: 부활 결계 · 각성 · 광폭화 경고 ──
   let reviveKey = '', awakenKey = '', berserkKey = '';
   const reviveInfo = v => {
-    const meta1 = !!v.fx?.revive, hero1 = !!v.heroUnit?.tb?.cap?.reviveWard;
-    const ready = (meta1 && !v.run?.reviveUsed) || (hero1 && !v.run?.heroRevive);
-    return { own: meta1 || hero1, ready, n: (meta1 && !v.run?.reviveUsed ? 1 : 0) + (hero1 && !v.run?.heroRevive ? 1 : 0) };
+    const meta1 = !!v.fx?.revive, hero1 = !!v.heroUnit?.tb?.cap?.reviveWard, prep1 = !!v.run?.prep?.ward; // prep1 = 출정 준비 '보스 결계석'(shop.js)
+    const ready = (meta1 && !v.run?.reviveUsed) || (hero1 && !v.run?.heroRevive) || (prep1 && !v.run.prep.wardUsed);
+    return { own: meta1 || hero1 || prep1, ready, n: (meta1 && !v.run?.reviveUsed ? 1 : 0) + (hero1 && !v.run?.heroRevive ? 1 : 0) + (prep1 && !v.run.prep.wardUsed ? 1 : 0),
+      boss: prep1 && !v.run.prep.wardUsed };
   };
   on(E['st-revive'], 'click', () => {
     const r = view ? reviveInfo(view) : { ready: false };
-    showTip(E['st-revive'], '', r.ready ? `<b>부활 결계 준비됨</b><br>성벽이 무너지는 순간 한 번 되살아나요${r.n > 1 ? ` (${r.n}회)` : ''}.` : '<b>부활 결계 사용함</b><br>이번 도전에서는 더 없어요.');
+    showTip(E['st-revive'], '', r.ready ? `<b>부활 결계 준비됨</b><br>성벽이 무너지는 순간 한 번 되살아나요${r.n > 1 ? ` (${r.n}회)` : ''}.${r.boss ? '<br>보스 결계석: 네임드 보스 층에서 먼저 1회' : ''}` : '<b>부활 결계 사용함</b><br>이번 도전에서는 더 없어요.');
   });
   on(E['st-awaken'], 'click', () => {
     const a = view?.run?.awaken || {};
@@ -744,7 +779,8 @@ export function createUI(root, handlers = {}) {
       E['st-awaken'].hidden = !n;
       txt(E['st-awaken-n'], String(n));
     }
-    const bz = v.berserk > 1 ? 'on|' + (v.berserk >= 10 ? Math.round(v.berserk) : v.berserk.toFixed(1))
+    // 광폭화: 전투 중에만(클리어·유물 화면엔 숨김). x1.1 전까지는 'x1.0'(효과 없어 보임) 대신 '광폭화!'
+    const bz = v.berserk > 1 && v.phase === 'play' ? 'on|' + (v.berserk >= 10 ? Math.round(v.berserk) : v.berserk < 1.1 ? '!' : v.berserk.toFixed(1))
       : v.phase === 'play' && !v.pick && v.phaseT >= BERSERK_T - BERSERK_WARN ? 'warn|' + Math.ceil(BERSERK_T - v.phaseT) : '';
     if (bz !== berserkKey) {
       const [mode, val] = bz.split('|');
@@ -752,8 +788,33 @@ export function createUI(root, handlers = {}) {
       berserkKey = bz;
       E.berserk.hidden = !mode;
       E.berserk.classList.toggle('warn', mode === 'warn');
-      if (mode) txt(E['berserk-text'], mode === 'on' ? `광폭화! 적 피해 x${val}` : `광폭화까지 ${val}초`);
+      if (mode) txt(E['berserk-text'], mode === 'on' ? (val === '!' ? '광폭화!' : `광폭화 x${val}`) : `광폭화 ${val}초`); // 4차: 상태 줄에 맞게 짧게
     }
+  }
+
+  // ── 4차 전투 상태 한 줄: 콤보 알약(숫자 · 단계 · 남은 시간 게이지) · 광란 · 전설의 학살 (광폭화는 위 updateStatus) ──
+  // 단계가 오르는 순간만 캔버스(art/hud.js comboPop)가 0.8초 크게 띄우고, 끝나면 여기 알약이 받아 톡 튄다
+  let comboKey = '', frMax = FRENZY.dur, lgMax = LEGEND_T;
+  const gauge = (el, u) => { const t = `scaleX(${clamp(u, 0, 1).toFixed(2)})`; if (el.style.transform !== t) el.style.transform = t; };
+  function updateCombo(v) {
+    const c = v.combo, n = c && c.count >= 3 ? c.count | 0 : 0, t = n ? clamp(c.tier | 0, 0, 4) : 0, k = n + '|' + t;
+    if (k !== comboKey) {
+      const [pn, pt] = comboKey.split('|').map(Number);
+      comboKey = k;
+      E.combo.hidden = !n;
+      if (n) {
+        txt(E['combo-n'], String(n));
+        txt(E['combo-t'], t ? COMBO_TIERS[t - 1].label.replace('!', '') : '');
+        E.combo.dataset.t = t;
+        if (t > (pt || 0)) setTimeout(() => E.combo.animate([{ scale: 1.4, filter: 'brightness(1.8)' }, { scale: 1, filter: 'none' }], { duration: 380, easing: 'cubic-bezier(.34,1.56,.64,1)' }), 760);
+        else if (n > (pn || 0)) E.combo.animate([{ scale: 1 }, { scale: 1.08, offset: 0.4 }, { scale: 1 }], { duration: 180 });
+      }
+    }
+    if (n) gauge(E['combo-g'], c.timer / COMBO_WINDOW);
+    E['st-frenzy'].hidden = !(v.frenzyT > 0);
+    if (v.frenzyT > 0) gauge(E['frenzy-g'], v.frenzyT / (frMax = Math.max(frMax, v.frenzyT))); else frMax = FRENZY.dur;
+    E['st-legend'].hidden = !(v.legendT > 0);
+    if (v.legendT > 0) gauge(E['legend-g'], v.legendT / (lgMax = Math.max(lgMax, v.legendT))); else lgMax = LEGEND_T;
   }
 
   // ── 판타지 스킬 카드 선택 오버레이 (스킬 카드 + 각성 카드, 3~5장) ──
@@ -762,13 +823,24 @@ export function createUI(root, handlers = {}) {
     + `<svg class="pc-rec" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><rect x="1.5" y="1.5" width="97" height="97" rx="7" ry="5" pathLength="100"/></svg>`
     + `<span class="pc-icowrap"></span><span class="pc-fuse" hidden>${SPARK_ICON}<b>이걸 찍으면 융합!</b><em></em></span><span class="pc-body"><span class="pc-name"></span>`
     + `<span class="pc-pips">${pips(0)}</span><span class="pc-desc"></span><span class="pc-rar"></span></span></button>`).join('');
+  let pickCards = null; // 지금 떠 있는 카드(변이 카드의 갈래 판정)
   const pickCardEls = [...E['pick-cards'].children].map((b, i) => {
-    on(b, 'click', () => { if (pickOpen && !pickClosing) H.onPick?.(i); });
+    on(b, 'click', ev => {
+      if (!pickOpen || pickClosing) return;
+      const card = pickCards?.[i];
+      if (!card?.mutate) { H.onPick?.(i); return; }
+      if (b.classList.contains('narrow')) { mutSheet.open(card, i, view ? mutChoice(view, card) : -1); return; } // 좁은 카드: 갈래 글이 잘리니 A/B 시트에서
+      const o = ev.target.closest?.('.pm-opt'); // 변이 카드: 누른 갈래(A/B)
+      if (o) H.onPick?.(i, +o.dataset.c);
+      else if (ev.detail === 0) H.onPick?.(i, mutChoice(view, card)); // 키보드: 추천 갈래
+      else b.animate([{ transform: 'translateX(0)' }, { transform: 'translateX(-5px)' }, { transform: 'translateX(5px)' }, { transform: 'translateX(0)' }], { duration: 220 }); // 갈래를 누르세요
+    });
     const fuse = b.querySelector('.pc-fuse');
     return { b, tag: b.querySelector('.pc-tag'), fuse, fuseTo: fuse.querySelector('em'), ico: b.querySelector('.pc-icowrap'), name: b.querySelector('.pc-name'),
       pips: [...b.querySelectorAll('.pc-pips i')], pipRow: b.querySelector('.pc-pips'), desc: b.querySelector('.pc-desc'), rar: b.querySelector('.pc-rar'),
       rec: b.querySelector('.pc-rec rect'), key: null };
   });
+  const mutSheet = createMutSheet(E.pick, (i, c) => { if (pickOpen && !pickClosing) H.onPick?.(i, c); }, k => skillArt(k)); // 4차 FIX: 좁은 화면 변이 A/B 시트
   let pickOpen = false, pickClosing = false, pickResolveTimer = 0, pickRef = null, pickWaitRef = null, pickWaitT = 0, pickRec = -1;
   on(E['pick-reroll'], 'click', () => { if (pickOpen && !pickClosing) H.onReroll?.(); });
   // 카드 화면의 '자동 선택'(자동 진행과 별개, 기본 OFF, 저장됨): 켜면 추천 카드 테두리가 차오르고 PICK_AUTO_T초 뒤 자동 선택
@@ -784,24 +856,48 @@ export function createUI(root, handlers = {}) {
     if (E['pick-reroll'].hidden === show) E['pick-reroll'].hidden = !show;
     if (show) txt(E['pick-reroll-n'], String(n));
   }
+  // 변이 카드(4차): 'Lv6 변이' 띠 + 스킬 그림 + A/B 두 갈래(무엇이 바뀌나). 누른 갈래가 선택, 추천 갈래는 자동 선택 ON일 때 금빛
+  function paintMutCard(c, card) {
+    const sp = SKILL_BY_KEY[card.spell], tone = skillTone(card.spell);
+    c.key = 'mut:' + card.spell;
+    c.b.className = `pick-card mutate ${tone.cls} rar-legend`; // 갈래 글이 잘리면 openPick이 'narrow'(누르면 A/B 시트)
+    if (tone.style) c.b.setAttribute('style', tone.style); else c.b.removeAttribute('style');
+    html(c.ico, skillArt(card.spell));
+    txt(c.name, sp.name);
+    c.pipRow.hidden = true;
+    c.desc._t = undefined;
+    html(c.desc, mutOptionsHTML(card, view ? mutChoice(view, card) : 0));
+    c.desc.classList.add('pm');
+    c.desc.classList.remove('long');
+    txt(c.rar, '변이');
+    c.tag.hidden = false; c.tag.className = 'pc-tag mut'; txt(c.tag, 'Lv6 변이');
+    c.fuse.hidden = true;
+    c.b.setAttribute('aria-label', mutCardLabel(card));
+  }
   function openPick(pick) {
     clearTimeout(pickResolveTimer);
+    mutSheet.close();
     pickOpen = true; pickClosing = false;
+    pickCards = pick.cards; // 변이 카드 갈래 판정
     hideSpellTip();
     const n = pick.cards.length;
     // 머리글: 도전 시작 무료 카드 · 칸이 다 찼으면 '강화만'
-    const full = Object.keys(view?.spells || {}).length >= SPELL_SLOTS;
+    const used = Object.keys(view?.spells || {}).length, cap = view ? slotCap(view) : SPELL_SLOTS, full = used >= cap; // 유물 왕관이면 5칸
     // 1층 처치 0에서 뜨는 (무료 카드 아닌) 카드 = 영웅 Lv30 보너스 카드 — 마나를 모으기 전이라 '마나 폭주'가 아니다
     const gift = !pick.starter && view?.stage === 1 && !(view?.progress?.killed > 0);
-    txt(E.pick.querySelector('.pick-ribbon'), pick.starter ? '출정의 축복!' : gift ? '영웅의 선물!' : full ? `스킬 칸 ${SPELL_SLOTS}/${SPELL_SLOTS}` : '마나 폭주!');
+    txt(E.pick.querySelector('.pick-ribbon'), pick.starter ? '출정의 축복!' : gift ? '영웅의 선물!' : full ? `스킬 칸 ${used}/${cap}` : '마나 폭주!');
     txt(E['pick-h'], pick.starter ? '첫 마법을 고르세요' : gift ? '영웅 Lv30 보너스 카드' : full ? '스킬을 강화하세요' : '스킬을 고르세요');
     E['pick-cards'].classList.toggle('four', n === 4); // 4장 = 2×2, 5장 = 3 + 2
     E['pick-cards'].classList.toggle('five', n >= 5);
+    const narrowPick = n >= 4 && innerWidth < 480; // 폰 4~5장: 카드가 좁아 강화 수치는 2줄까지
     pickCardEls.forEach((c, i) => {
       c.b.classList.remove('in', 'chosen', 'faded');
       if (i >= n) { c.b.hidden = true; c.key = null; return; }
       c.b.hidden = false;
       const card = pick.cards[i];
+      c.desc.classList.remove('pm', 'pu'); // 변이 갈래 · 강화 수치 줄(아래에서 다시)
+      dg.card(c.b, card.awaken ? null : card.spell, view); // 던전: '약점!'·'내성' 배지(변이 카드도 — 그 칸의 옛 배지가 남지 않게)
+      if (card.mutate) { paintMutCard(c, card); return; } // 변이 카드(4차)
       if (card.awaken) { // 각성 카드: 슬롯이 다 찼을 때 나오는 소폭 스탯(런 누적)
         const a = AWAKEN_BY_KEY[card.awaken];
         c.key = 'aw:' + card.awaken;
@@ -824,21 +920,24 @@ export function createUI(root, handlers = {}) {
       html(c.ico, skillArt(card.spell));
       txt(c.name, sp.name);
       c.pipRow.hidden = false;
-      c.pips.forEach((p, pi) => { p.classList.toggle('on', pi < card.level); p.classList.toggle('nx', pi === card.level - 1); });
+      const from = card.from ?? card.level - 1; // 지금 레벨(0 = 새 스킬) — 쌍둥이 달·따라잡기는 한 장에 2레벨
+      c.pips.forEach((p, pi) => { p.classList.toggle('on', pi < card.level); p.classList.toggle('nx', pi >= from && pi < card.level); });
       const dsc = sp.desc[card.level - 1] || '';
-      txt(c.desc, dsc);
-      c.desc.classList.toggle('long', dsc.length > 30); // 고정 칸에 맞춰 한 단계 작게
-      txt(c.rar, { common: '일반', rare: '희귀', legend: '전설' }[card.rarity] || '일반');
+      const up = from > 0 ? upgradeHTML(card.spell, card.level, from, narrowPick ? 2 : 3) : ''; // 강화: '마력 240% → 310%' 수치 줄(+ Lv6 완전체·변이 해금) — 좁은 화면 4~5장이면 2줄
+      if (up) { c.desc._t = undefined; html(c.desc, up); c.desc.classList.add('pu'); } else { c.desc._h = undefined; txt(c.desc, dsc); }
+      c.desc.classList.toggle('long', !up && dsc.length > 30); // 고정 칸에 맞춰 한 단계 작게
+      txt(c.rar, ({ common: '일반', rare: '희귀', legend: '전설' }[card.rarity] || '일반') + (card.catchUp ? ' · 따라잡기 +1' : '')); // 20층 뒤 Lv3 미만 = 한 장에 +1레벨 더
       c.tag.hidden = false;
-      if (card.level > 1) { c.tag.className = fu ? 'pc-tag up fu' : 'pc-tag up'; txt(c.tag, `${fu ? '융합 ' : ''}Lv${card.level - 1} → ${card.level >= SPELL_MAX_LV ? 'MAX' : card.level}`); }
-      else { c.tag.className = 'pc-tag'; txt(c.tag, 'NEW'); }
+      if (from > 0) { c.tag.className = fu ? 'pc-tag up fu' : 'pc-tag up'; txt(c.tag, `${fu ? '융합 ' : ''}Lv${from} → ${card.level >= SPELL_MAX_LV ? 'MAX' : card.level}`); }
+      else { c.tag.className = 'pc-tag'; txt(c.tag, card.level > 1 ? `NEW Lv${card.level}` : 'NEW'); }
       // ✦ 이 카드로 합체가 완성된다(sim fusionHint). 발견한 융합이면 이름까지, 미발견이면 짝 조건을 숨긴 채 '???'
       const fz = card.fusionHint ? fusionOf(view?.spells || {}, card.spell, card.level) : null;
       const fzName = fz && discovered().has(fz.key) ? fz.name : '';
       c.fuse.hidden = !card.fusionHint;
       c.b.classList.toggle('will-fuse', !!card.fusionHint);
-      if (card.fusionHint) txt(c.fuseTo, fzName ? `→ ${fzName}` : '→ ???');
-      c.b.setAttribute('aria-label', `${sp.name}, ${card.level > 1 ? 'Lv' + card.level + ' 강화' : '새 스킬'}${card.level >= SPELL_MAX_LV ? ' (최대 레벨)' : ''}. ${dsc}${card.fusionHint ? `. 이걸 찍으면 융합${fzName ? ': ' + fzName : ''}!` : ''}`);
+      const lost = fz && Object.keys(view?.mutations || {}).some(k => fz.groups.some(gr => gr.includes(k))); // 변이한 재료는 합체하면 변이가 사라진다
+      if (card.fusionHint) txt(c.fuseTo, (fzName ? `→ ${fzName}` : '→ ???') + (lost ? ' · 변이 소멸' : ''));
+      c.b.setAttribute('aria-label', `${sp.name}, ${from > 0 ? `Lv${from} → ${card.level} 강화` : `새 스킬${card.level > 1 ? ' Lv' + card.level : ''}`}${card.level >= SPELL_MAX_LV ? ' (최대 레벨)' : ''}. ${dsc}${card.fusionHint ? `. 이걸 찍으면 융합${fzName ? ': ' + fzName : ''}!` : ''}`);
     });
     // 추천 카드(자동 선택이 고를 카드 = sim tickPick과 같은 bot.pickCard) — 자동 선택 ON일 때 테두리가 차오른다
     pickRec = view ? pickCard(view, pick.cards) : 0;
@@ -849,6 +948,12 @@ export function createUI(root, handlers = {}) {
     syncPickRing(pick);
     E.pick.hidden = false;
     fitPickDescs(n);
+    // 변이 카드의 갈래 설명이 잘리면(폰 · 카드 4~5장) 'narrow': 갈래 이름만 보이고, 누르면 A/B 시트에서 전문을 보고 고른다
+    for (let i = 0; i < n; i++) {
+      const c = pickCardEls[i];
+      if (!pick.cards[i].mutate) continue;
+      c.b.classList.toggle('narrow', [...c.desc.querySelectorAll('.pm-short')].some(e => e.scrollHeight > e.clientHeight + 1));
+    }
     syncInert();
     pickCardEls[0].b.focus?.({ preventScroll: true });
   }
@@ -858,10 +963,16 @@ export function createUI(root, handlers = {}) {
     const over = d => d.scrollHeight > d.clientHeight + 1;
     for (let i = 0; i < n; i++) {
       const d = pickCardEls[i].desc, full = d.textContent;
+      if (d.classList.contains('pm')) continue; // 변이 갈래는 제 칸 모양(CSS)
       d.style.fontSize = ''; d.style.webkitLineClamp = 'unset'; d.style.flex = '';
       const fs0 = parseFloat(getComputedStyle(d).fontSize) || 12;
       const shrink = () => { let fs = fs0; d.style.fontSize = ''; while (over(d) && fs > 9.5) { fs -= 0.5; d.style.fontSize = fs + 'px'; } };
       shrink();
+      if (d.classList.contains('pu')) { // 강화 수치 줄: 넘치면 마지막 수치 줄부터 뺀다(만렙 'Lv6 완전체' 줄은 남김)
+        d._h = undefined; // 줄을 지웠으니 다음 html()이 다시 그리게
+        for (let ls = d.querySelectorAll('.pu-l'); over(d) && ls.length > (d.querySelector('.pu-max') ? 0 : 1); ls = d.querySelectorAll('.pu-l')) ls[ls.length - 1].remove();
+        continue;
+      }
       const cut = full.indexOf(' — '); // 지원 사격 꼬리말('— 영웅이 싸우는 적을 먼저 노린다')은 자리가 모자라면 뺀다(툴팁·aria엔 그대로)
       if (over(d) && cut > 0) { d.textContent = full.slice(0, cut); shrink(); }
       if (over(d)) { // 그래도 넘치면 온전히 들어가는 줄 수까지만 — 칸도 그 높이로 줄여 잘린 반쪽 줄이 보이지 않게
@@ -898,12 +1009,14 @@ export function createUI(root, handlers = {}) {
   function resolvePick(ev) {
     if (!pickOpen || pickClosing) return;
     pickClosing = true;
-    const key = ev.spell || 'aw:' + ev.awaken;
+    mutSheet.close();
+    const key = ev.mutate ? 'mut:' + ev.spell : ev.spell || 'aw:' + ev.awaken; // 변이 카드 = 'mut:스킬'
     let chosen = null;
     for (const c of pickCardEls) {
       if (c.b.hidden) continue;
       if (c.key === key && !chosen) { chosen = c; c.b.classList.add('chosen'); } else c.b.classList.add('faded');
     }
+    if (chosen && ev.mutate) chosen.desc.querySelector(`[data-m="${ev.mutate}"]`)?.classList.add('chosen'); // 고른 갈래
     clearTimeout(pickResolveTimer);
     pickResolveTimer = setTimeout(hidePick, 380);
   }
@@ -915,9 +1028,12 @@ export function createUI(root, handlers = {}) {
     syncInert();
   }
 
+  // ── 유물 3택 · 망각(비우기) · 유물 줄 · 결과 화면 유물 (relicui.js) ──
+  rel = createRelicUI(root, { onRelic: i => H.onRelic?.(i), onForget: k => H.onForget?.(k), showTip, toast, sync: () => syncInert() });
+
   // ── 정비 화면 ──
   const camp = createCamp(root, {
-    onCampAct: a => !!H.onCampAct?.(a),
+    onCampAct: a => H.onCampAct?.(a), // 장비 상자는 결과 객체를 돌려준다(shopui.js 개봉 연출)
     onBuyMeta: k => !!H.onBuyMeta?.(k),
     onStartRun: lo => H.onStartRun?.(lo),
     onOpenHero: o => H.onOpenHero?.(o),
@@ -930,6 +1046,7 @@ export function createUI(root, handlers = {}) {
     hideTitle();
     hideClear(); E.defeat.hidden = true;
     if (pickOpen) hidePick();
+    rel.hide();
     camp.show(m);
     syncInert();
   }
@@ -975,8 +1092,9 @@ export function createUI(root, handlers = {}) {
     E['cont-stage'].textContent = st; E['cont-stage'].dataset.text = st;
     txt(E['cont-who'], `${HERO_CLASSES[cls]?.name || ''}${hero ? ` Lv.${hero.level}` : ''} · ${run.floors | 0}층까지 돌파`);
     const sp = Object.entries(run.spells || {});
-    E['cont-spells'].innerHTML = sp.length ? sp.map(([k, lv]) => skillChip(k, lv, 'cont-sp')).join('')
-      : '<span class="cont-none">아직 고른 스킬이 없어요</span>';
+    const mu = run.mutations || {};
+    E['cont-spells'].innerHTML = (sp.length ? sp.map(([k, lv]) => skillChip(k, lv, 'cont-sp').replace(/<\/span>$/, `${mu[k] ? mutBadgeHTML(mu[k]) : ''}</span>`)).join('') // 변이 갈래 보석
+      : '<span class="cont-none">아직 고른 스킬이 없어요</span>') + (run.relicPick ? '<span class="cont-relic">유물 선택 대기 중</span>' : '');
     const g = gemSum(run.gems);
     E['cont-gems'].innerHTML = `${icon('gem')}적립 보석 <b class="k-num gem-n">${fmt(g)}</b>`;
     E['cont-main'].hidden = false; E['cont-confirm'].hidden = true;
@@ -1072,7 +1190,9 @@ export function createUI(root, handlers = {}) {
     E.defeat.hidden = true;
     hideClear();
     if (pickOpen) hidePick();
+    rel.hide();
     renderResult(sum, game);
+    rel.renderResult(sum);
     openModal('m-result');
   }
   function renderResult(sum, game) {
@@ -1129,7 +1249,7 @@ export function createUI(root, handlers = {}) {
     // 이번 도전의 스킬
     const sp = Object.entries(sum.spells || {});
     E['res-spells-card'].hidden = !sp.length;
-    E['res-spells'].innerHTML = sp.map(([k, lv]) => { const s = SKILL_BY_KEY[k], t = skillTone(k); return s ? `<span class="res-sp ${t.cls}" style="${t.style}"><span class="res-sp-art">${skillArt(k)}</span><span class="res-sp-name">${esc(s.name)}</span><span class="sc-pips">${pips(lv)}</span></span>` : ''; }).join('');
+    E['res-spells'].innerHTML = sp.map(([k, lv]) => { const s = SKILL_BY_KEY[k], t = skillTone(k); const mk = sum.mutations?.[k]; return s ? `<span class="res-sp ${t.cls}" style="${t.style}"><span class="res-sp-art">${skillArt(k)}${mk ? mutBadgeHTML(mk) : ''}</span><span class="res-sp-name">${esc(s.name)}</span>${mk ? `<span class="res-sp-mut">${esc(mutName(mk))}</span>` : ''}<span class="sc-pips">${pips(lv)}</span></span>` : ''; }).join(''); // 변이: 갈래 보석 + 이름
     // 새로 해금된 영웅
     const nc = sum.newClasses || [];
     E['res-unlock'].hidden = !nc.length;
@@ -1351,14 +1471,16 @@ export function createUI(root, handlers = {}) {
   });
 
   // ── 오프라인 보상 (보석 + 영웅 경험치) ──
-  function showOfflineReward({ gems = 0, xp = 0, minutes = 0 } = {}, onClaim) {
+  function showOfflineReward({ gems = 0, gold = 0, xp = 0, minutes = 0 } = {}, onClaim) {
     const h = Math.floor(minutes / 60), m = minutes % 60;
     const capped = minutes >= OFFLINE_CAP_HOURS * 60 ? ' (최대)' : '';
-    txt(E['off-time'], `${h ? h + '시간 ' : ''}${m ? m + '분' : ''}${capped} 동안 황금 곡괭이가 보석을 캐고, 영웅은 수련했어요!`);
+    txt(E['off-time'], `${h ? h + '시간 ' : ''}${m ? m + '분' : ''}${capped} 동안 황금 곡괭이가 보석과 골드를 캐고, 영웅은 수련했어요!`);
     if (!E['off-art'].firstChild) E['off-art'].innerHTML = emblemImg('treasure');
     E['off-gems'].textContent = '0';
     countUp(E['off-gems'], gems, 900);
     txt(E['off-xp'], '+' + fmt(xp));
+    const og = document.getElementById('off-gold'); // 방치 골드(4차 경제, shop.js offlineGoldPerHour)
+    if (og) { og.textContent = '+' + fmt(gold); og.parentElement.hidden = !(gold > 0); }
     openModal('m-offline', () => onClaim?.());
   }
   E['btn-claim'].dataset.autofocus = '';
@@ -1441,9 +1563,11 @@ export function createUI(root, handlers = {}) {
     txt(E['wave-text'], `${k}/${tot}`);
     if (v.mana) updateMana(v);
     updateStack(v);
+    dg.update(v, pickOpen || !!v.relicPick || stack.length > 0); // 던전: 지역 칩 · 지역 시작 배너
     if (pendingMerge) { const pm = pendingMerge; pendingMerge = null; playMerge(pm); }
     updateFLinks(v);
     updateStatus(v);
+    updateCombo(v); // 4차 상태 줄
     stage.classList.toggle('boss-on', !!v.boss);
     if (v.pick) {
       if (pickRef !== v.pick) {
@@ -1454,6 +1578,7 @@ export function createUI(root, handlers = {}) {
       } else syncPickRing(v.pick);
     } else { pickRef = null; pickWaitRef = null; if (pickOpen && !pickClosing) hidePick(); } // 이벤트 없이 사라진 경우(클리어·패배) 즉시 닫음
     syncReroll(v.pick?.cards?.fixed ? 0 : v.rerollLeft | 0); // 새로 뽑아도 같은 카드면 버튼 숨김
+    rel.update(v); // 유물 3택 · 유물 줄 · 비우기 버튼 · 봉인
     updateHeroBtn(v.hero);
 
     const gs = fmt(me.gold);
@@ -1470,7 +1595,9 @@ export function createUI(root, handlers = {}) {
     attr(E['btn-autonext'], 'aria-pressed', String(!!meta.autoNext));
     syncClearWait(v);
     txt(E['speed-text'], v.speed + 'x');
-    if (E['speed-lock'].hidden !== !!meta.unlocked3x) E['speed-lock'].hidden = !!meta.unlocked3x;
+    const cap = meta.speedCap || 1, lockTxt = cap < SPEEDS.length ? `${cap + 1}x` : ''; // 다음 잠긴 단계(없으면 숨김)
+    if (E['speed-lock'].hidden !== !lockTxt) E['speed-lock'].hidden = !lockTxt;
+    if (lockTxt && E['speed-lock'].firstChild.nodeValue !== lockTxt + ' ') E['speed-lock'].firstChild.nodeValue = lockTxt + ' ';
 
     updateHeroCard(v.heroUnit, v.hero);
     updateHeroUlt(v.heroUnit);
@@ -1489,6 +1616,7 @@ export function createUI(root, handlers = {}) {
 
   let taughtTalent = false;
   function onEvents(events, v) {
+    rel.onEvents(events, v); // 유물 획득·발동·망각 알림
     for (const ev of events) {
       switch (ev.type) {
         case 'clear': { // 보스를 쓰러뜨린 판은 격파 연출이 먼저 보이고 1.2초 뒤 클리어
@@ -1511,7 +1639,7 @@ export function createUI(root, handlers = {}) {
         case 'collab': newCollabs.push(ev.key); break;
         case 'spellPick': manaSpent = v.stage; resolvePick(ev); break;
         case 'revive':
-          toast(ev.hero ? '부활 결계 강화 발동! 성벽 40% 회복' : '부활 결계 발동! 성벽 50% 회복', 'wall');
+          if (!ev.relic) toast(ev.hero ? '부활 결계 강화 발동! 성벽 40% 회복' : ev.prep ? '보스 결계석 발동! 성벽 50% 회복' : '부활 결계 발동! 성벽 50% 회복', 'wall'); // 불사조 깃털은 relicui가 알린다
           E['st-revive'].animate([{ transform: 'scale(1.5)', filter: 'brightness(2)' }, { transform: 'scale(1)', filter: 'none' }], { duration: 600, easing: 'ease-out' });
           break;
         case 'heroLevelUp': {
@@ -1544,11 +1672,13 @@ export function createUI(root, handlers = {}) {
 
   // 전투를 멈춰야 하는 동안 true(모달 · 클리어/패배 연출 · 카드 선택 · 정비 화면)
   function isBusy() {
-    return stack.length > 0 || !E.defeat.hidden || !E.clear.hidden || pickOpen || camp.isOpen();
+    return stack.length > 0 || !E.defeat.hidden || !E.clear.hidden || pickOpen || rel.isOpen() || camp.isOpen();
   }
 
   // 안드로이드 뒤로가기: 처리했으면 true. 카드 선택·결과·이어하기는 삼킨다(선택을 피할 수 없게)
   function handleBack() {
+    if (mutSheet.isOpen()) { mutSheet.close(); return true; } // 변이 A/B 시트
+    if (rel.handleBack()) return true; // 비우기 시트 닫기 · 유물 3택은 삼킨다
     if (pickOpen) return true;
     if (stack.length) {
       const top = stack[stack.length - 1].el.id;
@@ -1567,7 +1697,8 @@ export function createUI(root, handlers = {}) {
   syncInert();
   return {
     showTitle, hideTitle, showContinue, showCamp, hideCamp, isCampOpen: () => camp.isOpen(), refreshCamp: () => camp.refresh(),
-    showResult, update, onEvents, toast, showOfflineReward, isBusy, handleBack, isPickShown: () => pickOpen && !pickClosing,
+    showResult, update, onEvents, toast, speedUnlocked, showOfflineReward, isBusy, handleBack, isPickShown: () => pickOpen && !pickClosing && !rel.forgetOpen() && !mutSheet.isOpen(), // 비우기·변이 시트가 열린 동안 자동 선택 카운트다운 멈춤
+    isRelicShown: () => rel.isOpen(),
     showUpdateReady, showUpdateProgress, showInstallPermissionHelp, setVersion,
     slotRects: () => slots.filter(x => x.key).map(x => { const r = relRect(x.orb); return { key: x.key, x: r.cx, y: r.cy, r: r.w / 2 }; }),
     heroAnchor: () => { if (E['btn-hero'].hidden) return null; const r = relRect(E['hb-portrait']); return { x: r.cx, y: r.cy }; },

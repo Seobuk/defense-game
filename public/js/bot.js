@@ -4,6 +4,8 @@ import { act } from './sim.js';
 import { unlockedClasses, autoEquipAll } from './hero.js';
 import { buyMeta, buyTraining, startSlots } from './run.js';
 import { TALENTS, TALENT_RECOMMEND, recommendNext, classNodes, canAllocate, allocateTalent, resetTalents } from './talents.js';
+import { pickBias } from './dungeons.js'; // 4차 던전: 지금·다음 지역의 약점 원소를 조금 더
+import { relicSealed } from './relics.js'; // 4차 유물: 봉인된 비상 스킬은 건너뛴다
 
 // 판타지 스킬 카드 선택 휴리스틱(자동 진행 · 헤드리스 봇 공용) — 융합을 노린다(두 재료를 모두 Lv6으로):
 // 융합 완성(합체) > 협공이 켜지는 스킬 > 가진 융합 스킬 강화(카드 한 장당 가장 큰 화력 — Lv1 ×1.1~1.4 → Lv6 ×1.9~3.8)
@@ -33,10 +35,12 @@ export function pickCard(g, cards) {
   let idx = 0, best = -1;
   cards.forEach((c, i) => {
     const k = c.spell, owned = (g.spells[k] || 0) > 0;
-    const score = c.awaken ? (c.awaken === 'power' ? 2 : 1)
+    // 변이 카드(4차): 만렙 보상이라 높게 — 단, 곧 합체할 짝의 재료면 낮게(합체하면 변이가 사라진다)
+    const score = c.mutate ? (inPair.has(k) ? 16 : 38) : c.awaken ? (c.awaken === 'power' ? 2 : 1)
       : (c.fusionHint ? 100 : 0) + (collab(k) ? 40 : 0)
         + (owned ? (target.includes(k) ? 30 + g.spells[k] : inPair.has(k) ? 18 : FUSION_BY_KEY[k] ? 35 : 12)
-          : 8 + (NEW_VALUE[k] || 0) + (pairsWith(g, k) ? 6 : 0));
+          : 8 + (NEW_VALUE[k] || 0) + (pairsWith(g, k) ? 6 : 0))
+        + (k ? pickBias(g, k) : 0); // 던전: 약점 +4 · 내성 −3 · 열기 해소 +6(지역 끝 5층이면 다음 지역도)
     if (score > best) { best = score; idx = i; }
   });
   return idx;
@@ -166,9 +170,9 @@ export function autoSkill(g, i) {
       if (e.state === 'warn' || (e.state === 'charge' && e.y > WALL_Y - 450) || e.y + e.r > WALL_Y - 200) threat = true;
     }
   }
-  if (p.cd.freeze <= 0 && g.freezeT <= 0.5 && (threat || near >= 10 || (ratio < 0.45 && near >= 3))) {
+  if (p.cd.freeze <= 0 && !relicSealed(g, 'freeze') && g.freezeT <= 0.5 && (threat || near >= 10 || (ratio < 0.45 && near >= 3))) {
     act(g, i, { type: 'skill', skill: 'freeze' });
-  } else if (p.cd.meteor <= 0 && ((near >= 8 && ratio < 0.5) || (ratio < 0.45 && (near >= 3 || named)) || (named && threat && ratio < 0.7))) {
+  } else if (p.cd.meteor <= 0 && !relicSealed(g, 'meteor') && ((near >= 8 && ratio < 0.5) || (ratio < 0.45 && (near >= 3 || named)) || (named && threat && ratio < 0.7))) {
     act(g, i, { type: 'skill', skill: 'meteor' });
   }
 }
