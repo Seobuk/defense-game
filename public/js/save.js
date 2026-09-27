@@ -7,6 +7,7 @@ import {
 import { toInt } from './util.js';
 import { newHero, HERO_CLASS_KEYS, MAX_HERO_LV, SLOTS, RARITY_KEYS, SUBSTATS, BAG_SIZE } from './hero.js';
 import { normalizeRun } from './sim.js';
+import { normalizeTalents } from './talents.js';
 
 export const STORAGE_KEY = 'wallDefense.save.v1'; // 키는 그대로, 안의 스키마가 v:2
 export const SAVE_VERSION = 2;
@@ -79,6 +80,8 @@ function hero(h) {
   n.level = toInt(h.level, 1, MAX_HERO_LV);
   n.xp = num(h.xp);
   n.autoEquip = bool(h.autoEquip, false);
+  n.talents = normalizeTalents(h.talents, n.level); // 특성이 없던 저장 → 전 클래스 빈 배분(포인트는 레벨로 계산)
+  n.autoTalent = bool(h.autoTalent, false);
   const eq = obj(h.equip);
   for (const slot of SLOTS) { const it = item(eq[slot]); n.equip[slot] = it && it.slot === slot ? it : null; }
   n.bag = (Array.isArray(h.bag) ? h.bag : []).map(item).filter(Boolean).slice(0, BAG_SIZE);

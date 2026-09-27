@@ -4,6 +4,7 @@
 import { META_KEYS, metaMax, metaCost, metaFx, RUN_GEMS, SPELL_KEYS } from './config.js';
 import { createGame, serializeRun, normalizeRun } from './sim.js';
 import { unlockedClasses, addXp, equipItem, autoEquipAll } from './hero.js';
+import { allocateTalent, resetTalents } from './talents.js';
 
 export { serializeRun, normalizeRun };
 
@@ -99,6 +100,7 @@ export function applyOffline(meta, off) {
 }
 
 // 정비 화면(도전 사이)의 영웅 조작. 판매는 도전 중에만(골드가 런 한정이라)
+// 특성: {type:'talent', cls, key}(1랭크) · {type:'talentReset', cls}(무료 초기화 — 정비 화면 전용) · {type:'autoTalent', on}
 export function campAct(meta, a) {
   const hero = meta.hero;
   if (!a || typeof a !== 'object') return false;
@@ -108,6 +110,9 @@ export function campAct(meta, a) {
       hero.cls = a.cls;
       return true;
     case 'equip': return equipItem(hero, a.itemId);
+    case 'talent': return unlockedClasses(meta.best).includes(a.cls) && allocateTalent(hero, a.cls, a.key);
+    case 'talentReset': return resetTalents(hero, a.cls);
+    case 'autoTalent': hero.autoTalent = !!a.on; return true;
     case 'autoEquip':
       hero.autoEquip = !!a.on;
       if (hero.autoEquip) autoEquipAll(hero);

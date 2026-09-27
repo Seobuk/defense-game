@@ -1,7 +1,9 @@
 // 로그라이트 헤드리스 봇 러너(테스트 공용): 새 저장에서 도전 → 정산 → 보석 소비 → 다시 도전
 import { DT, MAX_STAGE } from '../public/js/config.js';
 import { startStage, step, act, drainEvents } from '../public/js/sim.js';
-import { pickCard, botSpendGems, botLoadout } from '../public/js/bot.js';
+import { pickCard, botSpendGems, botLoadout, botTalents, randomTalents } from '../public/js/bot.js';
+import { talentSpent, talentMaxRanks } from '../public/js/talents.js';
+import { mulberry32 } from '../public/js/util.js';
 import { newRun, endRun } from '../public/js/run.js';
 import { defaults } from '../public/js/save.js';
 import { HERO_CLASS_KEYS, unlockedClasses } from '../public/js/hero.js';
@@ -25,8 +27,15 @@ export function playStage(g, maxT = 900, collect = null) {
   }
 }
 
-// 도전 1회: 1층부터 성벽이 무너질 때까지. → { summary, floors:[{ s, t }] }
-export function playRun(meta, loadout, seed) {
+// 도전 1회: 1층부터 성벽이 무너질 때까지. → { summary, floors:[{ s, t }], share, full }
+// talents: 'build'(추천 빌드, 레벨업 포인트도 자동) | 'random'(시작 시 무작위 배분) | 'none'(특성 없음)
+export function playRun(meta, loadout, seed, talents = 'build') {
+  meta.hero.autoTalent = talents === 'build';
+  const cls = loadout.cls;
+  if (talents === 'build') botTalents(meta.hero, cls);
+  else if (talents === 'random') randomTalents(meta.hero, cls, mulberry32(seed + 77));
+  const saved = talents === 'none' ? meta.hero.talents : null;
+  if (saved) meta.hero.talents = {};
   const g = newRun(meta, loadout, seed);
   g.players[0].auto = true; // 봇: 자동 강화
   const floors = [];
@@ -39,7 +48,10 @@ export function playRun(meta, loadout, seed) {
     if (g.run.over) break;
     startStage(g, g.stage + 1);
   }
-  return { g, summary: endRun(g, meta), floors };
+  if (saved) meta.hero.talents = saved;
+  const full = !saved && talentSpent(meta.hero, g.hero.cls) >= talentMaxRanks(g.hero.cls); // 도전이 끝날 때 특성을 다 찍었나
+  const d = g.dmgDone, share = d[2] / Math.max(1, d[0] + d[1] + d[2]);
+  return { g, summary: endRun(g, meta), floors, share, full };
 }
 
 // 새 저장부터 100층 돌파까지 도전 반복. cls: 고정 클래스(없으면 해금된 클래스 순환)
@@ -52,11 +64,11 @@ export function campaign({ seed = 1, maxRuns = 60, cls = null, onRun = null, unt
     const open = unlockedClasses(meta.best);
     const c = cls || open[i % open.length];
     const lo = botLoadout(meta, c);
-    const { summary, floors } = playRun(meta, lo, seed * 1000 + i);
+    const { summary, floors, share, full } = playRun(meta, lo, seed * 1000 + i);
     total += summary.time;
     const row = {
       run: i + 1, cls: lo.cls, start: lo.startSpells, reached: summary.floorsCleared, stage: summary.stageReached,
-      prevBest: summary.prevBest, time: summary.time, gems: summary.rewards.gems, total, floors, heroLv: meta.hero.level,
+      prevBest: summary.prevBest, time: summary.time, gems: summary.rewards.gems, total, floors, heroLv: meta.hero.level, share, full,
     };
     rows.push(row);
     botSpendGems(meta);

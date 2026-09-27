@@ -3,6 +3,7 @@ import { UPGRADE_KEYS, upgradeCost, upgradeMax, cannonStats, wallMax, WALL_Y, ME
 import { act } from './sim.js';
 import { unlockedClasses, autoEquipAll } from './hero.js';
 import { buyMeta, startSlots } from './run.js';
+import { TALENTS, talentNode, canAllocate, allocateTalent, resetTalents } from './talents.js';
 
 // 마법사 1명의 기본 주문 기대 DPS 지표 (부채꼴 추가 발사체는 일부만 맞는다고 가정)
 function power(lv) {
@@ -97,6 +98,39 @@ export function botLoadout(meta, cls) {
   };
 }
 
+// ── 특성 배분 정책 ──
+// 추천 빌드: 클래스별 갈래 우선순위(앞 갈래를 궁극 특성까지 찍고 다음 갈래로). 화력 갈래 → 생존/유틸 갈래
+export const TALENT_BUILDS = {
+  knight: ['crusade', 'guard', 'command'],
+  ranger: ['rapid', 'sniper', 'beast'],
+  sorcerer: ['fire', 'arcane', 'frost'],
+  cleric: ['punish', 'heal', 'bless'],
+  assassin: ['execute', 'poison', 'shadow'],
+};
+// 남은 포인트를 전부 배분. mode 'build' = 추천 빌드, 'random' = 찍을 수 있는 노드 중 무작위(동등성 테스트용, rng 필요)
+export function botTalents(hero, cls, mode = 'build', rng = Math.random) {
+  const branches = TALENTS[cls];
+  if (!branches) return 0;
+  let n = 0;
+  for (;;) {
+    const open = branches.flatMap(b => b.nodes).filter(nd => canAllocate(hero, cls, nd.key));
+    if (!open.length) return n;
+    let pick = open[Math.floor(rng() * open.length)];
+    if (mode !== 'random') {
+      const order = TALENT_BUILDS[cls];
+      const rank = nd => order.indexOf(talentNode(cls, nd.key).branch.key);
+      pick = open.reduce((a, b) => (rank(b) < rank(a) ? b : a));
+    }
+    allocateTalent(hero, cls, pick.key);
+    n++;
+  }
+}
+// 무작위 빌드로 다시 찍기(초기화 후)
+export function randomTalents(hero, cls, rng) {
+  resetTalents(hero, cls);
+  return botTalents(hero, cls, 'random', rng);
+}
+
 // 영웅 자동 처리(자동 강화 on일 때만 호출): 클래스 없으면 해금된 것 중 하나 선택 + 자동 장착 on, 궁극기 사용
 export function autoHero(g) {
   const hero = g.hero;
@@ -108,9 +142,16 @@ export function autoHero(g) {
       act(g, 0, { type: 'autoEquip', on: true });
     }
   }
+  if (hero.cls && hero.autoTalent) botTalents(hero, hero.cls); // 레벨업으로 생긴 포인트
   if (hero.autoEquip) autoEquipAll(hero); // lootDrop도 즉시 장착하지만, 레벨업 등으로 스탯이 바뀐 뒤에도 재확인
   const h = g.heroUnit;
-  if (h && h.state !== 'down' && h.ultCd <= 0) act(g, 0, { type: 'heroUlt' });
+  if (h && h.state !== 'down' && h.ultCd <= 0 && ultWorth(g, h)) act(g, 0, { type: 'heroUlt' });
+}
+
+// 궁극기를 쓸 만한가: 주변(반경 180)에 적이 있거나, 성직자는 성벽이 70% 아래
+export function ultWorth(g, h) {
+  if (g.hero.cls === 'cleric' && g.wall.hp < g.wall.max * 0.7) return true;
+  return g.enemies.some(e => !e.dead && (e.x - h.x) ** 2 + (e.y - h.y) ** 2 < 180 * 180);
 }
 
 // 비상 스킬 자동 사용

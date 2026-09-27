@@ -1,5 +1,5 @@
 // 헤드리스 스모크 + 로그라이트 캠페인 밸런스 러너: node test/sim.test.js [--full] [--seed=N]
-//   기본: 단위 테스트 + 캠페인 1회(시드 1) + 클래스 동등성(최고 40층 시점)   --full: 캠페인 3시드 + 동등성 40·80층
+//   기본: 단위 테스트 + 캠페인 1회(시드 1) + 클래스 동등성(추천 특성, 최고 50층 시점)   --full: 캠페인 3시드 + 동등성 50·80층 + 무작위 특성 동등성
 import assert from 'node:assert/strict';
 import { fmt, mulberry32 } from '../public/js/util.js';
 import {
@@ -7,15 +7,19 @@ import {
   startGoldAmount, RUN_GEMS, MAX_STAGE,
 } from '../public/js/config.js';
 import { createGame, startStage, step, act, drainEvents, setPlayer, tickPick, refreshFusion, serializeRun, normalizeRun, cardCount } from '../public/js/sim.js';
-import { pickCard, botSpendGems, botLoadout } from '../public/js/bot.js';
+import { pickCard, botSpendGems, botLoadout, botTalents, randomTalents, TALENT_BUILDS, ultWorth } from '../public/js/bot.js';
 import { newRun, restoreRun, endRun, buyMeta, validLoadout, startSpellChoices, campAct, applyOffline } from '../public/js/run.js';
 import { defaults } from '../public/js/save.js';
 import { campaign, playRun, playStage, resolvePick, HERO_CLASS_KEYS as CLASS_KEYS } from './harness.js';
 import {
   newHero, HERO_CLASSES, HERO_CLASS_KEYS, unlockedClasses, xpToNext, heroTier, hasMilestone, MILESTONES,
   rollItem, itemPower, heroPower, sellValue, equipItem, sellItem, sellItemsByRarity, autoEquipAll, addToBag,
-  BAG_SIZE, SLOTS, RARITIES, SUBSTATS, heroTakeDamage, heroGainXp,
+  BAG_SIZE, SLOTS, RARITIES, SUBSTATS, heroTakeDamage, heroGainXp, heroCombatStats, HERO_GATE, HERO_RALLY, MAX_HERO_LV,
 } from '../public/js/hero.js';
+import {
+  TALENTS, TALENT_FX_KEYS, CAPSTONES, talentPoints, canAllocate, allocateTalent, resetTalents, talentBonus, talentSpent,
+  talentMaxRanks, talentLeft, talentNode, normalizeTalents,
+} from '../public/js/talents.js';
 
 const FULL = process.argv.includes('--full');
 const seedArg = process.argv.find(a => a.startsWith('--seed='));
@@ -678,6 +682,7 @@ function heroTaunt() {
   const src = g.enemies.find(e => !e.dead && e.beh === 'walk') || g.enemies[0];
   assert.ok(src, '적 존재');
   src.hp = src.maxHp = 1e9; // 이 테스트에서는 죽지 않게
+  src.x = 360; src.y = 500; // 전장 한가운데(스폰 구역 밖)
   g.heroUnit.x = src.x; g.heroUnit.y = src.y; g.heroUnit.moveTo = null;
   const hp0 = g.heroUnit.hp;
   for (let k = 0; k < 60 * 2; k++) { step(g, DT); drainEvents(g); }
@@ -854,6 +859,304 @@ function heroJsonRoundtrip() {
   hero.bag.push(rollItem(5, 'normal', mulberry32(9), 'ranger'));
   assert.deepEqual(JSON.parse(JSON.stringify(hero)), hero);
   console.log('영웅 JSON 라운드트립 통과');
+}
+
+// ── 4b) 영웅 특성 트리 ──
+const KO = /[가-힣]/;
+function talentTable() {
+  assert.deepEqual(Object.keys(TALENTS).sort(), [...HERO_CLASS_KEYS].sort());
+  const caps = new Set();
+  for (const cls of HERO_CLASS_KEYS) {
+    const bs = TALENTS[cls];
+    assert.equal(bs.length, 3, `${cls}: 3갈래`);
+    const keys = new Set();
+    for (const b of bs) {
+      assert.ok(KO.test(b.name) && KO.test(b.desc), `${cls}.${b.key} 이름·설명`);
+      assert.equal(b.nodes.length, 6, `${cls}.${b.key}: 6노드`);
+      b.nodes.forEach((n, i) => {
+        assert.ok(!keys.has(n.key), `${n.key} 중복`);
+        keys.add(n.key);
+        assert.ok(KO.test(n.name) && KO.test(n.desc), `${n.key} 한국어 이름·설명`);
+        assert.ok(Number.isInteger(n.max) && n.max >= 1 && n.max <= 3, `${n.key} 랭크 1~3`);
+        for (const k of Object.keys(n.fx)) assert.ok(TALENT_FX_KEYS.includes(k), `${n.key}: 모르는 효과 ${k}`);
+        if (i === 5) {
+          assert.ok(n.cap && n.max === 1, `${n.key}: 마지막 노드 = 궁극 특성(1랭크)`);
+          assert.ok(!caps.has(n.cap), `${n.cap} 중복`);
+          caps.add(n.cap);
+        } else assert.ok(!n.cap && Object.keys(n.fx).length > 0, `${n.key}: 일반 노드는 효과가 있다`);
+        assert.equal(talentNode(cls, n.key).node, n);
+      });
+    }
+    // 선행 조건은 갈래 안 일직선(순환 없음) — 포인트만 충분하면 앞에서부터 전부 찍힌다
+    const hero = { ...newHero(), level: MAX_HERO_LV };
+    assert.ok(talentPoints(hero) >= talentMaxRanks(cls), `${cls}: 만렙이면 전부 찍을 수 있다`);
+    for (const b of bs) for (const n of b.nodes) for (let r = 0; r < n.max; r++) assert.ok(allocateTalent(hero, cls, n.key), `${cls}.${n.key} 도달`);
+    assert.equal(talentSpent(hero, cls), talentMaxRanks(cls));
+    assert.equal(Object.keys(talentBonus(hero, cls).cap).length, 3);
+    assert.ok(talentMaxRanks(cls) >= 36 && talentMaxRanks(cls) <= 44, `${cls} 총 랭크 ${talentMaxRanks(cls)}`);
+  }
+  assert.equal(caps.size, 15);
+  assert.deepEqual([...caps].sort(), [...CAPSTONES].sort());
+  // 포인트 = 레벨 + 10레벨마다 1
+  assert.deepEqual([1, 9, 10, 25, 99].map(level => talentPoints({ level })), [1, 9, 11, 27, 108]);
+  console.log('특성 테이블 통과');
+}
+
+function talentRules() {
+  const hero = { ...newHero(), cls: 'knight', level: 5 }; // 5포인트
+  assert.ok(!canAllocate(hero, 'knight', 'crusade2'), '앞 노드부터');
+  assert.ok(allocateTalent(hero, 'knight', 'crusade1'));
+  assert.ok(!allocateTalent(hero, 'knight', 'crusade2'), '앞 노드를 최대 랭크까지 찍어야 열린다');
+  assert.ok(allocateTalent(hero, 'knight', 'crusade1') && allocateTalent(hero, 'knight', 'crusade1'));
+  assert.ok(!allocateTalent(hero, 'knight', 'crusade1'), '최대 랭크');
+  assert.ok(allocateTalent(hero, 'knight', 'crusade2') && allocateTalent(hero, 'knight', 'crusade2'));
+  assert.equal(talentLeft(hero, 'knight'), 0);
+  assert.ok(!allocateTalent(hero, 'knight', 'crusade2') && !allocateTalent(hero, 'knight', 'guard1'), '포인트 부족');
+  assert.equal(talentLeft(hero, 'ranger'), 5, '포인트는 클래스마다 따로(레벨 공유)');
+  assert.ok(!allocateTalent(hero, 'knight', 'nope') && !allocateTalent(hero, 'nope', 'crusade1') && !allocateTalent(hero, 'ranger', 'crusade1'));
+  assert.ok(resetTalents(hero, 'knight'), '무료 초기화');
+  assert.equal(talentLeft(hero, 'knight'), 5);
+  assert.ok(!resetTalents(hero, 'knight'), '초기화할 것이 없음');
+
+  // 정비 화면(campAct): 찍기 · 초기화 · 자동 배분 토글, 미해금 클래스 불가
+  const m = defaults();
+  m.hero.level = 12;
+  assert.ok(campAct(m, { type: 'talent', cls: 'knight', key: 'guard1' }));
+  assert.ok(!campAct(m, { type: 'talent', cls: 'cleric', key: 'heal1' }), '미해금 클래스');
+  assert.ok(campAct(m, { type: 'talentReset', cls: 'knight' }) && talentSpent(m.hero, 'knight') === 0);
+  assert.ok(campAct(m, { type: 'autoTalent', on: true }) && m.hero.autoTalent);
+  m.hero.autoTalent = false;
+
+  // 도전 중: 현재 클래스만 찍기(레벨업 포인트), 초기화는 정비 화면 전용
+  const g = newRun(m, { cls: 'ranger', startSpells: [] }, 1);
+  assert.ok(act(g, 0, { type: 'talent', key: 'rapid1' }));
+  assert.equal(m.hero.talents.ranger.rapid1, 1, '영구 영웅 객체에 저장');
+  assert.ok(drainEvents(g).some(e => e.type === 'talent' && e.key === 'rapid1'));
+  assert.ok(!act(g, 0, { type: 'talent', key: 'crusade1' }) && !act(g, 0, { type: 'talentReset' }));
+  step(g, DT);
+  assert.equal(g.heroUnit.tb.aspd, 0.08, '찍은 특성이 바로 반영');
+
+  // 특성이 전투 스탯에 들어간다
+  const sg = createGame({ stage: 5, seed: 1, best: 40, players: [{ lv: { wall: 60 } }, {}], hero: { ...newHero(), cls: 'knight', level: 40 } });
+  const s0 = heroCombatStats(sg, sg.hero);
+  sg.hero.talents = { knight: { guard1: 3, guard2: 3, guard3: 2, crusade1: 3, crusade2: 3, crusade3: 2, crusade4: 3 } };
+  const s1 = heroCombatStats(sg, sg.hero);
+  assert.ok(s1.dmg > s0.dmg * 1.2 && s1.atkSpd > s0.atkSpd && s1.maxHp > s0.maxHp * 1.25 && s1.dmgReduce > s0.dmgReduce && s1.engageR === s0.engageR + 45);
+
+  // 봇 배분: 추천 빌드는 첫 갈래를 궁극 특성까지, 무작위 빌드도 규칙을 지킨다
+  for (const cls of HERO_CLASS_KEYS) {
+    const hb = { ...newHero(), level: 20 };
+    assert.equal(botTalents(hb, cls), talentPoints(hb));
+    assert.ok(talentBonus(hb, cls).cap[TALENTS[cls].find(b => b.key === TALENT_BUILDS[cls][0]).nodes[5].cap], `${cls} 추천 빌드 첫 궁극 특성`);
+    const hr = { ...newHero(), level: 30 };
+    assert.equal(randomTalents(hr, cls, mulberry32(7)), talentPoints(hr));
+    assert.deepEqual(normalizeTalents(hr.talents, hr.level), hr.talents, '무작위 빌드도 유효');
+  }
+  console.log('특성 배분·초기화 규칙 통과');
+}
+
+// 한 갈래 전부(궁극 특성 포함/제외)
+function branchAlloc(cls, bkey, withCap) {
+  const a = {};
+  TALENTS[cls].find(b => b.key === bkey).nodes.forEach((n, i) => { if (i < 5 || withCap) a[n.key] = n.max; });
+  return a;
+}
+const CAP_BRANCH = Object.fromEntries(Object.entries(TALENTS).flatMap(([cls, bs]) => bs.map(b => [b.nodes[5].cap, [cls, b.key]])));
+function capGame(cap, withCap, extra = {}) {
+  const [cls, bkey] = CAP_BRANCH[cap];
+  return createGame({
+    stage: 6, best: 40, seed: 300, players: [{ lv: { atk: 30, rate: 3, wall: 80 } }, { lv: { wall: 80 } }],
+    hero: { ...newHero(), cls, level: 60, talents: { [cls]: branchAlloc(cls, bkey, withCap) } }, ...extra,
+  });
+}
+function runHero(g, secs, ult = true) {
+  const ev = [];
+  for (let t = 0; t < secs && g.phase === 'play'; t += DT) {
+    if (g.pick) { resolvePick(g, ev); continue; }
+    if (ult && g.heroUnit.ultCd <= 0 && g.heroUnit.state !== 'down' && ultWorth(g, g.heroUnit)) act(g, 0, { type: 'heroUlt' });
+    step(g, DT);
+    ev.push(...drainEvents(g));
+  }
+  return ev;
+}
+
+// 궁극 특성 15종: 켜면 전투 방식이 눈에 띄게 달라진다(전용 이벤트·소환물·상태), 끄면 그 동작이 없다
+function talentCapstones() {
+  const proc = k => ev => ev.filter(e => e.type === 'heroProc' && e.kind === k).length;
+  const summ = k => (ev, g) => g.summons.filter(s => s.kind === k).length;
+  const SIGNAL = {
+    shieldToss: proc('shieldToss'), judgeBolt: proc('judgeBolt'), warcry: proc('warcry'), snipe: proc('snipe'), arrowStorm: proc('arrowStorm'),
+    meteor: proc('meteor'), pillar: proc('pillar'), scythe: proc('scythe'), plague: proc('plague'),
+    absZero: ev => ev.filter(e => e.type === 'heroUlt' && e.variant === 'absZero').length,
+    wolfPack: summ('wolf'), shadowTwins: summ('shadow'), arcaneClone: summ('arcane'),
+  };
+  const rows = [];
+  for (const [cap, sig] of Object.entries(SIGNAL)) {
+    const on = capGame(cap, true), off = capGame(cap, false);
+    const a = sig(runHero(on, 25), on), b = sig(runHero(off, 25), off);
+    rows.push(`${cap} ${a}/${b}`);
+    assert.ok(a > b, `${cap}: 궁극 특성이 동작을 바꾼다 (${a} vs ${b})`);
+    if (cap !== 'wolfPack') assert.equal(b, 0, `${cap}: 궁극 특성 없이는 그 동작이 없다`);
+    assert.notEqual(on.dmgDone[2], off.dmgDone[2], `${cap}: 영웅 피해량이 달라진다`);
+  }
+  // 절대영도: 궁극기에 맞은 적이 얼어붙는다
+  const az = capGame('absZero', true);
+  runHero(az, 3, false);
+  const tgt = az.enemies.find(e => !e.dead && !e.named);
+  if (tgt) { az.heroUnit.x = tgt.x; az.heroUnit.y = tgt.y; az.heroUnit.ultCd = 0; act(az, 0, { type: 'heroUlt' }); assert.ok(tgt.dead || tgt.stunT >= 2.5, '절대영도 빙결'); }
+  // 비전 분신: 영웅 공격을 따라 한다
+  const ac = capGame('arcaneClone', true), aev = runHero(ac, 15);
+  assert.ok(aev.some(e => e.type === 'summonAttack' && e.kind === 'arcane'), '비전 분신 공격');
+  // 부활 결계 강화: 성벽이 무너지면 도전마다 1회 성직자가 되살린다
+  for (const withCap of [true, false]) {
+    const g = createGame({ stage: 40, seed: 6, best: 40, players: [{}, {}], hero: { ...newHero(), cls: 'cleric', level: 60, talents: { cleric: branchAlloc('cleric', 'heal', withCap) } } });
+    const ev = [];
+    runUntilEnd(g, 600, ev);
+    const rv = ev.filter(e => e.type === 'revive' && e.hero);
+    assert.equal(rv.length, withCap ? 1 : 0, '부활 결계 강화 1회');
+    if (withCap) {
+      assert.ok(Math.abs(rv[0].hp - g.wall.max * 0.4) < 1e-6 && g.run.heroRevive);
+      assert.equal(normalizeRun(JSON.parse(JSON.stringify(serializeRun(g)))).heroRevive, true, '이어하기에도 남는다');
+    }
+  }
+  // 카드 축복: 스킬 카드를 고르면 30% 확률로 레벨 +1
+  for (const withCap of [true, false]) {
+    const g = capGame('cardBless', withCap);
+    let blessed = 0;
+    for (let k = 0; k < 60; k++) {
+      g.spells = {};
+      g.pick = { cards: [{ spell: 'iceLance', level: 1, rarity: 'common', fusionHint: false }], autoLeft: null };
+      act(g, 0, { type: 'pick', index: 0 });
+      if (g.spells.iceLance === 2) blessed++;
+    }
+    assert.ok(withCap ? blessed >= 8 && blessed <= 30 : blessed === 0, `카드 축복 ${blessed}/60`);
+  }
+  // 비전 충전: 층마다 쌓여 100%가 되면 그 층에 카드 1장 더
+  const pk = arcane => {
+    const g = createGame({ stage: 8, seed: 21, best: 40, players: [{ lv: { atk: 40, rate: 6, wall: 60 } }, { lv: { wall: 60 } }], hero: { ...newHero(), cls: 'sorcerer', level: 60, talents: { sorcerer: arcane ? branchAlloc('sorcerer', 'arcane', true) : {} } }, run: { arcane: 0.9 } });
+    const ev = [];
+    runUntilEnd(g, 600, ev);
+    return ev.filter(e => e.type === 'pickOffer').length;
+  };
+  assert.ok(pk(true) > pk(false), '비전 충전 추가 카드');
+  console.log('궁극 특성 15종 통과: ' + rows.join(' · '));
+}
+
+// 소환물: 늑대(야수)가 필드 유닛으로 나오고, 영웅이 쓰러지면 사라졌다가 부활과 함께 돌아온다
+function heroSummons() {
+  const g = capGame('wolfPack', true);
+  const ev = runHero(g, 0.1, false);
+  const wolves = g.summons.filter(s => s.kind === 'wolf');
+  assert.equal(wolves.length, 4, '야생의 부름 + 짝늑대 + 늑대 무리 2');
+  assert.equal(ev.filter(e => e.type === 'summonSpawn' && e.kind === 'wolf').length, 4);
+  for (const k of ['id', 'kind', 'x', 'y', 'facing', 'dir', 'speed', 'gait', 'state', 'windup']) assert.ok(k in wolves[0], `소환물 렌더 필드 ${k}`);
+  const ev2 = runHero(g, 15, false);
+  assert.ok(ev2.some(e => e.type === 'summonAttack' && e.kind === 'wolf'), '늑대가 싸운다');
+  assert.ok(ev2.some(e => e.type === 'hit' && e.o === 2 && e.kind === 'wolf'), '늑대 피해는 영웅 몫(o:2)');
+  heroTakeDamage(g, 1e30, { emit: (gg, e) => gg.events.push(e), damage: () => 0 });
+  assert.equal(g.heroUnit.state, 'down');
+  assert.equal(g.summons.length, 0, '영웅이 쓰러지면 소환물도 사라진다');
+  assert.equal(drainEvents(g).filter(e => e.type === 'summonDespawn').length, 4);
+  runHero(g, g.heroUnit.respawnT + 0.5, false);
+  assert.ok(g.heroUnit.state !== 'down' && g.summons.length === 4, '부활하면 다시 나온다');
+  const sh = capGame('shadowTwins', true);
+  runHero(sh, 0.1, false);
+  assert.equal(sh.summons.filter(s => s.kind === 'shadow').length, 2, '그림자 분신 2체');
+  startStage(sh, 7);
+  assert.equal(sh.summons.length, 0, '새 층에서 영웅과 함께 다시 나온다');
+  runHero(sh, 0.1, false);
+  assert.equal(sh.summons.length, 2);
+  console.log('소환물 통과');
+}
+
+// ── 4c) 필드 자율 전투 AI ──
+// 스폰을 멈추고 첫 적 하나만 남겨 원하는 곳에 세워 둔다(죽지 않고 움직이지 않게)
+function roamGame(cls, x, y, seed = 400) {
+  const g = createGame({ stage: 3, best: 40, seed, players: [{ lv: { wall: 60 } }, { lv: { wall: 60 } }], hero: { ...newHero(), cls, level: 20 } });
+  for (let k = 0; k < 600 && !g.enemies.length; k++) step(g, DT);
+  g.spawns.length = g.spawnIdx;
+  const e = g.enemies[0];
+  g.enemies.length = 1;
+  Object.assign(e, { x, y, hp: 1e15, maxHp: 1e15, speed: 0 });
+  drainEvents(g);
+  return { g, e };
+}
+const d2h = (h, p) => Math.hypot(h.x - p.x, h.y - p.y);
+function heroRoaming() {
+  // 1) 적이 전장 어디에 나타나든 성문을 떠나 찾아간다(옛 520px 목줄 밖: 성문에서 ~700px)
+  for (const cls of ['knight', 'ranger']) {
+    const { g, e } = roamGame(cls, 620, 250);
+    const h = g.heroUnit;
+    h.x = HERO_GATE.x; h.y = HERO_GATE.y;
+    const d0 = d2h(h, e);
+    runHero(g, 3, false);
+    assert.ok(HERO_GATE.y - h.y > 150 && d2h(h, e) < d0 - 150, `${cls}: 3초 안에 성문을 떠나 적에게 간다`);
+    assert.ok(h.speed > 0 && h.gait === 'run' && (h.mode === 'engage' || h.mode === 'kite'), `${cls}: 달려간다 (${h.gait}, ${h.mode})`);
+    const ev = runHero(g, 9, false);
+    assert.ok(ev.some(x => x.type === 'heroAttack'), `${cls}: 도착해서 싸운다`);
+    if (cls === 'ranger') assert.ok(d2h(h, e) <= g.heroUnit.st.range + e.r && d2h(h, e) > 120, '궁수: 사거리 끝에서 쏜다');
+    else assert.ok(d2h(h, e) <= g.heroUnit.st.range + e.r + 2, '기사: 붙어서 벤다');
+  }
+  // 2) 원거리 카이팅: 적이 바짝 붙으면 물러나면서 계속 쏜다
+  {
+    const { g, e } = roamGame('ranger', 360, 450);
+    const h = g.heroUnit;
+    h.x = 360; h.y = 480;
+    e.speed = 40;
+    let movingShots = 0;
+    for (let t = 0; t < 3; t += DT) {
+      step(g, DT);
+      for (const x of drainEvents(g)) if (x.type === 'heroAttack' && h.speed > 5) movingShots++;
+    }
+    assert.ok(d2h(h, e) > 110, `궁수: 거리를 벌린다 (${d2h(h, e).toFixed(0)})`);
+    assert.ok(movingShots > 0, '궁수: 이동 사격');
+  }
+  // 3) 체력 30% 아래 → 성벽 쪽으로 후퇴해 회복 → 다시 전진
+  {
+    const { g, e } = roamGame('knight', 360, 400);
+    const h = g.heroUnit;
+    runHero(g, 6, false);
+    assert.equal(h.mode, 'engage');
+    h.hp = h.maxHp * 0.2;
+    let ev = runHero(g, 0.2, false);
+    assert.ok(h.mode === 'retreat' && ev.some(x => x.type === 'heroRetreat'), '후퇴 시작');
+    assert.equal(h.engageR, 0, '후퇴 중엔 도발하지 않는다');
+    ev = runHero(g, 30, false);
+    assert.ok(ev.some(x => x.type === 'heroAdvance'), '회복 후 재진격');
+    assert.ok(h.hp >= h.maxHp * 0.8 - 1, '회복');
+    assert.ok(h.mode === 'engage' && d2h(h, e) < 200, '다시 적에게');
+  }
+  // 4) 적이 없으면 전장 중앙 집결 지점에서 두리번(성문에 박혀 있지 않음)
+  {
+    const { g } = roamGame('sorcerer', 360, 60, 401); // 적은 스폰 구역(y < ROAM_TOP)에만 — 쫓지 않는다
+    const h = g.heroUnit;
+    let flips = 0, f0 = h.facing;
+    for (let t = 0; t < 14; t += DT) {
+      step(g, DT);
+      if (h.facing !== f0) { flips++; f0 = h.facing; }
+    }
+    assert.ok(d2h(h, HERO_RALLY) < 100 && HERO_GATE.y - h.y > 250, `집결 지점 (${h.x.toFixed(0)},${h.y.toFixed(0)})`);
+    assert.ok(h.mode === 'rally' && flips >= 3, `두리번 ${flips}`);
+  }
+  // 5) 탭 이동은 유지: 지정 위치로 가서 머물다 자율 전투로 복귀
+  {
+    const { g } = roamGame('knight', 600, 300);
+    const h = g.heroUnit;
+    act(g, 0, { type: 'heroMove', x: 120, y: 800 });
+    runHero(g, 4, false);
+    assert.ok(h.mode === 'move' && d2h(h, { x: 120, y: 800 }) < 5, '탭 이동');
+    runHero(g, 4, false);
+    assert.ok(!h.moveTo && h.mode === 'engage', '홀드 후 자율 전투');
+  }
+  // 6) 영웅이 대신 맞은 피해는 성벽 손실이 아니다(자동 강화가 성벽을 과하게 사지 않게)
+  {
+    const g = createGame({ stage: 3, seed: 402, players: [{}, {}], hero: { ...newHero(), cls: 'knight', level: 20 } });
+    step(g, DT);
+    const lost = g.wallLost;
+    heroTakeDamage(g, 50, { emit: () => {} });
+    assert.equal(g.wallLost, lost);
+  }
+  console.log('필드 자율 전투 AI 통과');
 }
 
 // ── 5) 로그라이트: 메타 ↔ 런 ──
@@ -1037,17 +1340,18 @@ function campaignCheck(seed, parityAt) {
     onRun: (r, m) => { for (const b of parityAt) if (m.best >= b && !snaps[b]) snaps[b] = JSON.stringify(m); },
   });
   console.log(`\n캠페인 시드 ${seed}: 도전 ${rows.length}회, ${(rows[rows.length - 1].total / 3600).toFixed(1)}시간, 실행 ${((Date.now() - t0) / 1000).toFixed(0)}s`);
-  console.log(' run cls      start spells                reach  time   gems  cum(h)  half  new  heroLv');
+  console.log(' run cls      start spells                reach  time   gems  cum(h)  half  new  heroLv  hero%(*=특성 완성)');
   const half = [], nw = [];
   for (const r of rows) {
     const h = r.floors.filter(f => f.s <= r.prevBest / 2).map(f => f.t), n = r.floors.filter(f => f.s > r.prevBest).map(f => f.t);
     half.push(...h); nw.push(...n);
-    console.log(`${String(r.run).padStart(4)} ${r.cls.padEnd(8)} ${(r.start.join(',') || '-').padEnd(26)} ${String(r.reached).padStart(5)} ${(r.time / 60).toFixed(0).padStart(4)}m ${String(r.gems).padStart(6)} ${(r.total / 3600).toFixed(1).padStart(6)} ${avg(h).toFixed(0).padStart(5)} ${avg(n).toFixed(0).padStart(4)} ${String(r.heroLv).padStart(6)}`);
+    console.log(`${String(r.run).padStart(4)} ${r.cls.padEnd(8)} ${(r.start.join(',') || '-').padEnd(26)} ${String(r.reached).padStart(5)} ${(r.time / 60).toFixed(0).padStart(4)}m ${String(r.gems).padStart(6)} ${(r.total / 3600).toFixed(1).padStart(6)} ${avg(h).toFixed(0).padStart(5)} ${avg(n).toFixed(0).padStart(4)} ${String(r.heroLv).padStart(6)} ${(r.share * 100).toFixed(0).padStart(5)}${r.full ? '*' : ''}`);
   }
   const first = rows[0], last = rows[rows.length - 1], hours = last.total / 3600;
   const gain = (last.reached - first.reached) / (rows.length - 1);
-  const res = { runs: rows.length, hours, first: first.reached, gain, half: avg(half), newT: avg(nw), heroLv: last.heroLv, cleared: last.reached >= MAX_STAGE };
-  console.log(`결과: 첫 도전 ${res.first}층 · 도전당 +${gain.toFixed(2)}층 · ${res.runs}회 · ${hours.toFixed(1)}h · 절반 이하 층 평균 ${res.half.toFixed(1)}s · 새 층 평균 ${res.newT.toFixed(1)}s · 영웅 Lv${res.heroLv}`);
+  const fullShare = avg(rows.filter(r => r.full).map(r => r.share));
+  const res = { runs: rows.length, hours, first: first.reached, gain, half: avg(half), newT: avg(nw), heroLv: last.heroLv, cleared: last.reached >= MAX_STAGE, fullShare };
+  console.log(`결과: 첫 도전 ${res.first}층 · 도전당 +${gain.toFixed(2)}층 · ${res.runs}회 · ${hours.toFixed(1)}h · 절반 이하 층 평균 ${res.half.toFixed(1)}s · 새 층 평균 ${res.newT.toFixed(1)}s · 영웅 Lv${res.heroLv} · 특성 완성 영웅 기여도 ${(fullShare * 100).toFixed(1)}%`);
   const bad = [];
   if (!res.cleared) bad.push('100층 미돌파');
   if (res.first < 8 || res.first > 15) bad.push(`첫 도전 ${res.first}층 (목표 8~15)`);
@@ -1056,25 +1360,39 @@ function campaignCheck(seed, parityAt) {
   if (hours < 15 || hours > 25) bad.push(`총 ${hours.toFixed(1)}시간 (목표 15~25)`);
   if (!(res.half <= 30)) bad.push(`절반 이하 층 평균 ${res.half.toFixed(1)}s (목표 ≤30)`);
   if (!(res.newT >= 60 && res.newT <= 120)) bad.push(`새 층 평균 ${res.newT.toFixed(1)}s (목표 60~120)`);
+  if (!(fullShare >= 0.25 && fullShare <= 0.4)) bad.push(`특성 완성 영웅 기여도 ${(fullShare * 100).toFixed(1)}% (목표 25~40%)`);
   assert.deepEqual(bad, [], bad.join('\n'));
   return { res, snaps };
 }
 
-// 같은 메타 상태에서 클래스별 평균 도달 층이 전체 평균의 ±15% 안
-function classParity(snap, n) {
-  const res = {};
+// 같은 메타 상태에서 클래스별 평균 도달 층이 전체 평균의 ±15% 안(특성 포함).
+// mode 'build' = 봇 추천 빌드(+ 특성을 다 찍은 클래스는 영웅 기여도 25~40%), 'random' = 무작위 빌드
+const RANDOM_LV = 24; // 무작위 빌드 동등성: 26점(클래스 총 39~42랭크의 약 60%)
+function classParity(snap, n, mode = 'build') {
+  const res = {}, share = {};
   for (const cls of CLASS_KEYS) {
-    const r = [];
+    const r = [], sh = [];
     for (let s = 0; s < n; s++) {
       const m = JSON.parse(snap);
-      r.push(playRun(m, botLoadout(m, cls), 5000 + s).summary.floorsCleared);
+      if (mode === 'random') m.hero.level = Math.min(m.hero.level, RANDOM_LV); // 특성을 다 못 찍는 레벨이어야 빌드가 갈린다
+      const o = playRun(m, botLoadout(m, cls), 5000 + s, mode);
+      r.push(o.summary.floorsCleared);
+      if (o.full) sh.push(o.share);
     }
     res[cls] = avg(r);
+    share[cls] = avg(sh);
   }
   const mean = avg(Object.values(res));
-  const best = JSON.parse(snap).best;
-  console.log(`클래스 동등성(최고 ${best}층 메타, ${n}회씩): ` + Object.entries(res).map(([k, v]) => `${k} ${v.toFixed(1)}(${((v / mean - 1) * 100).toFixed(0)}%)`).join(' · '));
+  const m0 = JSON.parse(snap);
+  if (mode === 'random') m0.hero.level = Math.min(m0.hero.level, RANDOM_LV);
+  console.log(`클래스 동등성(${mode === 'random' ? '무작위' : '추천'} 특성, 최고 ${m0.best}층 메타 · 영웅 Lv${m0.hero.level}, ${n}회씩): ` +
+    Object.entries(res).map(([k, v]) => `${k} ${v.toFixed(1)}(${((v / mean - 1) * 100).toFixed(0)}%${share[k] >= 0 ? `, 영웅 ${(share[k] * 100).toFixed(0)}%` : ''})`).join(' · '));
   for (const [k, v] of Object.entries(res)) assert.ok(Math.abs(v / mean - 1) <= 0.15, `${k} 평균 ${v.toFixed(1)}층, 전체 ${mean.toFixed(1)}층 대비 ±15% 밖`);
+  if (mode !== 'build') return;
+  // 영웅 기여도: 도전마다 빌드(카드 스킬 비중)에 따라 20~55%로 흔들리므로 클래스 평균은 20~45%, 전체 평균이 목표 25~40%
+  const all = Object.values(share).filter(v => v >= 0);
+  for (const [k, v] of Object.entries(share)) assert.ok(!(v >= 0) || (v >= 0.2 && v <= 0.45), `${k} 특성 완성 영웅 기여도 ${(v * 100).toFixed(0)}% (클래스 평균 20~45%)`);
+  assert.ok(!all.length || (avg(all) >= 0.25 && avg(all) <= 0.4), `특성 완성 영웅 기여도 전체 평균 ${(avg(all) * 100).toFixed(0)}% (목표 25~40%)`);
 }
 
 smoke();
@@ -1095,13 +1413,19 @@ heroItemRolls();
 heroPowerMonotonic();
 heroBagAndEquip();
 heroJsonRoundtrip();
+talentTable();
+talentRules();
+talentCapstones();
+heroSummons();
+heroRoaming();
 metaUpgrades();
 runLifecycle();
 reviveWard();
 slaughterPace();
 
 if (process.argv.includes('--unit')) process.exit(0); // 단위 테스트만(캠페인 생략)
-const parityAt = FULL ? [40, 80] : [40];
+// 동등성 시점: 최고 50층(영웅이 특성을 거의 다 찍은 메타) · --full이면 80층도 + 무작위 특성 빌드
+const parityAt = FULL ? [50, 80] : [50];
 const seeds = FULL ? [SEED, SEED + 1, SEED + 2] : [SEED];
 let snaps = null;
 for (const s of seeds) {
@@ -1109,4 +1433,5 @@ for (const s of seeds) {
   snaps ||= c.snaps;
 }
 for (const b of parityAt) classParity(snaps[b], FULL ? 4 : 3);
+if (FULL) classParity(snaps[parityAt[0]], 4, 'random');
 console.log('캠페인 밸런스 통과');
