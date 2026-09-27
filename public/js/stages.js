@@ -45,13 +45,18 @@ const THEME_HP = [1, 1, 1.2, 2.4, 1.6]; // 테마별 난이도 보정
 // 잡몹 기본 체력: 1~31층은 제곱 램프(업그레이드 배수 획득 속도에 맞춤), 이후 완만한 지수 성장
 export function enemyHp(stage) {
   const a = Math.min(stage, 31);
-  return 22 * 1.19 ** (a - 1) * 1.18 ** (stage - a) * (3 + 8 * (a - 1) ** 2) * THEME_HP[themeOf(stage)] * knots(SYN_HP, stage);
+  return 22 * 1.19 ** (a - 1) * 1.18 ** (stage - a) * (3 + 8 * (a - 1) ** 2) * THEME_HP[themeOf(stage)] * knots(SYN_HP, stage) * runHp(stage);
 }
+
+// 로그라이트 난이도: 층마다 ×1.07 + 구간 보정. 런 안의 성장(골드·스킬 빌드·각성)보다 적이 약 5%/층 빨리 강해져
+// 도전은 성벽이 무너지며 끝나고, 영구 강화가 그 벽을 밀어 올린다(test/sim.test.js 캠페인 러너로 맞춤)
+const RUN_HP = [[1, 1], [20, 0.9], [30, 0.8], [48, 1.2], [65, 2.0], [80, 1.9], [88, 1.25], [95, 0.8], [100, 0.65]];
+const runHp = s => 1.07 ** (s - 1) * knots(RUN_HP, s);
 
 // 히든 조합(불꽃·체인·쌍둥이·유도·거인 사냥꾼)이 자연히 켜지는 구간의 화력 보정 [스테이지, 배율] 선형 보간
 const SYN_HP = [[4, 1], [10, 1.7], [15, 2], [30, 2.4], [50, 2.3], [55, 2.6], [62, 4.4], [100, 5.4]];
 // 엘리트·보스는 체인·다중 발사 효과가 덜 먹으므로 따로: 최종 체력 배율 (SYN_HP 대신 적용)
-const SYN_BOSS = [[5, 1], [10, 1.1], [20, 1.3], [30, 1.5], [40, 3], [42, 2.3], [50, 2.1], [55, 2.4], [60, 6], [70, 7.5], [80, 6.3], [90, 6.2], [100, 7]];
+const SYN_BOSS = [[5, 1], [10, 1.1], [20, 1.3], [30, 1.5], [40, 3], [42, 2.3], [50, 2.1], [55, 2.4], [60, 6], [70, 7.5], [80, 6.3], [90, 5.2], [100, 5.5]];
 function knots(k, s) {
   if (s <= k[0][0]) return k[0][1];
   for (let i = 1; i < k.length; i++) {
@@ -81,7 +86,7 @@ function pick(pool, k, rng) {
   return pool[0][0];
 }
 
-// → { theme, total, spawns:[{ t, type, x, elite?, boss? }] } (t 오름차순)
+// → { theme, total, spawns:[{ t, type, x, burst, elite?, boss? }] } (t 오름차순, burst = 몰려오기 묶음 번호, 엘리트 -1·보스 -2)
 export function buildStage(stage, rng) {
   stage = Math.min(MAX_STAGE, Math.max(1, stage | 0));
   const th = themeOf(stage), k = (stage - 1) % 20, abyss = th === 4;
@@ -102,11 +107,11 @@ export function buildStage(stage, rng) {
   bursts.forEach((n, bi) => {
     const t0 = 1 + bi * gap;
     for (let j = 0; j < n; j++) {
-      spawns.push({ t: t0 + j * (abyss ? 0.18 : 0.35), type: pick(POOLS[th], k, rng), x: 50 + rng() * 620 });
+      spawns.push({ t: t0 + j * (abyss ? 0.18 : 0.35), type: pick(POOLS[th], k, rng), x: 50 + rng() * 620, burst: bi });
     }
   });
-  spawns.push({ t: boss ? dur - 26 : dur, type: ELITES[th], x: 200 + rng() * 320, elite: true });
-  if (boss) spawns.push({ t: dur - 20, type: boss, x: 360, boss: true });
+  spawns.push({ t: boss ? dur - 26 : dur, type: ELITES[th], x: 200 + rng() * 320, elite: true, burst: -1 });
+  if (boss) spawns.push({ t: dur - 20, type: boss, x: 360, boss: true, burst: -2 });
   spawns.sort((a, b) => a.t - b.t);
   return { theme: th, total: spawns.length, spawns };
 }

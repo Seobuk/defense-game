@@ -1,33 +1,27 @@
-// 헤드리스 스모크 + 밸런스 러너: node test/sim.test.js [--quick]
+// 헤드리스 스모크 + 로그라이트 캠페인 밸런스 러너: node test/sim.test.js [--full] [--seed=N]
+//   기본: 단위 테스트 + 캠페인 1회(시드 1) + 클래스 동등성(최고 40층 시점)   --full: 캠페인 3시드 + 동등성 40·80층
 import assert from 'node:assert/strict';
 import { fmt, mulberry32 } from '../public/js/util.js';
-import { DT, PERK_KEYS, perkCost, perkMax, upgradeCost, SKILLS, SPELL_KEYS, FUSIONS } from '../public/js/config.js';
-import { enemyHp, enemyDmg } from '../public/js/stages.js';
-import { createGame, startStage, step, act, drainEvents, setPlayer, tickPick, refreshFusion } from '../public/js/sim.js';
-import { pickCard, autoHero } from '../public/js/bot.js';
+import {
+  DT, upgradeCost, SKILLS, SPELL_KEYS, FUSIONS, SPELL_SLOTS, SPELL_MAX_LV, AWAKEN_KEYS, META_KEYS, metaCost, metaMax, metaFx,
+  startGoldAmount, RUN_GEMS, MAX_STAGE,
+} from '../public/js/config.js';
+import { createGame, startStage, step, act, drainEvents, setPlayer, tickPick, refreshFusion, serializeRun, normalizeRun, cardCount } from '../public/js/sim.js';
+import { pickCard, botSpendGems, botLoadout } from '../public/js/bot.js';
+import { newRun, restoreRun, endRun, buyMeta, validLoadout, startSpellChoices, campAct, applyOffline } from '../public/js/run.js';
+import { defaults } from '../public/js/save.js';
+import { campaign, playRun, playStage, resolvePick, HERO_CLASS_KEYS as CLASS_KEYS } from './harness.js';
 import {
   newHero, HERO_CLASSES, HERO_CLASS_KEYS, unlockedClasses, xpToNext, heroTier, hasMilestone, MILESTONES,
   rollItem, itemPower, heroPower, sellValue, equipItem, sellItem, sellItemsByRarity, autoEquipAll, addToBag,
   BAG_SIZE, SLOTS, RARITIES, SUBSTATS, heroTakeDamage, heroGainXp,
 } from '../public/js/hero.js';
 
-const quick = process.argv.includes('--quick');
+const FULL = process.argv.includes('--full');
 const seedArg = process.argv.find(a => a.startsWith('--seed='));
-const SEED = seedArg ? +seedArg.slice(7) : 12345;
-const clsArg = process.argv.find(a => a.startsWith('--cls=')); // 밸런스 러너 영웅 클래스 고정(예: --cls=knight)
-const CLS = clsArg ? clsArg.slice(6) : null;
+const SEED = seedArg ? +seedArg.slice(7) : 1;
 const lv0 = () => ({ atk: 0, rate: 0, crit: 0, multi: 0, wall: 0 });
-const perks0 = () => ({ pickaxe: 0, critBoom: 0, startGold: 0 });
-const bot = name => ({ name, kind: 'bot', gold: 0, lv: lv0(), perks: perks0(), auto: true });
-
-// 판타지 스킬 카드가 뜨면(마나 가득/보스 등장) 봇 휴리스틱으로 즉시 선택 — 시간은 흐르지 않는다(실제 일시정지와 동일)
-function resolvePick(g, collect) {
-  const ev0 = drainEvents(g);
-  if (collect) collect.push(...ev0);
-  act(g, 0, { type: 'pick', index: pickCard(g) });
-  const ev1 = drainEvents(g);
-  if (collect) collect.push(...ev1);
-}
+const bot = name => ({ name, kind: 'bot', gold: 0, lv: lv0(), auto: true });
 
 // 페이즈가 바뀌거나 시간 초과까지 진행, 이벤트 수집
 function runUntilEnd(g, maxT = 600, collect = null) {
@@ -101,7 +95,7 @@ function smoke() {
   assert.ok(mg.enemies.every(e => e.frozen || e.dead));
 
   // 클리어: 결과 + 이벤트
-  const strong = { lv: { atk: 60, rate: 10, crit: 5, multi: 2, wall: 10 } };
+  const strong = { lv: { atk: 90, rate: 12, crit: 10, multi: 3, wall: 30 } };
   const cg = createGame({ stage: 10, players: [strong, strong], seed: 5 });
   const cev = [];
   runUntilEnd(cg, 600, cev);
@@ -123,6 +117,8 @@ function smoke() {
   assert.equal(dg.phase, 'defeat');
   assert.equal(dg.wall.hp, 0);
   assert.ok(dev.some(e => e.type === 'defeat' && e.stage === 40));
+  assert.ok(dev.some(e => e.type === 'runOver' && e.stage === 40 && e.victory === false), '성벽 붕괴 = 도전 종료');
+  assert.ok(dg.run.over && !dg.run.victory);
   assert.equal(dg.result, null);
 
   // 슬롯 교체
@@ -137,76 +133,6 @@ function smoke() {
   assert.equal(sg.players[1].gold, 0);
   assert.equal(sg.players[1].lv.atk, 0);
   console.log('스모크 통과');
-}
-
-// ── 2) 밸런스 러너 ──
-function balance(last) {
-  const t0 = Date.now();
-  const g = createGame({ stage: 1, players: [bot('P1'), bot('P2')], seed: SEED, best: CLS ? 40 : 0, hero: CLS ? { ...newHero(), cls: CLS, autoEquip: true } : newHero() });
-  const gems = [0, 0];
-  let attempts = 0;
-  const rows = [];
-  const buyPerks = () => {
-    for (let i = 0; i < 2; i++) {
-      const pk = g.players[i].perks;
-      for (;;) {
-        let key = null;
-        for (const k of PERK_KEYS) if (pk[k] < perkMax(k) && (!key || perkCost(k, pk[k]) < perkCost(key, pk[key]))) key = k;
-        if (!key || perkCost(key, pk[key]) > gems[i]) break;
-        gems[i] -= perkCost(key, pk[key]);
-        pk[key]++; // 스탯 반영은 다음 startStage에서
-      }
-    }
-  };
-  let ev = [];
-  const play = s => {
-    attempts++;
-    startStage(g, s);
-    ev = [];
-    runUntilEnd(g, 900, ev);
-    if (g.phase === 'play') { g.phase = 'defeat'; g.lastLoss = 1; } // 시간 초과 = 패배
-    if (g.phase === 'clear') {
-      gems[0] += g.result.gems[0];
-      gems[1] += g.result.gems[1];
-      buyPerks();
-    }
-    return g.phase === 'clear';
-  };
-  let fails = 0;
-  for (let s = 1; s <= last; s++) {
-    let tries = 0, streak = 0, ok = false;
-    while (!ok) {
-      tries++;
-      ok = play(s);
-      if (ok) break;
-      streak++;
-      assert.ok(tries <= 9, `스테이지 ${s} 재도전 8회 초과`);
-      if (streak >= 3 && s > 1) { play(s - 1); streak = 0; }
-    }
-    const p = g.players[0];
-    rows.push({ s, tries, t: g.result.time, stars: g.result.stars, dmg: p.stats.dmg, gold: p.gold, hp: enemyHp(s), loss: 1 - g.wall.hp / g.wall.max, hits: g.wall.max / enemyDmg(s), lv: { ...p.lv }, lv2: { ...g.players[1].lv }, heroLv: g.hero.level, heroCls: g.hero.cls, heroPow: heroPower(g.hero), downs: ev.filter(e => e.type === 'heroDown').length });
-    fails += tries - 1;
-  }
-  const secs = (Date.now() - t0) / 1000;
-  console.log('stage tries  time stars      dmg     gold   enemyHP  HP/dmg  loss%  wallHits  P1 atk/rate/crit/multi/wall  P2 wall  heroLv/cls/pow/downs');
-  for (const r of rows) {
-    console.log(`${String(r.s).padStart(5)} ${String(r.tries).padStart(5)} ${r.t.toFixed(0).padStart(5)} ${String(r.stars).padStart(5)} ${fmt(r.dmg).padStart(8)} ${fmt(r.gold).padStart(8)} ${fmt(r.hp).padStart(9)} ${(r.hp / r.dmg).toFixed(1).padStart(7)} ${(r.loss * 100).toFixed(0).padStart(6)} ${r.hits.toFixed(0).padStart(9)}  ${r.lv.atk}/${r.lv.rate}/${r.lv.crit}/${r.lv.multi}/${r.lv.wall}  ${r.lv2.wall}  ${r.heroLv}/${r.heroCls}/${r.heroPow}/${r.downs}`);
-  }
-  console.log(`총 시도 ${attempts}, 패배 ${fails}, 실행 ${secs.toFixed(1)}s`);
-  const bad = [];
-  for (const r of rows) {
-    if (r.t < 60 || r.t > 120) bad.push(`스테이지 ${r.s} 소요 ${r.t.toFixed(1)}s`);
-    if (r.s <= 9 && r.tries > 1) bad.push(`스테이지 ${r.s} 패배`);
-  }
-  if (last >= 100) {
-    if (attempts > 140) bad.push(`총 시도 ${attempts} > 140`);
-    const d = rows[rows.length - 1].dmg;
-    if (d < 1e6 || d > 1e11) bad.push(`100층 데미지 ${fmt(d)}`);
-    const hl = rows[rows.length - 1].heroLv;
-    if (hl < 55 || hl > 85) bad.push(`100층 영웅 레벨 ${hl}`);
-  }
-  assert.deepEqual(bad, [], bad.join('\n'));
-  console.log('밸런스 통과');
 }
 
 // ── 1b) 중독성 레이어 스모크 ──
@@ -413,7 +339,8 @@ function addiction() {
   run(fg, 200, fev);
   assert.equal(fg.phase, 'clear');
   assert.equal(fg.result.flawless, true);
-  assert.equal(fg.result.gems[0], Math.ceil((fg.result.stars + 0 + 0) * 1.5));
+  assert.equal(fg.result.gems[0], Math.ceil(RUN_GEMS.floor(3) * 1.5) + RUN_GEMS.first(3), '런 보석: 층 +50%(무결점) + 첫 돌파');
+  assert.equal(fg.run.flawless, 1);
   assert.ok(fev.some(e => e.type === 'synergy' && e.key === 'flawless'));
   assert.ok(of(fev, 'hit').some(e => e.big), 'big 타격');
   assert.ok(fev.some(e => e.type === 'hitstop' && e.ms === 120), '엘리트 처치 히트스톱');
@@ -450,13 +377,14 @@ function addiction() {
   console.log('중독성 레이어 통과');
 }
 
-// ── 3) 판타지 스킬 선택 ──
+// ── 3) 판타지 스킬 선택 (런 전체 누적 빌드: 슬롯 6 · Lv1~5 · 각성) ──
 function fantasyPick() {
   // 마나 → 카드 → 전투 정지(시간도 멈춤), 카드 3장은 서로 다른 스킬
   const g = createGame({ stage: 1, players: [{ lv: { atk: 20 } }, {}], seed: 21 });
   for (let n = 0; !g.pick && g.phase === 'play' && n < 60 * 200; n++) { step(g, DT); drainEvents(g); }
-  assert.ok(g.pick, '마나가 가득 차거나(또는 보스 등장) 카드가 뜬다');
+  assert.ok(g.pick, '마나가 가득 차면 카드가 뜬다');
   assert.equal(g.mana.cur, g.mana.max);
+  assert.ok(g.progress.killed >= Math.ceil(g.progress.total * 0.6), '처치 진행률 60%에서');
   assert.equal(g.pick.cards.length, 3, '카드 3장');
   assert.equal(new Set(g.pick.cards.map(c => c.spell)).size, 3, '서로 다른 스킬');
   for (const c of g.pick.cards) assert.equal(c.level, 1, '처음 뽑으면 Lv1');
@@ -465,42 +393,83 @@ function fantasyPick() {
   assert.deepEqual({ killed: g.progress.killed, phaseT: g.phaseT, n: g.enemies.length }, before, '선택 중엔 전투 정지(시간도 멈춤)');
   assert.ok(!act(g, 0, { type: 'upgrade', stat: 'atk' }), '선택 중엔 다른 조작도 불가');
   assert.ok(!act(g, 1, { type: 'pick', index: 0 }), 'AI 동료는 카드를 고르지 않음');
-
-  // 선택 적용: 레벨 · spellPick 이벤트 · game.spells 반영
   const key = g.pick.cards[0].spell;
   drainEvents(g);
   assert.ok(act(g, 0, { type: 'pick', index: 0 }));
   assert.equal(g.spells[key], 1);
+  assert.ok(g.seenSpells.has(key), '뽑아 본 스킬 기록(시작 스킬 후보)');
   assert.equal(g.pick, null, '선택하면 정지 해제');
   assert.ok(drainEvents(g).some(e => e.type === 'spellPick' && e.spell === key && e.level === 1));
   assert.ok(!act(g, 0, { type: 'pick', index: 0 }), '카드가 없을 때 pick은 실패');
+  // 층당 마나 카드는 1번뿐(1층엔 네임드 보스 없음)
+  let again = false;
+  for (let n = 0; g.phase === 'play' && n < 60 * 300; n++) { step(g, DT); drainEvents(g); if (g.pick) { again = true; break; } }
+  assert.ok(!again, '같은 층에서 마나 카드는 다시 뜨지 않는다');
 
-  // 만렙 3 · 만렙뿐이면 카드가 뜨지 않음(마나·보스 트리거 모두)
-  for (const k of SPELL_KEYS) g.spells[k] = 3;
-  const killed0 = g.progress.killed;
-  for (let n = 0; !g.pick && n < 60 * 40 && g.progress.killed < g.progress.total; n++) { step(g, DT); drainEvents(g); }
-  assert.ok(g.progress.killed > killed0, '그동안 처치는 계속 진행');
-  assert.ok(!g.pick, '스킬이 모두 만렙이면 마나가 차도 카드가 뜨지 않는다');
+  // 빌드는 층이 바뀌어도 유지(런 전체)
+  startStage(g, 2);
+  assert.equal(g.spells[key], 1, '다음 층에도 빌드 유지');
+  assert.equal(g.mana.cur, 0);
+
+  // 슬롯 6칸: 차면 보유 스킬 강화 카드만. 모자라는 자리는 각성 카드
+  const sg = createGame({ stage: 5, players: [{}, {}], seed: 22 });
+  const six = SPELL_KEYS.slice(0, SPELL_SLOTS);
+  six.forEach(k => { sg.spells[k] = 2; });
+  for (let i = 0; i < 20; i++) {
+    for (const c of genOffer(sg)) assert.ok(c.awaken || six.includes(c.spell), '슬롯이 차면 보유 스킬만');
+  }
+  six.forEach(k => { sg.spells[k] = SPELL_MAX_LV; });
+  sg.spells[six[0]] = SPELL_MAX_LV - 1;
+  let cards = genOffer(sg);
+  assert.equal(cards.length, 3);
+  assert.equal(cards.filter(c => c.spell === six[0]).length, 1, '남은 강화 1장');
+  assert.equal(cards.filter(c => c.awaken).length, 2, '나머지는 각성 카드');
+  assert.ok(cards.every(c => !c.spell || c.level <= SPELL_MAX_LV), 'Lv5 최대');
+  sg.spells[six[0]] = SPELL_MAX_LV;
+  cards = genOffer(sg);
+  assert.ok(cards.every(c => c.awaken && AWAKEN_KEYS.includes(c.awaken)), '모든 슬롯 최대 → 각성 카드만');
+  // 각성 선택: 런 동안 스탯 누적
+  const d0 = sg.players[0].stats.dmg;
+  sg.pick = { cards: [{ spell: null, awaken: 'power', level: 1, rarity: 'common', fusionHint: false }], autoLeft: null };
+  drainEvents(sg);
+  assert.ok(act(sg, 0, { type: 'pick', index: 0 }));
+  assert.equal(sg.run.awaken.power, 1);
+  assert.ok(Math.abs(sg.players[0].stats.dmg - d0 * 1.05) < 1e-9, '각성: 마력 +5%');
+  assert.ok(drainEvents(sg).some(e => e.type === 'spellPick' && e.awaken === 'power'));
+  const w0 = sg.wall.max;
+  sg.pick = { cards: [{ spell: null, awaken: 'ward', level: 1, rarity: 'common', fusionHint: false }], autoLeft: null };
+  act(sg, 0, { type: 'pick', index: 0 });
+  assert.ok(sg.wall.max > w0 && sg.wall.hp === sg.wall.max, '각성: 성벽 결계 → 최대치·현재치 증가');
 
   // 자동 선택: auto 켜져 있으면 tickPick 3초 뒤 봇 휴리스틱으로 자동 선택
-  g.spells = {};
-  g.players[0].auto = true;
-  startStage(g, 2);
-  for (let n = 0; !g.pick && n < 60 * 60; n++) { step(g, DT); drainEvents(g); }
-  assert.ok(g.pick && g.pick.autoLeft === 3, 'auto면 카드에 3초 카운트다운');
-  tickPick(g, 1.5);
-  assert.ok(g.pick, '3초 전엔 그대로');
-  tickPick(g, 1.6);
-  assert.ok(!g.pick, '3초 지나면 자동 선택');
-  assert.equal(Object.keys(g.spells).length, 1);
+  const ag = createGame({ stage: 2, players: [{ lv: { atk: 20 }, auto: true }, {}], seed: 23 });
+  for (let n = 0; !ag.pick && n < 60 * 60; n++) { step(ag, DT); drainEvents(ag); }
+  assert.ok(ag.pick && ag.pick.autoLeft === 3, 'auto면 카드에 3초 카운트다운');
+  tickPick(ag, 1.5);
+  assert.ok(ag.pick, '3초 전엔 그대로');
+  tickPick(ag, 1.6);
+  assert.ok(!ag.pick, '3초 지나면 자동 선택');
+  assert.equal(Object.keys(ag.spells).length, 1);
 
-  // 스테이지 시작은 빌드를 리셋한다
-  startStage(g, 3);
-  assert.deepEqual(g.spells, {});
-  assert.deepEqual(g.fusions, []);
-  assert.equal(g.pick, null);
-  assert.equal(g.mana.cur, 0);
-  console.log('판타지 스킬(카드) 통과');
+  // 선택지 수: 3 + 영웅 Lv15(+1) + 영구 강화 '카드 선택지'(+1)
+  const hero15 = () => ({ ...newHero(), cls: 'knight', level: 15 });
+  assert.equal(cardCount(createGame({ seed: 1 })), 3);
+  assert.equal(cardCount(createGame({ seed: 1, hero: hero15() })), 4);
+  const cg = createGame({ seed: 1, hero: hero15(), metaLv: { choice: 1 } });
+  assert.equal(cardCount(cg), 5);
+  assert.equal(genOffer(cg).length, 5);
+  console.log('판타지 스킬(런 빌드·슬롯·각성) 통과');
+}
+
+// 카드 뽑기만 확인(새로고침 경로 재사용: 1회 지급 후 즉시 받아 버림)
+function genOffer(g) {
+  g.pick = { cards: [], autoLeft: null };
+  g.rerollLeft = 1;
+  assert.ok(act(g, 0, { type: 'reroll' }));
+  const cards = g.pick.cards;
+  g.pick = null;
+  drainEvents(g);
+  return cards;
 }
 
 // 14종 스킬이 각자 눈에 보이는 효과·피해를 내는지
@@ -586,12 +555,13 @@ function fantasyFusions() {
     assert.ok(g.fusions.includes(f.key), `${f.key}: 활성`);
     assert.ok(ev.some(e => e.type === 'synergy' && e.key === f.key && e.first), `${f.key}: 첫 발견`);
     assert.ok(g.discovered.has(f.key));
-    // 스테이지가 바뀌면 스킬 빌드는 리셋되지만 발견 기록은 유지 → 재활성은 first:false
+    // 런 안에서 유지: 다음 층에도 융합이 켜져 있다
     startStage(g, 6);
-    g.spells[pair[0]] = 1;
-    g.spells[pair[1]] = 1;
-    refreshFusion(g);
-    assert.ok(drainEvents(g).some(e => e.type === 'synergy' && e.key === f.key && !e.first), `${f.key}: 재발견은 first:false`);
+    assert.ok(g.fusions.includes(f.key), `${f.key}: 다음 층에도 유지`);
+    // 다음 도전(발견 기록 유지)에서 다시 켜지면 first:false — 시작 스킬 두 개로 바로 융합
+    const g2 = createGame({ stage: 1, players: [{}, {}], seed: 51, discovered: [...g.discovered], run: { spells: { [pair[0]]: 1, [pair[1]]: 1 } } });
+    assert.ok(g2.fusions.includes(f.key));
+    assert.ok(drainEvents(g2).some(e => e.type === 'synergy' && e.key === f.key && !e.first), `${f.key}: 재발견은 first:false`);
   }
   console.log('판타지 스킬(융합 8종) 통과');
 }
@@ -736,19 +706,19 @@ function heroXpAndMilestones() {
   assert.ok(g.pick, '마나가 찬다');
   assert.equal(g.pick.cards.length, 4, 'Lv15: 카드 4장 중 선택');
 
-  // Lv5 마일스톤: 스테이지당 카드 새로고침 1회 (Lv4 이하는 불가)
-  assert.equal(g.rerollLeft, 0, '스테이지 시작 때 Lv1 → 새로고침 없음');
+  // Lv5 마일스톤: 도전마다 카드 새로고침 1회 (Lv4 이하는 불가) + 영구 강화 '카드 새로고침'
+  assert.equal(g.rerollLeft, 0, 'Lv1 도전 → 새로고침 없음');
   assert.ok(!act(g, 0, { type: 'reroll' }));
-  g.hero.level = 5;
-  startStage(g, 1);
-  for (let n = 0; !g.pick && n < 60 * 200; n++) { step(g, DT); drainEvents(g); }
-  assert.equal(g.rerollLeft, 1);
-  const old = g.pick;
-  assert.ok(!act(g, 1, { type: 'reroll' }), 'AI 동료는 새로고침 불가');
-  assert.ok(act(g, 0, { type: 'reroll' }));
-  assert.ok(g.pick && g.pick !== old && g.pick.cards.length === 3, '새 카드 3장');
-  assert.ok(drainEvents(g).some(e => e.type === 'pickOffer' && e.reroll));
-  assert.ok(!act(g, 0, { type: 'reroll' }), '스테이지당 1회');
+  const rg = createGame({ stage: 1, players: [{ lv: { atk: 20 } }, {}], seed: 205, hero: { ...newHero(), cls: 'knight', level: 5 }, metaLv: { reroll: 2 } });
+  assert.equal(rg.rerollLeft, 3, 'Lv5(1) + 영구 강화(2)');
+  for (let n = 0; !rg.pick && n < 60 * 200; n++) { step(rg, DT); drainEvents(rg); }
+  const old = rg.pick;
+  assert.ok(!act(rg, 1, { type: 'reroll' }), 'AI 동료는 새로고침 불가');
+  assert.ok(act(rg, 0, { type: 'reroll' }));
+  assert.ok(rg.pick && rg.pick !== old && rg.pick.cards.length === 3, '새 카드 3장');
+  assert.ok(drainEvents(rg).some(e => e.type === 'pickOffer' && e.reroll));
+  startStage(rg, 2);
+  assert.equal(rg.rerollLeft, 2, '새로고침 횟수는 층이 바뀌어도 이어진다(도전 단위)');
   console.log('영웅 경험치·마일스톤 통과');
 }
 
@@ -817,7 +787,223 @@ function heroJsonRoundtrip() {
   console.log('영웅 JSON 라운드트립 통과');
 }
 
-if (!CLS) { // --cls=... 는 밸런스 러너만
+// ── 5) 로그라이트: 메타 ↔ 런 ──
+function metaUpgrades() {
+  const m = defaults();
+  assert.deepEqual(Object.keys(m.metaLv).sort(), [...META_KEYS].sort());
+  assert.ok(!buyMeta(m, 'power'), '보석 부족');
+  m.gems = 1e6;
+  const c0 = metaCost('power', 0);
+  assert.ok(buyMeta(m, 'power'));
+  assert.equal(m.gems, 1e6 - c0);
+  assert.equal(m.metaLv.power, 1);
+  assert.ok(!buyMeta(m, 'nope'));
+  while (buyMeta(m, 'revive'));
+  assert.equal(m.metaLv.revive, metaMax('revive'), '최대 레벨');
+  for (const k of META_KEYS) assert.ok(metaCost(k, 1) >= metaCost(k, 0), `${k} 비용 증가`);
+  // 배율형은 복리, 옛 퍼크 3종 포함
+  assert.ok(Math.abs(metaFx({ power: 2 }).atkMul - 1.1 ** 2) < 1e-12);
+  assert.equal(metaFx({ startGold: 3 }).startGold, startGoldAmount(3));
+  assert.ok(['pickaxe', 'critBoom', 'startGold'].every(k => META_KEYS.includes(k)));
+  // 새 도전에 적용: 시작 골드(두 마법사), 배율, 새로고침, 부활
+  m.metaLv.startGold = 3; m.metaLv.power = 5; m.metaLv.reroll = 1; m.metaLv.critBoom = 2;
+  const g = newRun(m, { cls: 'knight' }, 1);
+  assert.equal(g.players[0].gold, startGoldAmount(3));
+  assert.equal(g.players[1].gold, startGoldAmount(3));
+  assert.ok(Math.abs(g.players[0].stats.dmg - 10 * 1.1 ** 5) < 1e-9, '기본 마력 적용(Lv0 마력 10)');
+  assert.ok(g.players[0].stats.boomR > 0, '치명타 폭발 적용');
+  assert.equal(g.rerollLeft, 1);
+  console.log('영구 강화 통과');
+}
+
+function runLifecycle() {
+  const m = defaults();
+  m.hero.autoEquip = true;
+  // 로드아웃 검증: 해금 안 된 클래스·뽑아 본 적 없는 스킬·슬롯 초과는 걸러진다
+  m.seenSpells = ['fireball', 'tornado', 'gale'];
+  assert.deepEqual(validLoadout(m, { cls: 'assassin', startSpells: ['fireball'] }), { cls: 'knight', startSpells: [] }, '슬롯 0');
+  m.metaLv.startSlot = 2;
+  assert.deepEqual(validLoadout(m, { cls: 'ranger', startSpells: ['judgment', 'fireball', 'fireball', 'tornado', 'gale'] }), { cls: 'ranger', startSpells: ['fireball', 'tornado'] });
+  assert.deepEqual(startSpellChoices(m), ['fireball', 'tornado', 'gale']);
+
+  // 시작 스킬 두 개가 융합이면 1층부터 발동
+  const g = newRun(m, { cls: 'ranger', startSpells: ['fireball', 'tornado'] }, 7);
+  assert.equal(m.hero.cls, 'ranger');
+  assert.deepEqual(g.spells, { fireball: 1, tornado: 1 });
+  assert.ok(g.fusions.includes('blazeTornado'), '불꽃 회오리 즉시');
+  assert.equal(g.stage, 1);
+  assert.deepEqual(m.run, g.run.checkpoint, '새 도전 → 이어하기 저장 생성');
+  assert.deepEqual(m.lastLoadout, { cls: 'ranger', startSpells: ['fireball', 'tornado'] });
+  assert.ok(!act(g, 0, { type: 'heroClass', cls: 'knight' }) || g.phaseT === 0, '도전 중 클래스 고정');
+  g.players[0].auto = true;
+
+  // 몇 층 진행 → 체크포인트는 스테이지 시작 시점
+  const ev = [];
+  let cleared = 0;
+  while (cleared < 3) {
+    playStage(g, 900, ev);
+    assert.equal(g.phase, 'clear', `${g.stage}층 클리어`);
+    cleared++;
+    startStage(g, g.stage + 1);
+  }
+  assert.equal(g.run.floors, 3);
+  const cp = g.run.checkpoint;
+  assert.equal(cp.stage, 4);
+  assert.equal(cp.floors, 3);
+  assert.equal(cp.players[0].gold, g.players[0].gold);
+  assert.ok(!act(g, 0, { type: 'heroClass', cls: 'knight' }), '2층부터 클래스 변경 불가');
+
+  // 이어하기: JSON 왕복 → 같은 스테이지 시작 상태
+  const saved = JSON.parse(JSON.stringify(cp));
+  const r = restoreRun(m, saved, 99);
+  assert.equal(r.stage, 4);
+  assert.deepEqual(serializeRun(r), cp, '복원 직후 = 체크포인트');
+  assert.equal(r.wall.max, g.wall.max);
+  assert.equal(r.players[0].stats.dmg, g.players[0].stats.dmg);
+  assert.equal(r.rerollLeft, g.rerollLeft);
+  assert.equal(restoreRun(m, null), null);
+  // 깨진 런 저장도 throw 없이 1층 빈 런
+  for (const bad of [5, 'x', [], { stage: 'NaN', players: 3, spells: { fireball: 99, nope: 1 }, awaken: { power: -3 } }]) {
+    const n = normalizeRun(bad);
+    assert.ok(n.stage >= 1 && n.players.length === 2 && Object.values(n.spells).every(v => v >= 1 && v <= SPELL_MAX_LV));
+  }
+  const n7 = normalizeRun({ spells: Object.fromEntries(SPELL_KEYS.map(k => [k, 2])) });
+  assert.equal(Object.keys(n7.spells).length, SPELL_SLOTS, '슬롯 초과 스킬은 버림');
+
+  // 성벽 붕괴 → 도전 종료 → 정산
+  playStage(r, 900);
+  while (r.phase === 'clear') { startStage(r, r.stage + 1); playStage(r, 900); }
+  assert.equal(r.phase, 'defeat');
+  assert.ok(r.run.over && !r.run.victory);
+  const gems0 = m.gems, best0 = m.best;
+  const sum = endRun(r, m);
+  assert.equal(sum.floorsCleared, r.run.floors);
+  assert.equal(sum.stageReached, r.stage);
+  assert.equal(sum.rewards.gems, sum.rewards.floor + sum.rewards.first + sum.rewards.boss + sum.rewards.flawless + sum.rewards.best);
+  assert.equal(m.gems, gems0 + sum.rewards.gems);
+  assert.equal(m.best, Math.max(best0, sum.floorsCleared));
+  assert.equal(sum.newBest, sum.floorsCleared > best0);
+  assert.equal(sum.rewards.best, RUN_GEMS.best(best0, sum.floorsCleared), '신기록 보너스');
+  assert.ok(sum.rewards.first > 0, '첫 돌파 보석');
+  assert.equal(m.run, null, '이어하기 저장 삭제');
+  assert.equal(m.runs, 1);
+  assert.ok(m.seenSpells.includes('fireball'));
+  assert.equal(endRun(r, m), null, '두 번 정산 없음');
+  if (sum.floorsCleared >= 10) assert.ok(sum.bossesKilled >= 1 && sum.rewards.boss > 0);
+
+  // 클래스 해금은 최고 기록 기준(20층 성직자)
+  const u = defaults();
+  u.best = 19;
+  const ug = newRun(u, { cls: 'knight' }, 3);
+  ug.run.floors = 20; // 20층까지 돌파한 것으로
+  assert.deepEqual(endRun(ug, u).newClasses, ['cleric']);
+
+  // 정비 화면 영웅 조작: 해금된 클래스만, 판매는 도전 중에만
+  assert.ok(campAct(u, { type: 'heroClass', cls: 'cleric' }) && u.hero.cls === 'cleric');
+  assert.ok(!campAct(u, { type: 'heroClass', cls: 'assassin' }));
+  assert.ok(!campAct(u, { type: 'sell', itemId: 'x' }));
+  assert.ok(campAct(u, { type: 'autoEquip', on: true }) && u.hero.autoEquip);
+  // 오프라인 보상 지급
+  const lv0h = u.hero.level;
+  const ups = applyOffline(u, { gems: 7, xp: 1e5, minutes: 60 });
+  assert.ok(u.hero.level > lv0h && ups.length === u.hero.level - lv0h);
+  console.log('런 생애주기(로드아웃·이어하기·정산) 통과');
+}
+
+function reviveWard() {
+  const g = createGame({ stage: 40, players: [{}, {}], seed: 6, metaLv: { revive: 1 } });
+  const ev = [];
+  runUntilEnd(g, 600, ev);
+  assert.equal(g.phase, 'defeat');
+  const rv = ev.filter(e => e.type === 'revive');
+  assert.equal(rv.length, 1, '부활 결계는 도전마다 1회');
+  assert.ok(g.run.reviveUsed);
+  const i = ev.indexOf(rv[0]);
+  assert.ok(ev.slice(0, i).every(e => e.type !== 'defeat'), '부활이 먼저');
+  assert.ok(Math.abs(rv[0].hp - g.wall.max * 0.5) < 1e-6, '성벽 50%로 회복');
+  // 이어하기에도 사용 여부가 남는다
+  assert.equal(normalizeRun(JSON.parse(JSON.stringify(serializeRun(g)))).reviveUsed, true);
+  // 부활 없으면 바로 패배
+  const g2 = createGame({ stage: 40, players: [{}, {}], seed: 6 });
+  const ev2 = [];
+  runUntilEnd(g2, 600, ev2);
+  assert.ok(!ev2.some(e => e.type === 'revive'));
+  console.log('부활 결계 통과');
+}
+
+// 학살 가속: 압도적이면 층이 15~25초, 적이 남아 있으면 가속 없음 · 광폭화로 교착 없음
+function slaughterPace() {
+  const lv = { atk: 200, rate: 15, crit: 15, multi: 5, wall: 100 };
+  for (const s of [1, 5, 15]) {
+    const g = createGame({ stage: s, players: [{ lv }, { lv }], seed: 30 + s });
+    runUntilEnd(g, 300);
+    assert.equal(g.phase, 'clear');
+    assert.ok(g.result.time >= 12 && g.result.time <= 25, `${s}층 압도: ${g.result.time.toFixed(1)}초`);
+  }
+  // 약한 쪽(적이 남음)은 원래 스폰 일정대로
+  const w = createGame({ stage: 1, players: [bot('P1'), bot('P2')], seed: 34 });
+  runUntilEnd(w, 300);
+  assert.ok(w.result.time > 30, `1층 기본 ${w.result.time.toFixed(1)}초`);
+  // 광폭화: 80초를 넘기면 이벤트 + 적 피해 배율, 서리·회오리 교착도 결국 끝난다
+  const b = createGame({ stage: 12, players: [{ lv: { atk: 30, wall: 60 } }, { lv: { wall: 60 } }], seed: 35, run: { spells: { frostWard: 5, tornado: 5, holyLight: 5 } } });
+  const ev = [];
+  runUntilEnd(b, 400, ev);
+  assert.notEqual(b.phase, 'play', '교착 없음');
+  if (ev.some(e => e.type === 'berserk')) assert.ok(b.berserk > 1);
+  console.log('학살 가속·광폭화 통과');
+}
+
+// ── 6) 캠페인 밸런스 러너: 새 저장 → 도전 반복 → 100층 ──
+function avg(a) { return a.length ? a.reduce((s, x) => s + x, 0) / a.length : NaN; }
+
+function campaignCheck(seed, parityAt) {
+  const t0 = Date.now();
+  const snaps = {};
+  const { rows, meta } = campaign({
+    seed, maxRuns: 60,
+    onRun: (r, m) => { for (const b of parityAt) if (m.best >= b && !snaps[b]) snaps[b] = JSON.stringify(m); },
+  });
+  console.log(`\n캠페인 시드 ${seed}: 도전 ${rows.length}회, ${(rows[rows.length - 1].total / 3600).toFixed(1)}시간, 실행 ${((Date.now() - t0) / 1000).toFixed(0)}s`);
+  console.log(' run cls      start spells                reach  time   gems  cum(h)  half  new  heroLv');
+  const half = [], nw = [];
+  for (const r of rows) {
+    const h = r.floors.filter(f => f.s <= r.prevBest / 2).map(f => f.t), n = r.floors.filter(f => f.s > r.prevBest).map(f => f.t);
+    half.push(...h); nw.push(...n);
+    console.log(`${String(r.run).padStart(4)} ${r.cls.padEnd(8)} ${(r.start.join(',') || '-').padEnd(26)} ${String(r.reached).padStart(5)} ${(r.time / 60).toFixed(0).padStart(4)}m ${String(r.gems).padStart(6)} ${(r.total / 3600).toFixed(1).padStart(6)} ${avg(h).toFixed(0).padStart(5)} ${avg(n).toFixed(0).padStart(4)} ${String(r.heroLv).padStart(6)}`);
+  }
+  const first = rows[0], last = rows[rows.length - 1], hours = last.total / 3600;
+  const gain = (last.reached - first.reached) / (rows.length - 1);
+  const res = { runs: rows.length, hours, first: first.reached, gain, half: avg(half), newT: avg(nw), heroLv: last.heroLv, cleared: last.reached >= MAX_STAGE };
+  console.log(`결과: 첫 도전 ${res.first}층 · 도전당 +${gain.toFixed(2)}층 · ${res.runs}회 · ${hours.toFixed(1)}h · 절반 이하 층 평균 ${res.half.toFixed(1)}s · 새 층 평균 ${res.newT.toFixed(1)}s · 영웅 Lv${res.heroLv}`);
+  const bad = [];
+  if (!res.cleared) bad.push('100층 미돌파');
+  if (res.first < 8 || res.first > 15) bad.push(`첫 도전 ${res.first}층 (목표 8~15)`);
+  if (gain < 3 || gain > 6) bad.push(`도전당 +${gain.toFixed(2)}층 (목표 3~6)`);
+  if (res.runs < 20 || res.runs > 35) bad.push(`도전 ${res.runs}회 (목표 20~35)`);
+  if (hours < 15 || hours > 25) bad.push(`총 ${hours.toFixed(1)}시간 (목표 15~25)`);
+  if (!(res.half <= 30)) bad.push(`절반 이하 층 평균 ${res.half.toFixed(1)}s (목표 ≤30)`);
+  if (!(res.newT >= 60 && res.newT <= 120)) bad.push(`새 층 평균 ${res.newT.toFixed(1)}s (목표 60~120)`);
+  assert.deepEqual(bad, [], bad.join('\n'));
+  return { res, snaps };
+}
+
+// 같은 메타 상태에서 클래스별 평균 도달 층이 전체 평균의 ±15% 안
+function classParity(snap, n) {
+  const res = {};
+  for (const cls of CLASS_KEYS) {
+    const r = [];
+    for (let s = 0; s < n; s++) {
+      const m = JSON.parse(snap);
+      r.push(playRun(m, botLoadout(m, cls), 5000 + s).summary.floorsCleared);
+    }
+    res[cls] = avg(r);
+  }
+  const mean = avg(Object.values(res));
+  const best = JSON.parse(snap).best;
+  console.log(`클래스 동등성(최고 ${best}층 메타, ${n}회씩): ` + Object.entries(res).map(([k, v]) => `${k} ${v.toFixed(1)}(${((v / mean - 1) * 100).toFixed(0)}%)`).join(' · '));
+  for (const [k, v] of Object.entries(res)) assert.ok(Math.abs(v / mean - 1) <= 0.15, `${k} 평균 ${v.toFixed(1)}층, 전체 ${mean.toFixed(1)}층 대비 ±15% 밖`);
+}
+
 smoke();
 addiction();
 fantasyPick();
@@ -835,5 +1021,17 @@ heroItemRolls();
 heroPowerMonotonic();
 heroBagAndEquip();
 heroJsonRoundtrip();
+metaUpgrades();
+runLifecycle();
+reviveWard();
+slaughterPace();
+
+const parityAt = FULL ? [40, 80] : [40];
+const seeds = FULL ? [SEED, SEED + 1, SEED + 2] : [SEED];
+let snaps = null;
+for (const s of seeds) {
+  const c = campaignCheck(s, parityAt);
+  snaps ||= c.snaps;
 }
-balance(quick ? 15 : 100);
+for (const b of parityAt) classParity(snaps[b], FULL ? 4 : 3);
+console.log('캠페인 밸런스 통과');

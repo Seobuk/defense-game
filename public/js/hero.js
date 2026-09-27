@@ -8,8 +8,8 @@ export const HERO_CLASSES = {
   knight: {
     name: '기사', role: '근접 탱커 — 도발로 적을 붙잡는다', weapon: '검',
     base: { hp: 260, atk: 12, range: 48, atkSpd: 1.0, moveSpd: 95 },
-    passive: '반경 150 안의 적은 성벽 대신 기사를 노린다(도발)',
-    taunt: 150, melee: true,
+    passive: '반경 120 안의 적은 성벽 대신 기사를 노린다(도발)',
+    taunt: 120, melee: true,
     ult: { name: '성스러운 방패', cd: 26, dur: 3, r: 170 },
     ultDesc: '3초간 무적 + 주변 적 기절',
     unlock: () => true,
@@ -74,18 +74,18 @@ const CLASS_TITLE = {
 export const heroTitle = (cls, level) => (CLASS_TITLE[cls] || CLASS_TITLE.knight)[heroTier(level)];
 
 export const MAX_HERO_LV = 99;
-// ponytail: 곡선은 밸런스 러너(100층) 결과로 맞춤(레벨 60~80) — 수치 바꾸면 npm test로 재확인
-export const xpToNext = level => Math.floor(90 * 1.05 ** (level - 1));
-export const heroClearXp = (stage, firstClear) => Math.ceil((stage * 1.6 + 12) * (firstClear ? 2.4 : 1));
-const XP_KILL = { normal: 1.4, elite: 9, named: 45 };
+// ponytail: 곡선은 로그라이트 밸런스 러너(누적 도전) 결과로 맞춤 — 수치 바꾸면 npm test로 재확인
+export const xpToNext = level => Math.floor(100 * 1.06 ** (level - 1));
+export const heroClearXp = (stage, firstClear) => Math.ceil((stage * 0.5 + 5) * (firstClear ? 2.4 : 1));
+const XP_KILL = { normal: 0.4, elite: 3, named: 15 };
 export const xpForKill = (e, stage) => (e.named ? XP_KILL.named : e.isBoss ? XP_KILL.elite : XP_KILL.normal) * (1 + stage * 0.03);
 
 export const MILESTONES = [
-  { lv: 5, key: 'reroll1', desc: '스테이지당 카드 새로고침 1회' },
+  { lv: 5, key: 'reroll1', desc: '도전마다 카드 새로고침 1회' },
   { lv: 8, key: 'skillUp1', desc: '클래스 스킬 강화' },
   { lv: 15, key: 'choose4', desc: '카드 4장 중 선택' },
   { lv: 20, key: 'skillUp2', desc: '클래스 스킬 강화' },
-  { lv: 30, key: 'extraCard', desc: '스테이지 시작 시 카드 1장 추가' },
+  { lv: 30, key: 'extraCard', desc: '도전 시작 시 카드 1장 추가' },
   { lv: 35, key: 'skillUp3', desc: '클래스 스킬 강화' },
   { lv: 50, key: 'legendBoost', desc: '전설 카드 확률 상승' },
 ];
@@ -502,18 +502,27 @@ export function castHeroUlt(g, api) {
 }
 
 // ── 성장(경험치/레벨업) · 처치 보상(경험치+드롭) ──
-export function heroGainXp(g, amt, api) {
-  const hero = g.hero;
-  if (!hero || !hero.cls || !(amt > 0)) return;
+// 경험치 적립(순수). 오른 레벨마다 { level, tier, milestone } 반환 — 오프라인 보상도 이걸 쓴다
+export function addXp(hero, amt) {
+  const ups = [];
+  if (!hero || !(amt > 0)) return ups;
   hero.xp += amt;
   let need = xpToNext(hero.level);
   while (hero.xp >= need && hero.level < MAX_HERO_LV) {
     hero.xp -= need;
     hero.level++;
     const m = milestoneAt(hero.level);
-    api.emit(g, { type: 'heroLevelUp', level: hero.level, tier: heroTier(hero.level), milestone: m ? m.key : null });
+    ups.push({ level: hero.level, tier: heroTier(hero.level), milestone: m ? m.key : null });
     need = xpToNext(hero.level);
   }
+  return ups;
+}
+
+// 런 중 경험치(영구 강화 '영웅 경험치' 배율 g.fx.xpMul 적용)
+export function heroGainXp(g, amt, api) {
+  const hero = g.hero;
+  if (!hero || !hero.cls) return;
+  for (const u of addXp(hero, amt * (g.fx ? g.fx.xpMul : 1))) api.emit(g, { type: 'heroLevelUp', ...u });
 }
 
 const DROP_CHANCE = { normal: 0.02, elite: 0.35, named: 1 };

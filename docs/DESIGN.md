@@ -372,3 +372,110 @@ URL 파라미터 `?stage=N` (해당 스테이지로 시작), `?gold=N` (골드 �
 - 1~9스테이지 패배 0회. 첫 벽은 대략 10층 보스 전후.
 - 1~100 전체 시도 횟수 ≤ 약 140, 어떤 스테이지도 재도전 8회 이하.
 - 100층 클리어 가능. 100층 무렵 데미지 숫자는 수백만~수십억대(숫자 커지는 쾌감).
+
+### 로그라이트 도전 구조 — 최신 사용자 요청 (기존 '패배 시 재도전/이전 스테이지'·'스테이지 한정 빌드'를 대체)
+사용자: "한 번 하다 죽으면 스테이지 1부터 다시 시작, 정비하고 강화시켜서 다시 스테이지 도전하는 형식. 매번 도전할 때마다 어떤 영웅과 어떤 스킬을 조합할까."
+위 문서의 '패배 시 재도전 / 이전 스테이지로', '스테이지 한정 빌드(Lv3, 스테이지당 3장)', '퍼크 3종', '오프라인 골드', '골드·업그레이드 스테이지 간 유지', 옛 밸런스 목표는 아래로 대체된다.
+
+- **도전(런)**: 1층부터 성벽이 무너질 때까지. 성벽 붕괴 = 도전 종료(재도전·이전 층 없음) → 결과 화면 → 정비 화면. 100층 돌파도 도전 종료(승리).
+- **런마다 초기화**: 골드, 성벽 마법사 업그레이드(두 마법사), 스킬 빌드, AI 동료, 콤보. **영구(메타)**: 영웅 레벨·경험치·장비·가방, 보석·영구 강화, 도감, 뽑아 본 스킬, 최고 기록, 클래스 해금, 설정.
+- **스킬 빌드 = 런 전체 누적**: 층마다 처치 60%에서 카드 1장 + 네임드 보스 등장 시 1장 + 영웅 Lv30이면 도전 시작 시 1장. 슬롯 6칸 · Lv1~5. 슬롯이 차면 보유 스킬 강화만, 강화할 게 모자라면 각성 카드(소폭 스탯, 런 누적)로 채운다. 융합 8종은 런 안에서 두 원소를 모으면 발동.
+- **학살 가속**: 필드가 비면 다음 스폰 묶음을 1.2초 뒤로 당기고 그 묶음을 2배 빠르게 → 압도적인 층은 15~25초. **광폭화**: 층이 80초를 넘기면 적 피해가 10초마다 2배, 이동은 감속·밀쳐내기를 무시(서리 결계+회오리 같은 교착 방지).
+- **난이도**: 적 체력 = 기존 곡선 × 1.07^(층-1) × 구간 보정(`stages.js RUN_HP`). 런 안의 성장보다 적이 층당 약 5% 빨리 강해져 도전은 결국 끝나고, 영구 강화(복리)가 그 벽을 밀어 올린다. 기사 도발 반경 150 → 120(클래스 동등성).
+
+### 로그라이트 구현 계약
+sim.js(런 상태) + run.js(메타 ↔ 런, 신규) + save.js(v2) + config.js(수치). 모두 DOM 없음. UI 통합 패스는 아래 API만 부르면 된다.
+
+**메타 객체** = `save.js normalize()` 결과(저장 데이터 그 자체, run.js 함수가 제자리에서 바꾼다):
+```
+{ v:2, name, best, gems,
+  metaLv: { power, haste, ward, greed, startGold, wisdom, choice, reroll, startSlot, revive, critBoom, pickaxe },
+  auto, settings:{ dmgNumbers, sound, shake, speed, autoNext },
+  hero,                       // 기존 영웅 객체(영구)
+  discovered: string[],       // 도감
+  seenSpells: string[],       // 한 번이라도 뽑아 본 스킬 = 시작 스킬 후보
+  runs,                       // 끝낸 도전 수
+  lastLoadout: { cls, startSpells[] },   // '같은 조합으로 도전'
+  run: null | RunSave,        // 이어하기(스테이지 시작 시점). 도전 중이 아니면 null
+  lastSeen }
+```
+저장 키는 그대로 `wallDefense.save.v1`(안의 `v:2`). **v1 → v2 마이그레이션**: 영웅·보석·최고 기록·도감·설정·이름·auto 유지, 퍼크 `pickaxe/critBoom/startGold` → 같은 키의 `metaLv`, 골드·강화 레벨·동료·층은 버리고 대신 **최고 기록 × 3 보석**(`MIGRATE_GEMS_PER_BEST`), `run = null`, `seenSpells = []`. 어떤 입력에도 throw 없음.
+
+**run.js**
+```
+buyMeta(meta, key) → bool                 // 보석 차감 + metaLv[key]++ (최대·보석 부족이면 false)
+startSlots(meta) → 0..2                    // 시작 스킬 슬롯 수(영구 강화 startSlot)
+startSpellChoices(meta) → key[]            // seenSpells(SPELLS 순서)
+validLoadout(meta, {cls, startSpells}) → {cls, startSpells}   // 미해금 클래스·안 뽑아 본 스킬·슬롯 초과·중복 제거
+newRun(meta, loadout, seed?) → game        // 1층부터. meta.hero.cls = cls, meta.lastLoadout, meta.run = 첫 체크포인트
+restoreRun(meta, saved = meta.run, seed?) → game | null      // 이어하기: 저장된 스테이지 '시작'부터
+endRun(game, meta) → Summary | null        // 도전 종료 정산(성벽 붕괴·100층·포기 모두). 두 번째 호출은 null
+applyOffline(meta, computeOffline(meta)) → levelUps[]         // 보석 + 영웅 경험치
+campAct(meta, {type:'heroClass', cls} | {type:'equip', itemId} | {type:'autoEquip', on}) → bool
+                                           // 정비 화면 영웅 조작(게임 없이). 판매는 도전 중에만(act 'sell' → 런 골드)
+serializeRun(game) / normalizeRun(raw)     // (sim.js 재수출) 체크포인트 JSON ↔ 검증
+Summary = { stageReached, floorsCleared, victory, prevBest, best, newBest, bossesKilled, time,
+            rewards: { floor, first, boss, flawless, best, gems },   // gems = 합계(이미 meta.gems에 더함)
+            spells, loadout, newClasses: string[] }                   // newClasses = 이번에 해금된 클래스(성직자 20층·암살자 40층)
+```
+`endRun`은 meta에 보석·`best = max(best, floorsCleared)`·도감·뽑아 본 스킬을 합치고 `runs++`, `run = null`. 신기록 판정은 도전 시작 때의 최고 기록(`game.run.startBest`) 기준이라, main.js가 클리어마다 `data.best`를 올려도(3배속 해금용) 이중 계산이 없다.
+
+**game 필드(추가·변경)**
+```
+run: { awaken:{power,haste,ward,fortune}, gems:{floor,first,boss,flawless}, reviveUsed, floors, bosses,
+       firstClears, flawless, time, startBest, loadout:{cls,startSpells}, over, victory, ended,
+       checkpoint }          // checkpoint = startStage마다 자동 갱신되는 serializeRun() → 저장은 data.run = game.run.checkpoint
+spells: { [key]: 1..5 }      // 런 전체 누적(최대 6개). startStage에 리셋되지 않는다
+fusions: string[]            // 런 동안 유지
+rerollLeft                   // 런 전체 남은 새로고침(영웅 Lv5 1회 + 영구 강화 reroll)
+seenSpells: Set<string>      // 뽑아 본 스킬(저장 시 [...game.seenSpells], endRun도 합침)
+metaLv, fx                   // fx = 영구 강화 × 각성 배율 { atkMul, rateMul, wallMul, goldMul, xpMul, startGold, choices, rerolls, startSlots, revive, critBoom }
+berserk                      // 1 = 평소, >1 = 광폭화 배율(적 피해 ×, 붉은 연출용)
+result.gems = [g, g]         // 이번 층에서 '적립'된 런 보석(층 + 무결점 + 첫 돌파). 지급은 endRun
+pick.cards[i] = { spell, level, rarity, fusionHint } | { spell:null, awaken:'power'|'haste'|'ward'|'fortune', level, rarity:'common', fusionHint:false }
+```
+`players[i].perks`는 없어졌다(영구 강화는 `game.metaLv`/`game.fx`, 두 마법사 공통). `cannonStats(lv, fx)`의 두 번째 인자가 perks → fx.
+카드 선택지 수 = `cardCount(game)` = 3 + 영웅 Lv15(+1) + `metaLv.choice`(+1). 각성 카드 이름·설명은 `AWAKEN_BY_KEY[card.awaken]`(config.js `AWAKENINGS`). 스킬 설명은 `SPELLS[].desc[level-1]`(Lv1~5).
+
+**이벤트(추가)**
+```
+runOver{stage, victory, floors}   // 도전 종료 순간(성벽 붕괴 = defeat 직후, 100층 = clear 직후) → 결과 화면 → endRun
+revive{x, y, hp}                  // 부활 결계 발동(성벽 50%, 1.5초 빙결) + hitstop{400}. 도전마다 1회
+berserk{}                         // 층 80초 경과 → 광폭화 시작(한 번)
+spellPick{spell:null, awaken, level, rarity}   // 각성 카드 선택
+```
+`defeat{stage}`는 그대로 나오고 바로 뒤에 `runOver`가 붙는다. 패배 모달의 '재도전/이전 층' 버튼은 없앤다.
+
+**config.js**: `META_UPGRADES`(key·name·desc·max·c0·grow·per), `META_KEYS`, `META_BY_KEY`, `metaCost(key, lv)`, `metaMax(key)`, `metaMul`, `metaFx(metaLv)`, `metaDisplay(key, lv)`(상점 표시 문구: 배율형은 누적 '+N%'), `startGoldAmount(lv)`, `RUN_GEMS`, `SPELL_SLOTS=6`, `SPELL_MAX_LV=5`, `MANA_FRAC=0.6`, `AWAKENINGS`/`AWAKEN_KEYS`/`AWAKEN_BY_KEY`, `OFFLINE_CAP_HOURS`, `offlineGemsPerHour`, `offlineXpPerMin`. 삭제: `PERKS/PERK_KEYS/perkCost/perkMax/perkDisplay/gemReward/offlineGoldPerMin/MANA_FRACS`.
+
+| 영구 강화 | 효과(레벨당) | 최대 |
+|---|---|---|
+| power 기본 마력 | 모든 피해 ×1.10(복리 — 마법사·스킬·영웅 모두 공격력 기반) | 30 |
+| haste 기본 시전 속도 | 시전 속도 ×1.03(15회/초 상한 뒤에 곱함) | 20 |
+| ward 성벽 결계 | 성벽 최대 내구력 ×1.08 | 20 |
+| greed 골드 획득 | 처치 골드 ×1.06 | 25 |
+| startGold 시작 골드 | 도전 시작 골드(두 마법사 각각) 150 × 1.5^(lv-1) | 15 |
+| wisdom 영웅 경험치 | ×1.10 | 10 |
+| choice 카드 선택지 | +1장 | 1 |
+| reroll 카드 새로고침 | 도전마다 +1회 | 3 |
+| startSlot 시작 스킬 슬롯 | +1칸(뽑아 본 스킬 중 Lv1로 시작) | 2 |
+| revive 부활 결계 | 도전마다 1회 성벽 50% 회복 | 1 |
+| critBoom 치명타 폭발 | 기존 퍼크 | 10 |
+| pickaxe 황금 곡괭이 | 방치 보상 +15%/lv | 20 |
+
+**보석**: 층 클리어 `1 + ⌊층/15⌋`(무결점 +50%), 첫 돌파 `3 + ⌊층/8⌋`, 네임드 보스 `4 + ⌊층/8⌋`, 신기록 보너스 `8 + 3 × (새 최고 − 이전 최고)`. 결과 화면은 `Summary.rewards`로 항목별 표시, `newBest`면 크게 연출.
+**오프라인**: `computeOffline(meta, now) → { gems, xp, minutes }`(골드 없음, 최대 8시간). 지급은 `applyOffline`.
+
+**UI 통합 흐름 (main.js · ui.js · heroui.js — 이 브랜치에선 손대지 않음)**
+- 부팅: `data = store.load()`. `data.run`이 있으면 타이틀에 **이어하기**(`game = restoreRun(data)`), 없으면 정비 화면.
+- **정비 화면**: 영웅 화면 재사용(클래스 = `campAct(data, {type:'heroClass'})`, 장착 = `campAct(data, {type:'equip'|'autoEquip'})`), **시작 스킬 선택**(`startSlots(data)`칸, 후보 `startSpellChoices(data)`), **영구 강화 상점**(`META_UPGRADES` + `metaCost/metaMax/metaDisplay`, 구매 `buyMeta`), 도감, 최고 기록, **도전 시작**(`newRun(data, {cls, startSpells})`), **같은 조합으로 도전**(`newRun(data, data.lastLoadout)`).
+- 도전 중: 클리어 → (자동 진행이면) `startStage(game, game.stage + 1)`; 저장은 `data.run = game.run.checkpoint`, `data.discovered = [...game.discovered]`, `data.seenSpells = [...game.seenSpells]`, 영웅은 같은 객체. 클래스는 도전 동안 고정(`act heroClass`는 1층 시작 전만).
+- `runOver` 이벤트 → 자동 진행 멈춤 → **결과 화면**(`endRun(game, data)`의 Summary: 도달 층, 보스 처치, 보석 내역, 신기록, 새 클래스) → 정비 화면. 자동 재도전 없음.
+- 오프라인: `const r = computeOffline(data)` → 팝업(보석·경험치) → `applyOffline(data, r)`.
+- 3배속 해금 `best ≥ 20` 유지. `?spells=` 디버그는 Lv1~5.
+
+### 로그라이트 밸런스 목표 (test/sim.test.js 캠페인 러너로 검증)
+새 저장 → 봇이 도전 → `endRun` → `botSpendGems`(가치/비용 탐욕) → `botLoadout`(클래스 순환, 선호 시작 스킬) → 다시 도전, 100층 돌파까지.
+- 첫 도전 8~15층 · 도전당 평균 +3~6층 · 20~35회 · 총 15~25시간(시뮬 1배속) · 최고 기록 절반 이하 층 평균 ≤30초 · 새 층 평균 60~120초.
+- 클래스 5종 동등성: 같은 메타 상태(최고 40층 시점, `--full`은 80층도)에서 클래스별 평균 도달 층이 전체 평균 ±15% 안.
+- `npm test` = 단위 테스트 + 캠페인 1회(시드 1) + 동등성(40층) ≈ 2분. `node test/sim.test.js --full` = 캠페인 3시드 + 동등성 40·80층.

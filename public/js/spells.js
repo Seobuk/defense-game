@@ -1,11 +1,10 @@
-// 판타지 스킬 14종 + 원소 융합 8종의 런타임 효과 (sim.js가 호출). DOM 없음.
+// 판타지 스킬 14종(Lv1~5) + 원소 융합 8종의 런타임 효과 (sim.js가 호출). DOM 없음.
 // api = sim.js가 넘겨주는 { damage, killEnemy, damageWall, emit, chainArc, frontMost }
 import { WORLD_W, WORLD_H, WALL_Y, CANNONS, SPELL_BY_KEY, FUSION_FX } from './config.js';
 import { heroBonuses } from './hero.js';
 
+// 스테이지마다 전장 효과·쿨타임만 새로 (g.spells 빌드·g.fusions 는 런 전체 유지 — sim.js 소유)
 export function initSpells(g) {
-  g.spells = {};                // { key: level(1~3) } — 스테이지 한정
-  g.fusions = [];               // 지금 켜진 융합 키
   g.spellFx = { tornadoes: [], lances: [], beams: [], ghosts: [], dragon: null, golem: null, frostWard: null };
   g.spellT = { fireball: 0, lightningStrike: 0, iceLance: 0, tornado: 0, judgment: 0, dragon: 0 };
 }
@@ -197,7 +196,7 @@ function updateTornado(g, dt, api, T, fx) {
       const dx = e.x - tn.x, dy = e.y - tn.y, rr = tn.r + e.r;
       if (dx * dx + dy * dy > rr * rr) continue;
       sHit(g, api, e, dmg, blaze ? 'fire' : 'wind', false);
-      e.y = Math.max(0, e.y - 60 * dt); // 밀어냄: 성벽에서 먼 쪽(위)으로
+      if (g.berserk === 1) e.y = Math.max(0, e.y - 60 * dt); // 밀어냄: 성벽에서 먼 쪽(위)으로(광폭화 중엔 무시)
       if (blaze) { e.burn += dmg * FUSION_FX.blazeBurn; e.burnT = Math.max(e.burnT, 1.5); e.burnO = 0; }
     }
   }

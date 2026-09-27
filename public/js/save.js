@@ -1,46 +1,42 @@
 // localStorage 저장/불러오기 + 오프라인 보상 계산. 절대 throw 하지 않는다.
+// v2(로그라이트): 메타(영구) + 진행 중 도전(run, 스테이지 시작 시점). v1 → v2 마이그레이션 포함
 import {
-  UPGRADE_KEYS, upgradeMax, PERK_KEYS, perkMax, SYN_KEYS, SPEEDS, MAX_STAGE,
-  offlineGoldPerMin, OFFLINE_CAP_HOURS,
+  META_KEYS, metaMax, SYN_KEYS, SPEEDS, MAX_STAGE, SPELL_KEYS,
+  offlineGemsPerHour, offlineXpPerMin, OFFLINE_CAP_HOURS,
 } from './config.js';
 import { toInt } from './util.js';
 import { newHero, HERO_CLASS_KEYS, MAX_HERO_LV, SLOTS, RARITY_KEYS, SUBSTATS, BAG_SIZE } from './hero.js';
+import { normalizeRun } from './sim.js';
 
-export const STORAGE_KEY = 'wallDefense.save.v1';
-const LV_CAP = 3000; // sim.js 와 같은 무한 업그레이드 상한
+export const STORAGE_KEY = 'wallDefense.save.v1'; // 키는 그대로, 안의 스키마가 v:2
+export const SAVE_VERSION = 2;
+export const MIGRATE_GEMS_PER_BEST = 3; // v1 → v2: 사라지는 골드·강화 레벨 대신 최고 기록 × 3 보석
 const SAVE_DELAY = 1000;
 const DMG_MODES = ['full', 'simple', 'off'];
 
 const num = v => { v = Number(v); return Number.isFinite(v) && v > 0 ? v : 0; };
 const bool = (v, d) => (typeof v === 'boolean' ? v : d);
 const obj = v => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
+const keys = (v, all) => (Array.isArray(v) ? [...new Set(v.filter(k => all.includes(k)))] : []);
 
-function levels(src) {
-  src = obj(src);
-  const lv = {};
-  for (const k of UPGRADE_KEYS) lv[k] = toInt(src[k], 0, Math.min(LV_CAP, upgradeMax(k)));
-  return lv;
-}
-
-// 어떤 입력이 와도 올바른 저장 객체로 (기본값 채우기 + 범위 검증 + 이전 버전 필드 보충)
+// 어떤 입력이 와도 올바른 v2 저장 객체로 (기본값 채우기 + 범위 검증 + v1 마이그레이션)
+// v1: 영웅·보석·최고 기록·도감·설정 유지, 퍼크 3종 → 같은 키의 영구 강화 레벨, 골드·강화 레벨·동료·층은 버리고 최고 기록 × 3 보석
 export function normalize(d) {
   d = obj(d);
   const s = obj(d.settings);
-  const perks = {};
-  for (const k of PERK_KEYS) perks[k] = toInt(obj(d.perks)[k], 0, perkMax(k));
+  const v1 = d.v !== SAVE_VERSION;
   const best = toInt(d.best, 0, MAX_STAGE);
-  const p = obj(d.partner);
+  const src = obj(v1 ? d.perks : d.metaLv);
+  const metaLv = {};
+  for (const k of META_KEYS) metaLv[k] = toInt(src[k], 0, metaMax(k));
+  const lo = obj(d.lastLoadout);
   return {
-    v: 1,
+    v: SAVE_VERSION,
     name: typeof d.name === 'string' && d.name.trim() ? d.name.trim().slice(0, 16) : '나',
-    stage: toInt(d.stage, 1, Math.min(MAX_STAGE, best + 1)), // 최고 기록 다음 층까지만
     best,
-    gems: Math.floor(num(d.gems)),
-    gold: num(d.gold),
-    lv: levels(d.lv),
-    perks,
+    gems: Math.floor(num(d.gems)) + (v1 ? best * MIGRATE_GEMS_PER_BEST : 0),
+    metaLv,
     auto: bool(d.auto, false),
-    partner: { gold: num(p.gold), lv: levels(p.lv) },
     settings: {
       dmgNumbers: DMG_MODES.includes(s.dmgNumbers) ? s.dmgNumbers : 'full',
       sound: bool(s.sound, true),
@@ -49,7 +45,14 @@ export function normalize(d) {
       autoNext: bool(s.autoNext, true),
     },
     hero: hero(d.hero),
-    discovered: Array.isArray(d.discovered) ? [...new Set(d.discovered.filter(k => SYN_KEYS.includes(k)))] : [],
+    discovered: keys(d.discovered, SYN_KEYS),
+    seenSpells: keys(d.seenSpells, SPELL_KEYS),      // 한 번이라도 뽑아 본 스킬(시작 스킬 후보)
+    runs: toInt(d.runs, 0, 1e6),                      // 끝낸 도전 수
+    lastLoadout: {                                     // '같은 조합으로 도전'
+      cls: HERO_CLASS_KEYS.includes(lo.cls) ? lo.cls : null,
+      startSpells: keys(lo.startSpells, SPELL_KEYS).slice(0, 2),
+    },
+    run: !v1 && d.run && typeof d.run === 'object' ? normalizeRun(d.run) : null, // 이어하기(스테이지 시작 시점)
     lastSeen: num(d.lastSeen),
   };
 }
@@ -127,11 +130,17 @@ if (typeof addEventListener === 'function' && typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => { if (document.hidden) flush(); });
 }
 
-// 방치 보상: 1분 미만 무시, 최대 8시간, 시계가 거꾸로 가면 0
+// 방치 보상: 보석(소량) + 영웅 경험치. 1분 미만 무시, 최대 8시간, 시계가 거꾸로 가면 0
 export function computeOffline(data, nowMs = Date.now()) {
+  const none = { gems: 0, xp: 0, minutes: 0 };
   const seen = Number(data?.lastSeen), now = Number(nowMs);
-  if (!(seen > 0) || !(now > seen)) return { gold: 0, minutes: 0 };
+  if (!(seen > 0) || !(now > seen)) return none;
   const minutes = Math.min(OFFLINE_CAP_HOURS * 60, Math.floor((now - seen) / 60000));
-  if (minutes < 1) return { gold: 0, minutes: 0 };
-  return { gold: offlineGoldPerMin(toInt(data.best, 0, MAX_STAGE), toInt(data.perks?.pickaxe, 0, perkMax('pickaxe'))) * minutes, minutes };
+  if (minutes < 1) return none;
+  const best = toInt(data.best, 0, MAX_STAGE), pick = toInt(data.metaLv?.pickaxe, 0, metaMax('pickaxe'));
+  return {
+    gems: Math.floor(offlineGemsPerHour(best, pick) * minutes / 60),
+    xp: Math.floor(offlineXpPerMin(best, pick) * minutes),
+    minutes,
+  };
 }

@@ -1,7 +1,8 @@
-// 자동 강화 / AI 동료 로직
-import { UPGRADE_KEYS, upgradeCost, upgradeMax, cannonStats, wallMax, WALL_Y } from './config.js';
+// 자동 강화 / AI 동료 로직 + 헤드리스 테스트용 메타 정책(보석 소비·로드아웃)
+import { UPGRADE_KEYS, upgradeCost, upgradeMax, cannonStats, wallMax, WALL_Y, META_KEYS, metaCost, metaMax, SPELL_SLOTS } from './config.js';
 import { act } from './sim.js';
 import { unlockedClasses, autoEquipAll } from './hero.js';
+import { buyMeta, startSlots } from './run.js';
 
 // 대포 1문의 기대 DPS 지표 (부채꼴 추가 탄은 일부만 맞는다고 가정)
 function power(lv) {
@@ -39,17 +40,61 @@ export function autoUpgrade(g, i) {
   }
 }
 
-// 판타지 스킬 카드 선택 휴리스틱(자동 강화 · 헤드리스 봇 공용): 융합 완성 > 보유 스킬 강화 > 희귀도
+// 판타지 스킬 카드 선택 휴리스틱(자동 강화 · 헤드리스 봇 공용): 융합 완성 > 보유 스킬 강화 > 새 스킬(희귀도) > 각성
 const RARITY_RANK = { common: 0, rare: 1, legend: 2 };
 export function pickCard(g, cards) {
   cards = cards || (g.pick && g.pick.cards) || [];
   let idx = 0, best = -1;
   cards.forEach((c, i) => {
-    const owned = (g.spells[c.spell] || 0) > 0;
-    const score = (c.fusionHint ? 100 : 0) + (owned ? 10 : 0) + RARITY_RANK[c.rarity];
+    const score = c.awaken ? (c.awaken === 'power' ? 2 : 1)
+      : (c.fusionHint ? 100 : 0) + ((g.spells[c.spell] || 0) > 0 ? 10 : 8) + RARITY_RANK[c.rarity];
     if (score > best) { best = score; idx = i; }
   });
   return idx;
+}
+
+// ── 메타 정책(테스트·밸런스 러너용) ──
+// 휴리스틱 가치(레벨이 오를수록 체감) ÷ 비용이 가장 좋은 영구 강화를 살 수 있는 만큼 산다
+function metaValue(k, lv) {
+  switch (k) {
+    case 'power': return 10 * 0.06 / (1 + 0.06 * lv);
+    case 'haste': return 8 * 0.03 / (1 + 0.03 * lv);
+    case 'ward': return 3 * 0.08 / (1 + 0.08 * lv);
+    case 'greed': return 7 * 0.05 / (1 + 0.05 * lv);
+    case 'startGold': return 0.3 / (1 + 0.3 * lv);
+    case 'wisdom': return 2 * 0.1 / (1 + 0.1 * lv);
+    case 'choice': return 1;
+    case 'reroll': return 0.3;
+    case 'startSlot': return 0.8;
+    case 'revive': return 1.2;
+    case 'critBoom': return 0.25 / (1 + 0.2 * lv);
+  }
+  return 0; // pickaxe: 방치 보상만
+}
+export function botSpendGems(meta) {
+  const bought = [];
+  for (;;) {
+    let key = null, bestV = 0;
+    for (const k of META_KEYS) {
+      const lv = meta.metaLv[k] | 0;
+      if (lv >= metaMax(k) || metaCost(k, lv) > meta.gems) continue;
+      const v = metaValue(k, lv) / metaCost(k, lv);
+      if (v > bestV) { bestV = v; key = k; }
+    }
+    if (!key || !buyMeta(meta, key)) return bought;
+    bought.push(key);
+  }
+}
+
+// 로드아웃: 지정 클래스(해금 안 됐으면 가장 최근 해금 클래스) + 선호 순서대로 뽑아 본 시작 스킬
+const START_PREF = ['fireball', 'lightningStrike', 'babyDragon', 'judgment', 'curseMark', 'iceLance', 'tornado', 'chainLightning',
+  'flameBullet', 'gale', 'soulHarvest', 'frostWard', 'holyLight', 'stoneGolem'];
+export function botLoadout(meta, cls) {
+  const classes = unlockedClasses(meta.best);
+  return {
+    cls: classes.includes(cls) ? cls : classes[classes.length - 1],
+    startSpells: START_PREF.filter(k => meta.seenSpells.includes(k)).slice(0, Math.min(SPELL_SLOTS, startSlots(meta))),
+  };
 }
 
 // 영웅 자동 처리(자동 강화 on일 때만 호출): 클래스 없으면 해금된 것 중 하나 선택 + 자동 장착 on, 궁극기 사용
