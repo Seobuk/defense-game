@@ -24,6 +24,8 @@ const PICK_HOLD_BOSS = 1800, PICK_HOLD_METEOR = 800;
 const FUSION_KEYS = new Set(SYNERGIES.filter(s => s.kind === 'fusion').map(s => s.key));
 
 const native = updater.isNative();
+// ponytail: UA 버전으로 판별(HTML 글자 paint-order 지원 여부를 직접 재는 방법이 없다). Chrome 123부터 지원
+if (+(/Chrome\/(\d+)/.exec(navigator.userAgent)?.[1] || 999) < 123) document.documentElement.classList.add('no-po');
 const App = window.Capacitor?.Plugins?.App;
 
 let data = store.load();
@@ -48,11 +50,10 @@ const ui = createUI(document.getElementById('app'), {
   onContinueRun: () => startRun(restoreRun(data)),
   onAbandonRun,
   onResultDone: () => { if (mode === 'result') showCamp(); },
-  onCampAct: a => persistOk(campAct(data, a)),
+  onCampAct: a => { const ok = campAct(data, a); if (ok && a.type === 'train') audio.play('upgrade'); return persistOk(ok); },
   onBuyMeta: k => { const ok = buyMeta(data, k); if (ok) audio.play('upgrade'); return persistOk(ok); },
   onStartRun: lo => startRun(newRun(data, lo)),
   onOpenHero: ({ tab } = {}) => (inRun() ? heroUI.open(game.hero, runCtx(), { tab }) : heroUI.open(data.hero, campCtx(), { tab })),
-  onUpgrade: stat => inRun() && act(game, 0, { type: 'upgrade', stat }),
   onToggleAuto: on => { if (inRun() && act(game, 0, { type: 'auto', on })) data.auto = !!on; },
   onSkill: skill => inRun() && act(game, 0, { type: 'skill', skill }),
   onSpeed,
@@ -75,13 +76,13 @@ const ui = createUI(document.getElementById('app'), {
   onOpenInstallSettings,
 });
 
-// 영웅 · 장비 · 특성 화면. 도전 중엔 sim act, 정비 화면에선 run.js campAct(판매는 도전 중만 — 골드가 런 한정)
+// 영웅 · 장비 · 특성 화면. 도전 중엔 sim act(판매 골드 = 이번 도전 골드), 정비 화면에선 run.js campAct(판매 골드 = 보유 골드)
 const heroDo = (runAction, campAction = runAction) => persistOk(inRun() ? act(game, 0, runAction) : !!campAction && campAct(data, campAction));
 const heroUI = createHeroUI(document.getElementById('app'), {
   onSelectClass: cls => heroDo({ type: 'heroClass', cls }),
   onEquip: itemId => heroDo({ type: 'equip', itemId }),
-  onSell: itemId => heroDo({ type: 'sell', itemId }, null),
-  onSellRarity: rarity => heroDo({ type: 'sellRarity', rarity }, null),
+  onSell: itemId => heroDo({ type: 'sell', itemId }),
+  onSellRarity: rarity => heroDo({ type: 'sellRarity', rarity }),
   onToggleAutoEquip: on => heroDo({ type: 'autoEquip', on }),
   onTalent: key => heroDo({ type: 'talent', key }, { type: 'talent', cls: data.hero.cls, key }),
   onTalentReset: () => !inRun() && persistOk(campAct(data, { type: 'talentReset', cls: data.hero.cls })),
@@ -90,7 +91,7 @@ const heroUI = createHeroUI(document.getElementById('app'), {
 });
 // 클래스 해금은 최고 기록(best) 기준
 const runCtx = () => ({ stage: data.best, gold: game.players[0].gold });
-const campCtx = () => ({ stage: data.best, camp: true });
+const campCtx = () => ({ stage: data.best, camp: true, gold: data.gold });
 
 // ── 디버그 파라미터 (브라우저 전용): ?spells=fireball:3,tornado ?herolv=N ?loot=rarity|all ?gems=N ?best=N ──
 if (!native) {
@@ -287,7 +288,8 @@ function handleEvents(events, now) {
       case 'wall': case 'thorns': audio.play('hit'); break;
       case 'skill': audio.play(ev.skill); break;
       case 'bossSpawn': case 'warn': case 'enrage': case 'berserk': audio.play('boss'); break;
-      case 'upgrade': if (ev.o === 0) audio.play('upgrade'); break;
+      case 'collabProc': audio.play('crit'); break;
+      case 'linkFinish': audio.play('big'); audio.play('fusion'); break;
       case 'combo': audio.play('combo', ev.tier); break;
       case 'frenzy': audio.play('frenzy'); break;
       case 'chain': audio.play('crit'); break;
@@ -467,6 +469,7 @@ function frame(now) {
   const dt = Math.min(0.1, Math.max(0, (now - lastT) / 1000));
   lastT = now;
   meta.gems = data.gems;
+  meta.gold = data.gold;
   meta.best = data.best;
   meta.speed = inRun() ? game.speed : data.settings.speed;
   meta.autoNext = data.settings.autoNext;

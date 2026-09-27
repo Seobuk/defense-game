@@ -3,7 +3,7 @@
 // 소유: 아트 리드. 제작 에이전트는 이 파일을 고치지 말고 자기 모듈 안에 도우미를 둔다(공용이 꼭 필요하면 요청).
 // 스프라이트 규약: 모든 구운 캔버스는 월드 단위 반폭/반높이(c.hw, c.hh)를 가진다 → drawImage(c, x - c.hw, y - c.hh, c.hw * 2, c.hh * 2)
 //   bakeO 로 구운 것은 기준점(발·손잡이)이 중심에서 c.oy 만큼 아래 → put(c) 로 그린다.
-import { GOLD_POS as CFG_GOLD } from '../config.js';
+import { GOLD_POS as CFG_GOLD, WORLD_W, WORLD_H } from '../config.js';
 
 export const TAU = Math.PI * 2;
 export const INK = '#2a1b36';
@@ -148,11 +148,12 @@ export let ctx = null;                         // 화면 캔버스 2D 컨텍스�
 export let W = 1, H = 1;                       // 백킹 픽셀 크기
 export let scale = 1, ox = 0, oy = 0;          // 월드 → 화면 (흔들림 없음, HUD용)
 export let topExtra = 0;                       // 월드 y=0 위로 보이는 여분 높이(월드 단위, 세로로 긴 화면). 0 이상
+export let sideX = 0;                          // 월드 x=0 왼쪽(= x=720 오른쪽)으로 보이는 여분 폭(월드 단위, 넓은 화면·폴더블). 0 이상
 export let K = 1, BX = 0, BY = 0;              // 월드 → 화면 (흔들림·히트스톱 줌 포함)
 export let T = 0, RT = 0;                      // T = 애니메이션 시계(히트스톱 중 정지), RT = 실제 시계
 export let frameDt = 0, frameNo = 0;           // 이번 프레임 실제 dt, 프레임 번호
 export function setCanvas(c) { ctx = c; }
-export function setView(w, h, s, x, y, extra = 0) { W = w; H = h; scale = s; ox = x; oy = y; topExtra = extra; }
+export function setView(w, h, s, x, y, extra = 0, side = 0) { W = w; H = h; scale = s; ox = x; oy = y; topExtra = extra; sideX = side; }
 export function setWorldTransform(k, bx, by) { K = k; BX = bx; BY = by; }
 export function setClock(t, rt, dt, n) { T = t; RT = rt; frameDt = dt; frameNo = n; }
 
@@ -178,6 +179,9 @@ export const BAG_POS = { x: 652, get y() { return 170 - topExtra; } };
 export const MANA_POS = { x: 360, get y() { return 80 - topExtra; } };
 export const GOLD_POS = { x: CFG_GOLD.x, get y() { return CFG_GOLD.y - topExtra; } }; // 동전이 날아갈 골드 알약
 export const hudY = y => y - topExtra; // HUD(화면 위쪽) 기준 월드 y → 실제 월드 y
+// 화면 전체(위 여분 + 양옆 여분)를 덮는 채우기·이미지 — 오버레이·딤·섬광용
+export const fillView = () => ctx.fillRect(-sideX, -topExtra, WORLD_W + sideX * 2, WORLD_H + topExtra);
+export const drawView = img => ctx.drawImage(img, -sideX, -topExtra, WORLD_W + sideX * 2, WORLD_H + topExtra);
 // 캔버스 글꼴: 따옴표 포함 정확한 패밀리 이름(css/fonts.css). ART.md §5, §11
 export const FONT = '"WD Display","Jua","Do Hyeon","Black Han Sans","Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR","Noto Sans CJK KR",system-ui,sans-serif';
 export const NUM_FONT = '"WD Impact","Black Han Sans",' + FONT;

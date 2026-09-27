@@ -27,38 +27,64 @@
 </head>
 <body>
 <div id="app">
-  <!-- 게임 화면: 캔버스 + 상단 HUD + 무대 위 오버레이 -->
+  <!-- 게임 화면: 캔버스(무대 전체) + 월드 열(720 폭: 상단 HUD · 영웅 버튼) + 옆 열(왼쪽 영웅·협공, 오른쪽 스킬 스택) + 무대 오버레이
+       넓은 화면(폴더블 펼침·태블릿·데스크톱)은 옆 열이 전장 바깥 여백으로 나가고, 좁은 화면은 전장 가장자리에 겹친다(ui.js layout) -->
   <div id="stage-wrap">
     <div id="stage">
       <canvas id="game" width="720" height="1100" aria-label="게임 화면"></canvas>
+      <div id="col">
+        <div id="hud">
+          <div id="hud-gold" class="pill gold-pill" aria-label="이번 도전 골드"><span class="coin"></span><b id="gold" class="num">0</b></div>
+          <div id="hud-center">
+            <div class="hud-stage"><b id="stage-no" class="num">1층</b><span id="theme-name">슬라임 초원</span></div>
+            <div id="wave" class="wave" role="progressbar" aria-label="웨이브 진행" aria-valuemin="0" aria-valuemax="100"><i></i><span id="wave-text">0/0</span></div>
+            <div id="mana" class="mana" role="progressbar" aria-label="마나 — 가득 차면 스킬 카드" aria-valuemin="0" aria-valuemax="100" hidden><i></i><span class="mana-card" aria-hidden="true"></span></div>
+            <div id="berserk" class="berserk" role="status" hidden><img class="k-ico" src="assets/icons/el-fire.svg" alt=""><b id="berserk-text">광폭화</b></div>
+          </div>
+          <div id="hud-left" class="hud-left">
+            <button id="st-revive" class="st-chip revive" type="button" hidden><img class="k-ico" src="assets/icons/wall.svg" alt=""><span>부활</span></button>
+            <button id="st-awaken" class="st-chip awaken" type="button" hidden><img class="k-ico" src="assets/icons/new.svg" alt=""><span>각성 <b id="st-awaken-n" class="num">0</b></span></button>
+          </div>
+          <div id="hud-right">
+            <div class="pill gem-pill" aria-label="보석"><span class="gem"></span><b id="gems" class="num">0</b></div>
+            <button id="btn-menu" class="icon-btn" aria-label="메뉴 열기"><span class="burger"></span><span class="dot" id="menu-new" hidden></span></button>
+          </div>
+        </div>
 
-      <div id="hud">
-        <div id="hud-gold" class="pill gold-pill" aria-label="내 골드"><span class="coin"></span><b id="gold" class="num">0</b></div>
-        <div id="hud-center">
-          <div class="hud-stage"><b id="stage-no" class="num">1층</b><span id="theme-name">슬라임 초원</span></div>
-          <div id="wave" class="wave" role="progressbar" aria-label="웨이브 진행" aria-valuemin="0" aria-valuemax="100"><i></i><span id="wave-text">0/0</span></div>
-          <div id="mana" class="mana" role="progressbar" aria-label="마나 — 가득 차면 스킬 카드" aria-valuemin="0" aria-valuemax="100" hidden><i></i><span class="mana-card" aria-hidden="true"></span></div>
-          <div id="spell-row" class="spell-row" aria-label="스킬 슬롯" hidden></div>
-          <div id="berserk" class="berserk" role="status" hidden><img class="k-ico" src="assets/icons/el-fire.svg" alt=""><b id="berserk-text">광폭화</b></div>
-        </div>
-        <div id="hud-left" class="hud-left">
-          <button id="st-revive" class="st-chip revive" type="button" hidden><img class="k-ico" src="assets/icons/wall.svg" alt=""><span>부활</span></button>
-          <button id="st-awaken" class="st-chip awaken" type="button" hidden><img class="k-ico" src="assets/icons/new.svg" alt=""><span>각성 <b id="st-awaken-n" class="num">0</b></span></button>
-        </div>
-        <div id="hud-right">
-          <div class="pill gem-pill" aria-label="보석"><span class="gem"></span><b id="gems" class="num">0</b></div>
-          <button id="btn-menu" class="icon-btn" aria-label="메뉴 열기"><span class="burger"></span><span class="dot" id="menu-new" hidden></span></button>
-        </div>
+        <!-- 영웅 버튼 (중심 = 월드 BAG_POS(652,170): 장비 드롭이 날아와 꽂히는 곳 · 협공 빛줄기의 출발점) -->
+        <button id="btn-hero" class="hero-btn" hidden aria-label="영웅 · 장비">
+          <span id="hb-portrait" class="hb-portrait" aria-hidden="true"></span>
+          <span class="hb-lv num">Lv<b id="hb-lv">1</b></span>
+          <span class="hb-pow"><i>전투력</i><b id="hb-pow" class="num">0</b></span>
+          <span id="hb-new" class="hb-new" hidden>NEW</span>
+          <span id="hb-tal" class="hb-tal" hidden>특성 <b class="num">+0</b></span>
+        </button>
       </div>
 
-      <!-- 영웅 버튼 (중심 = 월드 BAG_POS(652,170): 장비 드롭이 날아와 꽂히는 곳) -->
-      <button id="btn-hero" class="hero-btn" hidden aria-label="영웅 · 장비">
-        <span id="hb-portrait" class="hb-portrait" aria-hidden="true"></span>
-        <span class="hb-lv num">Lv<b id="hb-lv">1</b></span>
-        <span class="hb-pow"><i>전투력</i><b id="hb-pow" class="num">0</b></span>
-        <span id="hb-new" class="hb-new" hidden>NEW</span>
-        <span id="hb-tal" class="hb-tal" hidden>특성 <b class="num">+0</b></span>
-      </button>
+      <!-- 왼쪽 열: 영웅 상태 · 합동 필살 · 켜진 협공 · AI 동료 -->
+      <aside id="side-l" class="side side-l" aria-label="영웅과 협공">
+        <div id="hero-card" class="hero-card" hidden>
+          <span class="hc-por" aria-hidden="true"><svg class="hc-ring" viewBox="0 0 48 48"><circle class="hc-ring-bg" cx="24" cy="24" r="21"/><circle id="hc-ring-fg" class="hc-ring-fg" cx="24" cy="24" r="21"/></svg><span id="hc-img" class="hc-img"></span><span id="hc-cls" class="hc-cls"></span></span>
+          <span class="hc-body">
+            <span class="hc-name"><b id="hc-title"></b><em class="num">Lv<b id="hc-lv">1</b></em></span>
+            <span class="hc-hp" role="progressbar" aria-label="영웅 체력" aria-valuemin="0" aria-valuemax="100"><i id="hc-hp-fill"></i></span>
+          </span>
+          <span id="hc-state" class="hc-state" hidden></span>
+        </div>
+        <div id="link-chip" class="link-chip" hidden><img class="k-ico" src="assets/icons/crit.svg" alt=""><span><b>합동 필살</b><em>다음 스킬 2배!</em></span><i id="link-bar"></i></div>
+        <div class="side-h collab-h" id="collab-h" hidden><span>협공</span></div>
+        <ul id="collab-list" class="collab-list" aria-label="켜진 협공"></ul>
+        <div id="partner" class="partner-card" aria-label="AI 동료 마법사">
+          <span id="p2-icon" aria-hidden="true"></span><span id="p2-name">AI 동료</span><span id="p2-spells" class="p2-spells"></span>
+        </div>
+      </aside>
+
+      <!-- 오른쪽 열: 이번 도전에서 고른 스킬 (6칸, 융합하면 두 칸이 하나로) -->
+      <aside id="side-r" class="side side-r" aria-label="고른 스킬">
+        <div class="side-h stack-h"><span>마법서</span><b id="stack-count" class="num">0/6</b></div>
+        <div id="stack" class="stack"></div>
+      </aside>
+      <svg id="beams" class="beams" aria-hidden="true"></svg>
 
       <div id="clear" class="ov" hidden>
         <div class="clear-box">
@@ -107,31 +133,17 @@
     </div>
   </div>
 
-  <!-- 하단 조작 패널 -->
+  <!-- 하단 조작 패널: 비상 마법 · 영웅 궁극기 · 자동 전투 · 배속 · 자동 진행 (강화는 정비 화면 '마법사 수련'으로 옮겼다) -->
   <div id="panel">
-    <div id="hero-status" hidden aria-label="영웅 상태">
-      <span id="hero-icon" class="hero-icon" aria-hidden="true"></span>
-      <span id="hero-title"></span>
-      <span class="hero-lv">Lv <b id="hero-lv" class="num">1</b></span>
-      <span class="hero-hp-lbl" aria-hidden="true">HP</span><div class="hero-hp" role="progressbar" aria-label="영웅 체력" aria-valuemin="0" aria-valuemax="100"><i id="hero-hp-fill"></i></div>
-      <span id="hero-down" hidden></span>
-    </div>
-    <div id="partner" aria-label="AI 동료 마법사 상태">
-      <span id="p2-icon" aria-hidden="true"></span><span id="p2-name">AI 동료</span>
-      <span class="coin"></span><b id="p2-gold" class="num">0</b>
-      <span class="p2-lv">Lv <b id="p2-lv" class="num">0</b></span>
-      <span id="p2-syn" class="syn-icons"></span><span id="p2-spells" class="p2-spells"></span>
-    </div>
     <div id="controls">
-      <button id="sk-meteor" class="skill meteor" aria-label="운석 낙하"><span class="sk-sweep"></span><span class="sk-ico" aria-hidden="true"><img class="k-ico" style="--ico:24px" src="assets/icons/meteor.svg" alt=""></span><span class="sk-cd num"></span><span class="sk-name">운석</span></button>
-      <button id="sk-freeze" class="skill freeze" aria-label="빙결"><span class="sk-sweep"></span><span class="sk-ico" aria-hidden="true"><img class="k-ico" style="--ico:24px" src="assets/icons/freeze.svg" alt=""></span><span class="sk-cd num"></span><span class="sk-name">빙결</span></button>
+      <button id="sk-meteor" class="skill meteor" aria-label="운석 낙하"><span class="sk-sweep"></span><span class="sk-ico" aria-hidden="true"><img class="k-ico" src="assets/icons/meteor.svg" alt=""></span><span class="sk-cd num"></span><span class="sk-name">운석</span></button>
+      <button id="sk-freeze" class="skill freeze" aria-label="빙결"><span class="sk-sweep"></span><span class="sk-ico" aria-hidden="true"><img class="k-ico" src="assets/icons/freeze.svg" alt=""></span><span class="sk-cd num"></span><span class="sk-name">빙결</span></button>
       <button id="sk-heroult" class="skill heroult" aria-label="영웅 궁극기" hidden><span class="sk-sweep"></span><span id="heroult-ico" class="sk-ico" aria-hidden="true"></span><span class="sk-cd num"></span><span id="heroult-name" class="sk-name"></span></button>
       <span class="ctl-gap"></span>
-      <button id="btn-auto" class="tog" aria-pressed="false"><span class="tog-label">자동 강화</span><span class="tog-sw"></span></button>
+      <button id="btn-auto" class="tog" aria-pressed="false" aria-label="자동 전투: 카드 자동 선택 · 궁극기 자동 사용"><span class="tog-label">자동 전투</span><span class="tog-sw"></span></button>
       <button id="btn-speed" class="spd" aria-label="게임 속도"><b id="speed-text" class="num">1x</b><span id="speed-lock" class="lock">3x <img class="k-ico" style="--ico:11px" src="assets/icons/lock.svg" alt=""></span></button>
       <button id="btn-autonext" class="tog" aria-pressed="false"><span class="tog-label">자동 진행</span><span class="tog-sw"></span></button>
     </div>
-    <div id="upgrades"></div>
   </div>
 
   <!-- 타이틀 -->
@@ -155,11 +167,12 @@
     <div class="t-inner">
       <div class="logo" aria-hidden="true">
         <i class="t-rune"></i>
-        <div class="logo-main" data-text="용사 키우기">용사 키우기</div>
-        <div class="logo-sub"><span>대마법사의</span></div>
+        <div class="logo-eyebrow"><span data-text="대마법사의">대마법사의</span></div>
+        <div class="logo-main"><span class="lm-a" data-text="용사">용사</span><span class="lm-b" data-text="키우기">키우기</span></div>
+        <i class="logo-spark s1"></i><i class="logo-spark s2"></i><i class="logo-spark s3"></i>
       </div>
       <h1 class="sr">대마법사의 용사 키우기</h1>
-      <p class="tagline">마법으로 성벽을 지켜 100층 탑 끝까지!</p>
+      <p class="tagline">영웅을 키우고, 마법을 골라, 100층 탑 끝까지!</p>
       <div class="t-buttons">
         <button id="btn-start" class="k-btn l"><span class="b-main">시작하기</span><span class="k-sub" id="start-sub"></span></button>
         <div class="t-links">
@@ -179,7 +192,7 @@
         <button class="k-close" data-close aria-label="닫기"><img class="k-ico" src="assets/icons/close.svg" alt=""></button>
         <div class="k-sheet">
           <div class="menu-grid">
-            <button class="menu-tile t-codex" data-open="codex"><img class="k-ico" src="assets/icons/codex.svg" alt=""><b>히든 조합 도감</b><span class="new-tag" hidden>NEW</span></button>
+            <button class="menu-tile t-codex" data-open="codex"><img class="k-ico" src="assets/icons/codex.svg" alt=""><b>조합 도감</b><span class="new-tag" hidden>NEW</span></button>
             <button class="menu-tile t-hero" data-open="hero"><img class="k-ico" src="assets/icons/hero.svg" alt=""><b>영웅 · 특성</b></button>
             <button class="menu-tile t-set" data-open="settings"><img class="k-ico" src="assets/icons/settings.svg" alt=""><b>설정</b></button>
             <button class="menu-tile t-quit" data-open="abandon"><img class="k-ico" src="assets/icons/wall-broken.svg" alt=""><b>도전 포기</b></button>
@@ -191,16 +204,18 @@
 
     <div class="modal" id="m-codex" hidden role="dialog" aria-modal="true" aria-labelledby="codex-h">
       <div class="k-modal">
-        <div class="k-ribbon"><h2 id="codex-h">히든 조합 도감</h2></div>
+        <div class="k-ribbon"><h2 id="codex-h">조합 도감</h2></div>
         <button class="k-close" data-close aria-label="닫기"><img class="k-ico" src="assets/icons/close.svg" alt=""></button>
         <div class="k-sheet">
           <div class="codex-top"><b id="codex-count" class="k-num">0/22 발견</b><div class="k-bar codex-bar"><i id="codex-fill"></i></div></div>
           <div class="k-tabs codex-tabs" role="tablist" aria-label="도감 분류">
             <button class="k-tab" role="tab" id="ctab-hidden" aria-selected="true" data-tab="hidden">히든 조합</button>
             <button class="k-tab" role="tab" id="ctab-fusion" aria-selected="false" data-tab="fusion">원소 융합</button>
+            <button class="k-tab" role="tab" id="ctab-collab" aria-selected="false" data-tab="collab">협공</button>
           </div>
           <ul id="codex-list" class="sh-body" role="tabpanel"></ul>
           <ul id="codex-list-fusion" class="sh-body" role="tabpanel" hidden></ul>
+          <ul id="codex-list-collab" class="sh-body" role="tabpanel" hidden></ul>
         </div>
       </div>
     </div>
@@ -265,6 +280,12 @@
           <div><img class="k-ico" src="assets/icons/speed.svg" alt=""><span>도전 시간</span><b id="res-time" class="k-num">0:00</b></div>
           <div><img class="k-ico" src="assets/icons/hero.svg" alt=""><span>영웅 기여</span><b id="res-hero" class="k-num">-</b></div>
         </div>
+        <div class="res-card res-goldc" id="res-gold-card">
+          <h3>획득 골드</h3>
+          <div class="res-gold-row"><span class="res-coin" aria-hidden="true"><span class="coin"></span></span><b id="res-gold" class="k-num gold">+0</b><span class="res-gold-note">정비 화면 <em>마법사 수련</em>에 써요</span></div>
+          <p class="res-gold-total" id="res-gold-total" hidden></p>
+        </div>
+        <div class="res-card res-combos" id="res-combos-card" hidden><h3>이번 도전의 조합</h3><div id="res-combos" class="res-combo-row"></div></div>
         <div class="res-card res-share" id="res-share"><h3>피해 비중</h3><div class="res-bar" id="res-bar"></div><div class="res-legend" id="res-legend"></div></div>
         <div class="res-card res-gems">
           <h3>획득 보석</h3>

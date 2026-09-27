@@ -179,7 +179,7 @@ export function createHeroUI(root, handlers = {}) {
           </div>
           <div class="hu-baggrid"></div>
           <div class="hu-sellrow"></div>
-          <p class="hu-campnote" hidden>${icon('coin')}<span>판매는 도전 중에만 할 수 있어요. 판 골드는 그 도전의 강화에 쓰여요.</span></p>
+          <p class="hu-campnote" hidden>${icon('coin')}<span>판매는 도전 중에 할 수 있어요. 판 골드는 마법사 수련에 쓰여요.</span></p>
         </section>
       </div>
     </div>
@@ -412,11 +412,12 @@ export function createHeroUI(root, handlers = {}) {
     const live = curHero ? new Set(curHero.bag.map(it => it.id)) : null;
     for (const id of newItemIds) if (!live || !live.has(id)) newItemIds.delete(id);
   }
+  const noSell = () => !!curCtx.camp && !Number.isFinite(curCtx.gold); // 정비 화면인데 영구 골드를 모르면 판매를 감춘다
   function renderAll() {
     pruneNewItems();
     updateNewDot();
     txt(goldEl, fmt(curCtx.gold || 0));
-    goldEl.parentElement.hidden = !!curCtx.camp; // 골드는 도전 한정
+    goldEl.parentElement.hidden = noSell(); // 정비 화면은 호출측이 영구 골드(ctx.gold)를 주면 판매·골드 표시
     $('.hu-changeclass').hidden = !curCtx.classChange;
     th.onReset = curCtx.camp ? () => !!H.onTalentReset?.() : null;
     const tl = curHero && curHero.cls ? talentLeft(curHero, curHero.cls) : 0;
@@ -491,8 +492,8 @@ export function createHeroUI(root, handlers = {}) {
     for (const it of hero.bag) { counts[it.rarity] = (counts[it.rarity] || 0) + 1; gold[it.rarity] = (gold[it.rarity] || 0) + sellValue(it); }
     sellRow.innerHTML = '<span class="hu-sell-h">등급별 일괄 판매</span>' + RARITIES.map(r => `<button class="hu-chip" data-r="${r.key}" data-rarity="${r.key}" ${counts[r.key] ? '' : 'disabled'}><i></i>${r.name}<b class="k-num">${counts[r.key] || 0}</b></button>`).join('');
     for (const b of sellRow.querySelectorAll('.hu-chip')) on(b, 'click', () => openSellConfirm(b.dataset.rarity));
-    sellRow.hidden = !!curCtx.camp;
-    $('.hu-campnote').hidden = !curCtx.camp;
+    sellRow.hidden = noSell();
+    $('.hu-campnote').hidden = !noSell();
 
     const items = sortByPower ? hero.bag.slice().sort((a, b) => itemPower(b) - itemPower(a)) : hero.bag;
     let html = items.map((it, i) => `<button class="k-slot hu-tile" data-r="${it.rarity}" data-id="${it.id}" aria-label="${it.name}" style="--i:${Math.min(i, 8)}">
@@ -543,7 +544,7 @@ export function createHeroUI(root, handlers = {}) {
         ? `<div class="hu-cmp ${diff >= 0 ? 'up' : 'down'}"><span>착용 중인 ${equippedNow.name} 대비</span><b class="k-num ${diff >= 0 ? 'ok' : 'bad'}"><i class="hu-arrow"></i>${diff >= 0 ? '+' : ''}${fmt(diff)}</b></div>`
         : `<div class="hu-cmp up"><span>빈 칸 — 장착하면 바로 강해져요</span><b class="k-num ok"><i class="hu-arrow"></i>+${fmt(itemPower(item))}</b></div>`;
     isEquipBtn.hidden = equipped;
-    isSellBtn.hidden = equipped || !!curCtx.camp;
+    isSellBtn.hidden = equipped || noSell();
     isSellBtn.innerHTML = `판매 <span class="hu-coin"></span>${fmt(sellValue(item))}`;
     isOv.hidden = false;
     isEquipBtn.focus?.({ preventScroll: true });
@@ -607,7 +608,8 @@ export function createHeroUI(root, handlers = {}) {
     if (openView === 'main' && activeTab === 'bag') renderBag();
   }
 
-  // ctx: { stage: 최고 기록(클래스 해금), gold: 런 골드, camp: 정비 화면이면 true(판매·골드 숨김, 특성 무료 초기화), classChange: 클래스 변경 버튼 }
+  // ctx: { stage: 최고 기록(클래스 해금), gold: 골드(도전 중 = 이번 도전 골드, 정비 화면 = 영구 골드 data.gold — 없으면 판매 숨김),
+  //        camp: 정비 화면이면 true(특성 무료 초기화, 판매는 campAct {type:'sell'|'sellRarity'} → meta.gold), classChange: 클래스 변경 버튼 }
   // opt.tab: 'char' | 'talent' | 'bag'
   function open(hero, ctx = {}, opt = {}) {
     prevFocus = document.activeElement;

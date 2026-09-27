@@ -14,7 +14,7 @@ import {
 import {
   gl, part, burst, ring, sprPop, lightBeam, K_GLOW, K_SPARK, K_STAR, K_SMOKE, K_DEBRIS, K_SHARD, MSTY,
   glyph, shadow, flame, bubble, ice, reticle, sparkle, rays, runeCircle, magicCore, curseSigil, shieldDome, lightWings,
-  numZone, arrowSpr, warcryUntil,
+  numZone, arrowSpr, warcryUntil, skillCols,
 } from './fx.js';
 import { emblem } from './emblems.js';
 
@@ -1204,7 +1204,7 @@ export const HERO_PAL = {
   assassin: { icon: '#e8384f', hair: '#1e1a2e' },
 };
 export const HERO_GRIP = { x: 11, y: -30 };
-const HS = 1.35;                           // 영웅 필드 배율 (키 ≈ 110, ART §3.4)
+const HS = 1.5;                            // 영웅 필드 배율 (키 ≈ 122 — 잡몹보다 확실히 크게: 전장 가운데의 주인공)
 const MS = 1.25;                           // 성벽 마법사 배율 (키 ≈ 120)
 const HERO_RIM = ['#fff6dc', 1, 1]; // 앞손(무기) 위치, 발 = 원점, 오른쪽을 봄
 
@@ -2084,6 +2084,11 @@ function figure(cls, tier, eq, x, fy, face, o) {
     ctx.lineWidth = 2.6; ctx.strokeStyle = '#22163a'; ctx.stroke();
   }
   place(x + (o.recoil || 0) * face, fy + bob, lean, sx, sy);
+  if (o.halo) { // 림 외곽선: 밝은 같은 모양을 살짝 크게 먼저 → 어느 바닥·마법 위에서도 윤곽이 뜬다
+    place(x + (o.recoil || 0) * face, fy + bob + 2, lean, sx * 1.08, sy * 1.05);
+    ctx.globalAlpha = 0.9; put(tintOf(body, '#fff8e8')); ctx.globalAlpha = 1;
+    place(x + (o.recoil || 0) * face, fy + bob, lean, sx, sy);
+  }
   put(body);
   if (tintC) { ctx.globalAlpha = (o.alpha ?? 1) * tA; put(tintOf(body, tintC)); ctx.globalAlpha = o.alpha ?? 1; }
   if (o.hurt > 0) { ctx.globalAlpha = o.hurt; put(tintOf(body, '#ffffff')); ctx.globalAlpha = 1; }
@@ -2148,8 +2153,21 @@ export function drawHero(view) {
   const tierCol = RARITY_COL[TIER_RARITY[tier]][0];
   // 그림자 + 티어 오라
   ctx.globalAlpha = 0.9;
-  spr(shadow(), fx, fy, 64, 19);
+  spr(shadow(), fx, fy, 72, 21);
   ctx.globalAlpha = 1;
+  // 주인공 표지: 발밑 클래스색 고리(천천히 도는 룬) + 등 뒤 은은한 빛 — 적 떼 속에서도 영웅이 한눈에 (DESIGN 7)
+  if (!down) {
+    const cc = CLASS_COL[cls] || '#ffe07a';
+    additive(true);
+    ctx.globalAlpha = 0.5;
+    spr(gl(cc), fx, fy, 128, 38);
+    groundRune(runeCircle(cc), fx, fy, 1.15, RT * 0.7, 0.42);
+    ctx.globalAlpha = 0.16 + 0.05 * Math.sin(RT * 3);
+    spr(gl('#fff6dc'), fx, fy - 70, 150, 190);
+    ctx.globalAlpha = 1;
+    additive(false);
+    numZone('hero', fx, fy - 70, 110, 170); // 데미지 숫자가 영웅을 덮지 않게
+  }
   if (tier >= 2 && !down) {
     additive(true);
     ctx.globalAlpha = 0.4 + 0.15 * Math.sin(RT * 3);
@@ -2206,8 +2224,9 @@ export function drawHero(view) {
     if (rnd() < 0.3) part(K_GLOW, fx + (rnd() - 0.5) * 50, fy - rnd() * 20, 0, -150, 0.5, 11, '#ffd23a', 0, 1);
   }
   // 궁수: 시위에 건 화살(준비 중 당겨짐)
+  HF.rv = { x: fx + (recoil || 0) * face * fscale, y: fy + hop + bob, lean: lean * face, sx: face * fscale * pop * HS, sy: pop * HS * sy, cls };
   figure(cls, tier, eq, fx, fy + hop, face * fscale, {
-    pop, ph, moving, run, wAng, lean: lean * face, bob, sy, recoil, glowTip, hurt: HF.hurt,
+    pop, ph, moving, run, wAng, lean: lean * face, bob, sy, recoil, glowTip, hurt: HF.hurt, halo: CLASS_COL[cls] || '#fff6dc',
     redA: retreat ? 0.12 + 0.12 * Math.sin(RT * 9) : 0,
     gold: h.invulnT > 0 ? 0.25 + 0.15 * Math.sin(RT * 12) : 0,
   });
@@ -2245,6 +2264,18 @@ export function drawHero(view) {
   }
   heroBar(h, fx, fy - (cls === 'sorcerer' ? 116 : 104) * HS - 4, cls, retreat);
 }
+
+// 이펙트 층 위에서 영웅 몸을 반투명으로 한 번 더 — 폭발·광선이 영웅을 오래 가리지 않는다(DESIGN 7 '영웅이 가운데서 싸운다')
+export function drawHeroReveal(view) {
+  const h = view.heroUnit, r = HF.rv;
+  if (!h || !r || !HF.body || h.state === 'down') return;
+  place(r.x, r.y, r.lean, r.sx, r.sy);
+  ctx.globalAlpha = 0.55; // 가려지지 않았을 땐 같은 그림이 겹쳐 티가 안 나고, 폭발 위에선 윤곽이 되살아난다
+  put(HF.body);
+  ctx.globalAlpha = 1;
+  wt();
+}
+const CLASS_COL = { knight: '#8fd0ff', ranger: '#8dff6a', sorcerer: '#c08aff', cleric: '#ffe07a', assassin: '#ff8ad8' };
 
 // ── 영웅 소환물 (늑대 · 그림자 분신 · 비전 분신) — game.summons ──
 const SUM = new Map(); // id → { pop, walk, face, lx, ly, atk }
@@ -2600,14 +2631,14 @@ export function events(view, evs, opts) {
       case 'cast': { // 주문 시전: 지팡이를 겨누고(기본 주문) / 머리 위로 치켜들고(쿨타임 주문) + 오브 앞 마법진 + 발밑 룬
         const o = ev.o === 1 ? 1 : 0, M = MF[o], c = CANNONS[o];
         // 기본 주문(basic)은 SPELL_BY_KEY를 보지 않는다 — 카드 '파이어볼'과 기본 '화염구'가 같은 키
-        const sp = ev.basic ? null : SPELL_BY_KEY[ev.spell];
-        const col = ev.basic ? (ev.spell === 'frostbolt' ? '#8fe8ff' : '#ff8a2a') : sp && EL[sp.element] ? EL[sp.element][1] : '#ffffff';
+        const col = ev.basic ? (ev.spell === 'frostbolt' ? '#8fe8ff' : '#ff8a2a') : skillCols(ev.spell)[0];
         M.cast = 1; M.col = col;
         M.aim = Math.atan2((+ev.ty || 0) - c.y, (+ev.tx || c.x) - c.x);
-        if (!ev.basic) {
+        if (!ev.basic) { // 쿨타임 스킬 = 주인공: 지팡이를 치켜들고 발밑 마법진 + 원소색 기둥 섬광
           M.big = 1; M.ground = 1;
-          ring(M.ox, M.oy, 8, 70, 0.35, col, 6);
-          burst(K_STAR, M.ox, M.oy, 6, 60, 200, 0.4, 12, ['#ffffff', col], 0, 3);
+          ring(M.ox, M.oy, 8, ev.linked ? 130 : 80, 0.35, col, 7);
+          burst(K_STAR, M.ox, M.oy, 8, 60, 220, 0.45, 13, ['#ffffff', col], 0, 3);
+          if (M.beamT <= 0) { M.beamT = 0.5; lightBeam(M.ox, 22, M.oy - 170, M.oy + 4, 0.22, '#ffffff', col); } // 연사 중엔 0.5초에 한 번
         } else {
           M.ground = Math.max(M.ground, 0.5);
           if (M.runeT <= 0) { // 오브 앞 마법진 (연사 중엔 0.11초마다)
@@ -2698,7 +2729,7 @@ export function update(view, da, dt) {
   for (const a of AFTER) if (a.life > 0) a.life -= da;
   for (const p of POPS) if (p.life > 0) p.life -= dt;
   MF.fall = view.phase === 'defeat' ? Math.min(1, (MF.fall || 0) + dt * 2.5) : 0;
-  for (let i = 0; i < 2; i++) { const M = MF[i]; M.cast = Math.max(0, M.cast - dt * 5); M.runeT -= dt; M.fanT -= dt; M.big = Math.max(0, M.big - dt * 2.2); M.ground = Math.max(0, M.ground - dt * 1.8); }
+  for (let i = 0; i < 2; i++) { const M = MF[i]; M.cast = Math.max(0, M.cast - dt * 5); M.runeT -= dt; M.beamT = (M.beamT || 0) - dt; M.fanT -= dt; M.big = Math.max(0, M.big - dt * 2.2); M.ground = Math.max(0, M.ground - dt * 1.8); }
   ALLY.t += dt;
   HF.atk += da;
   if (HF.cmd > 0) HF.cmd = HF.cmd >= 1 ? 0 : HF.cmd + dt * 3.2;

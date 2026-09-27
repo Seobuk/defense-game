@@ -1,6 +1,6 @@
 {
   "name": "defense-game",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "private": true,
   "description": "대마법사의 용사 키우기 — 마법 성벽 디펜스 로그라이트",
   "type": "module",

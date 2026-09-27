@@ -84,8 +84,9 @@ export function normalizeRun(raw) {
   const o = v => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
   const r = o(raw);
   const spells = {}, fusionParts = {};
-  for (const k of SKILL_KEYS) {
-    const v = toInt(o(r.spells)[k], 0, SPELL_MAX_LV);
+  for (const k of Object.keys(o(r.spells))) { // 저장된 순서 = 스킬 스택 순서
+    if (!SKILL_KEYS.includes(k)) continue;
+    const v = toInt(r.spells[k], 0, SPELL_MAX_LV);
     if (v > 0 && Object.keys(spells).length < SPELL_SLOTS) spells[k] = v;
   }
   // 융합 스킬이 품은 재료 두 스킬(없거나 틀리면 재료 칸의 첫 스킬)

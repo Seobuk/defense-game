@@ -151,7 +151,7 @@ assert.ok(computeOffline({ ...base, metaLv: { pickaxe: 10 } }, 1_000_000 + 3 * 8
     metaLv: { power: 5, revive: 1 }, hero: { cls: 'cleric', level: 42, talents: { cleric: { heal1: 1 } } } });
   src.run = newRun(src, { cls: 'cleric', startSpells: [] }).run.checkpoint;
   const code = exportSave(src);
-  assert.match(code, /^WD2-[A-Za-z0-9_-]+-[0-9a-f]{8}$/);
+  assert.match(code, new RegExp(`^WD${SAVE_VERSION}-[A-Za-z0-9_-]+-[0-9a-f]{8}$`));
   const back = importSave(' \n' + code.slice(0, 20) + '\n ' + code.slice(20) + '\n'); // 메신저가 끊어 붙인 코드
   assert.ok(back.ok);
   assert.deepEqual(back.data, normalize(JSON.parse(JSON.stringify(src))));

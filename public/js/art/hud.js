@@ -7,7 +7,7 @@ import { clamp } from '../util.js';
 import { MILESTONES } from '../hero.js';
 const MS_DESC = Object.fromEntries(MILESTONES.map(m => [m.key, m.desc]));
 import {
-  ctx, scale, ox, oy, RT, frameDt, topExtra, TAU, tint, BAG_POS,
+  ctx, scale, ox, oy, RT, frameDt, topExtra, sideX, fillView, TAU, tint, BAG_POS,
   shake, flash, FONT, NUM_FONT, BODY_FONT, easeBack, easeOut, lerp, pool, take,
   wt, ht, place, placeH, spr, txt, rr, additive,
 } from './core.js';
@@ -17,7 +17,7 @@ import { iconImage } from '../icons.js';
 import { emblem, fusionParts } from './emblems.js';
 
 const SYN = Object.fromEntries(SYNERGIES.map(s => [s.key, s]));
-const KIND_COL = { cannon: ['#2a0848', '#8a2ac8', '#ff8aff'], duo: ['#06243e', '#1a86c0', '#7ff4ff'], event: ['#3e1400', '#d06a0a', '#ffd84a'], fusion: ['#1a0838', '#6a2ac0', '#ffc8ff'] };
+const KIND_COL = { cannon: ['#2a0848', '#8a2ac8', '#ff8aff'], duo: ['#06243e', '#1a86c0', '#7ff4ff'], event: ['#3e1400', '#d06a0a', '#ffd84a'], fusion: ['#1a0838', '#6a2ac0', '#ffc8ff'], collab: ['#3a0828', '#c8306a', '#ffb0e0'] };
 const TIER_COL = ['#ffffff', '#7fe3ff', '#ffc23a', '#ff5a3a']; // x3 흰 · x10 하늘 · x30 금 · x50 불꽃 · x100 금빛 일렁임
 const STAMPS = pool(5, () => ({ life: 0, max: 1, txt: '', col: '#fff', y: 0, size: 60, delay: 0 }));
 const POPS = pool(8, () => ({ life: 0, max: 1, txt: '', sub: '', col: '#fff', x: 0, y: 0 }));
@@ -95,7 +95,10 @@ let quiet = false, quietA = 0, domChk = 0;
 const MOMENT_LIFE = { boss: 2.2, cut: 2.6, loot: 2.1 };
 // ui.js 가 카드 선택 오버레이를 띄우기 전에 묻는다: 지금 연출이 몇 초 남았나(보스 경고가 끝난 뒤 카드가 뜨게)
 // main.js 가 전투 시간 배율로 쓴다: 전체 화면 컷인(히든 조합·융합) 동안은 0.3배 — 어두운 동안 적이 몰래 진군하지 않게
-export const simSlow = () => (moment && moment.kind === 'cut' ? 0.3 : 1);
+// 합동 필살 슬로 모션(slowmo 이벤트): 실시간 ms 동안 시뮬·연출 시계를 scale 배로
+let slowUntil = -9, slowK = 1;
+export const slowmoScale = () => (RT < slowUntil ? slowK : 1);
+export const simSlow = () => Math.min(moment && moment.kind === 'cut' ? 0.3 : 1, slowmoScale());
 // 보스 경고가 끝난 뒤에도 0.8초는 착지한 보스를 맨눈으로 보여 준 다음 카드를 띄운다
 let bossEndRT = -9, meteorRT = -9; // 운석이 떨어지는 순간도 카드가 덮지 않게 0.9초 기다린다
 export const momentLeft = () => Math.max(0, 0.9 - (RT - meteorRT)) + (moment ? Math.max(0, moment.life - moment.t) + (moment.kind === 'boss' ? 0.8 : 0) : Math.max(0, 0.8 - (RT - bossEndRT)))
@@ -213,11 +216,11 @@ function chipHit(key, o) {
 }
 function buildChips(view) {
   chipList.length = 0;
-  const add = (key, o) => { if (SYN[key] && !chipList.some(c => c.key === key) && chipList.length < CHIP_MAX) chipList.push({ key, o }); };
+  // 융합은 오른쪽 스킬 스택, 협공은 영웅 상태(UI)가 보여 준다 → 여기엔 마법사 조합·순간 조합만
+  const add = (key, o) => { const s = SYN[key]; if (s && s.kind !== 'fusion' && s.kind !== 'collab' && !chipList.some(c => c.key === key) && chipList.length < CHIP_MAX) chipList.push({ key, o }); };
   const ps = view.players || [];
   if (ps[0] && ps[0].syn) for (const k of ps[0].syn) add(k, 0);
   for (const k of view.duo || []) add(k, -1);
-  for (const k of view.fusions || []) add(k, -1);
   if (ps[1] && ps[1].syn) for (const k of ps[1].syn) add(k, 1);
   for (const [k, c] of CHIPS) if (c.until > RT) add(k, c.o);
 }
@@ -461,7 +464,7 @@ function drawBanner(m) {
   const t = m.t, a = t < 0.2 ? t / 0.2 : t > m.life - 0.3 ? Math.max(0, (m.life - t) / 0.3) : 1;
   ctx.globalAlpha = a * 0.28;
   ctx.fillStyle = m.named ? '#1a0008' : '#140a00';
-  ctx.fillRect(0, -topExtra, WORLD_W, WORLD_H + topExtra);
+  fillView();
   ctx.globalAlpha = a;
   const y = midY() + 150; // 보스(HUD 아래 y 170~390에 착지)를 가리지 않게 아래쪽 띠
   numZone('banner', 360, y, 720, 170);
@@ -532,7 +535,7 @@ function drawFusePre(m, parts) {
   const u = Math.min(1, m.t / FUSE_PRE), e = u * u * u, cy = midY() - 70;
   ctx.globalAlpha = Math.min(1, m.t / 0.2) * 0.74;
   ctx.fillStyle = '#0a0418';
-  ctx.fillRect(0, -topExtra, WORLD_W, WORLD_H + topExtra);
+  fillView();
   for (let i = 0; i < 2; i++) {
     const em = emblem(parts[i], 1.6);
     if (!em) continue;
@@ -560,7 +563,7 @@ function drawCut(m) {
   const cy = midY(), ex = 690, ey = 34 - topExtra; // 메뉴 버튼 (HUD 우상단)
   ctx.globalAlpha = env * 0.74;
   ctx.fillStyle = '#0a0418';
-  ctx.fillRect(0, -topExtra, WORLD_W, WORLD_H + topExtra);
+  fillView();
   ctx.globalAlpha = 1;
   const fu = t > out ? easeOut(Math.min(1, (t - out) / 0.5)) : 0;
   const k = t < 0.3 ? easeBack(t / 0.3) : 1;
@@ -596,7 +599,7 @@ function drawCut(m) {
     const rk = t < 0.45 ? easeBack(Math.min(1, (t - 0.25) / 0.2)) : 1;
     placeH(360, cy + 26, rk);
     ribbon(0, 0, 300, 46, '#ffe45a', '#ffb21a', '#c26a00');
-    txt(s.kind === 'fusion' ? '원소 융합 발견!' : '히든 조합 발견!', 0, 1, 24, '#ffffff', '#7a3a00', 6);
+    txt(s.kind === 'fusion' ? '원소 융합 발견!' : s.kind === 'collab' ? '협공 발견!' : '히든 조합 발견!', 0, 1, 24, '#ffffff', '#7a3a00', 6);
     ht();
     ctx.globalAlpha = ta;
     ctx.font = `50px ${NUM_FONT}`; ctx.textAlign = 'center';
@@ -612,7 +615,13 @@ function drawCut(m) {
       ctx.lineWidth = 6; ctx.strokeStyle = '#140a24'; ctx.strokeText(ln, 360, cy + 140 + i * 28);
       ctx.fillStyle = '#ffffff'; ctx.fillText(ln, 360, cy + 140 + i * 28);
     });
-    if (cond) txt('조건 · ' + wrap(cond, 580, 15)[0], 360, cy + 146 + lines.length * 28, 15, '#d8c8ff', '#140a24', 4);
+    if (s.kind === 'fusion') { // 두 스킬이 하나로 → 슬롯 1칸이 열린다
+      const sy = cy + 150 + lines.length * 28, sk = 1 + 0.08 * Math.sin(RT * 8);
+      placeH(360, sy, sk);
+      ribbon(0, 0, 210, 40, '#7affc8', '#20c080', '#0a6a44');
+      txt('슬롯 해제!', 0, 1, 22, '#ffffff', '#064a2e', 6);
+      ht();
+    } else if (cond) txt('조건 · ' + wrap(cond, 580, 15)[0], 360, cy + 146 + lines.length * 28, 15, '#d8c8ff', '#140a24', 4);
   }
   ctx.globalCompositeOperation = 'lighter'; // 반짝이
   for (let i = 0; i < 10; i++) {
@@ -634,7 +643,7 @@ function drawLootBanner(m) {
   const cx = lerp(360, BAG_POS.x, fu * fu), cy = lerp(cy0, BAG_POS.y, fu), cs = k * (1 - 0.8 * fu);
   numZone('loot', 360, cy0 + 20, 420, 380);
   ctx.globalAlpha = a * 0.55 * (1 - fu);
-  ctx.fillStyle = '#0a0418'; ctx.fillRect(0, -topExtra, WORLD_W, WORLD_H + topExtra);
+  ctx.fillStyle = '#0a0418'; fillView();
   additive(true);
   placeH(cx, cy, cs); ctx.rotate(RT * 0.5);
   ctx.globalAlpha = a * 0.85;
@@ -714,6 +723,11 @@ export function events(view, evs, opts) {
         break;
       }
       case 'boom': if (ev.kind === 'meteor') meteorRT = RT; break;
+      case 'slowmo': slowUntil = RT + clamp(+ev.ms || 0, 0, 1500) / 1000; slowK = clamp(+ev.scale || 0.3, 0.1, 1); break;
+      case 'linkFinish': stamp('합동 필살!', '#ffb8ec', 300, 84, 1.0); break;
+      case 'fusionMerge': // 첫 발견이면 컷인이 '슬롯 해제!'를 말한다. 다시 합체하면 알림 알약만
+        if (!evs.some(e => e.type === 'synergy' && e.key === ev.fusion && e.first)) pop('슬롯 해제!', (SYN[ev.fusion] ? SYN[ev.fusion].name : '') + ' 합체', '#ffc8ff', 300, 846); // 내 마법사 머리 위(합체 줄기가 닿는 곳)
+        break;
       case 'allySpell': { // AI 동료가 네임드 보스를 잡고 새 주문을 익혔다
         const sp = SPELL_BY_KEY[ev.spell];
         pop('AI 동료 새 주문!', (sp ? sp.name : '') + ' Lv' + (ev.level | 0), '#8fe8ff', 480, 780);

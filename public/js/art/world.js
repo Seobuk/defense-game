@@ -5,7 +5,7 @@ import { WORLD_W, WORLD_H, WALL_Y, CANNONS } from '../config.js';
 import { fmt, clamp } from '../util.js';
 import {
   TAU, bake, tint, circ, ell, rrect, fs, rad, lin, poly, shine, mulberry, cache, RARITY_COL, TIER_RARITY, BAG_POS, GOLD_POS, OWN,
-  ctx, T, RT, topExtra,
+  ctx, T, RT, topExtra, sideX,
   shake, flash, rnd, easeBack, pool, take,
   wt, place, spr, txt, rr, additive, groundRune,
 } from './core.js';
@@ -236,8 +236,7 @@ function depth(x, theme) {
   x.fillRect(-BLEED, -BLEED, 720 + BLEED * 2, 520 + BLEED);
   x.fillStyle = rad(x, 360, 930, 0, 420, [[0, NEAR[theme] + '0.16)'], [1, NEAR[theme] + '0)']]);
   x.fillRect(-BLEED, 500, 720 + BLEED * 2, 520);
-  x.fillStyle = lin(x, -BLEED, 0, 720 + BLEED, 0, [[0, 'rgba(10,6,24,0.34)'], [0.14, 'rgba(10,6,24,0)'], [0.86, 'rgba(10,6,24,0)'], [1, 'rgba(10,6,24,0.34)']]);
-  x.fillRect(-BLEED, -BLEED, 720 + BLEED * 2, 1016 + BLEED);
+  // 양옆 비네트는 굽지 않는다 — 화면 가장자리에 맞춰 edgeShade()가 그린다(넓은 화면에서 전장 경계에 줄이 생기지 않게)
 }
 // 위 여분(topExtra) 원경 레이어 — 테마별 하늘/먼 배경(§2.2). 세로로 긴 화면에서만 보인다.
 // 텍스처 안 좌표계: v=0(맨 위, 가장 먼 곳) ~ v=HH(맨 아래, 지평선/월드 y=0과 만남).
@@ -698,10 +697,11 @@ function lootFx(view, ev) {
 
 export function drawAmbient(theme, da) {
   const A = AMB[theme];
-  if (ambTheme !== theme) {
+  const aw = WORLD_W + sideX * 2;
+  if (ambTheme !== theme || amb.length !== Math.round(A.n * aw / WORLD_W)) { // 넓은 화면이면 폭만큼 더
     ambTheme = theme;
     amb = [];
-    for (let i = 0; i < A.n; i++) amb.push({ x: rnd() * WORLD_W, y: rnd() * WALL_Y, ph: rnd() * TAU, s: 0.5 + rnd(), v: 0.5 + rnd() });
+    for (let i = 0, n = Math.round(A.n * aw / WORLD_W); i < n; i++) amb.push({ x: rnd() * aw - sideX, y: rnd() * WALL_Y, ph: rnd() * TAU, s: 0.5 + rnd(), v: 0.5 + rnd() });
   }
   // 묘지 안개(동적, 부드럽게 흐름)
   if (theme === 2) {
@@ -729,7 +729,7 @@ export function drawAmbient(theme, da) {
   for (const p of amb) {
     p.y += A.vy * p.v * da;
     p.x += Math.sin(T * 0.8 + p.ph) * 12 * da;
-    if (p.y < -20) { p.y = WALL_Y; p.x = rnd() * WORLD_W; }
+    if (p.y < -20 - topExtra * 0.5) { p.y = WALL_Y; p.x = rnd() * aw - sideX; }
     const tw = 0.45 + 0.55 * Math.sin(T * 2.2 + p.ph);
     ctx.globalAlpha = Math.max(0, tw) * 0.8;
     const s = (theme === 3 ? 7 : 10) * p.s;
@@ -798,7 +798,8 @@ export function drawWall(view) {
   const lvl = ratio < 0.25 ? 3 : ratio < 0.5 ? 2 : ratio < 0.75 ? 1 : 0;
   if (COLLAPSE.t >= 0) drawCollapse(w, x, y);
   else {
-    ctx.drawImage(w, x, y, w.hw * 2, w.hh * 2);
+    if (sideX > 0.5) { sides(w, -20, y, w.hh * 2); ctx.save(); ctx.translate(ws, 0); mid(w, -20, y, w.hh * 2); ctx.restore(); } // 넓은 화면: 성벽이 양옆으로 이어진다
+    else ctx.drawImage(w, x, y, w.hw * 2, w.hh * 2);
     if (lvl) ctx.drawImage(cracks(lvl), x, y, w.hw * 2, w.hh * 2);
   }
   const red = Math.max(wallFlash * 0.85, ratio < 0.3 && view.phase === 'play' ? 0.25 + 0.2 * Math.sin(RT * 8) : 0);
@@ -817,12 +818,13 @@ export function drawWall(view) {
   const ba = clamp(0.16 + 0.11 * Math.log2(1 + ls), 0.16, 0.8);
   additive(true);
   ctx.globalAlpha = ba * 0.5;
-  spr(gl('#6fb8ff'), 360, WALL_Y - 14, 840, 60);
+  spr(gl('#6fb8ff'), 360, WALL_Y - 14, 840 + sideX * 2, 60);
   ctx.globalAlpha = ba * (0.75 + 0.25 * Math.sin(RT * 2.2));
-  ctx.drawImage(runeBand('#9fd0ff'), -30 - (RT * 16) % 48, WALL_Y - 36, 820, 24);
+  const rbW = 820 + Math.ceil(sideX / 48) * 96;
+  ctx.drawImage(runeBand('#9fd0ff'), -30 - Math.ceil(sideX / 48) * 48 - (RT * 16) % 48, WALL_Y - 36, rbW, 24);
   ctx.globalAlpha = ba * (0.5 + 0.3 * Math.sin(RT * 3.1));
   ctx.fillStyle = '#e0f4ff';
-  ctx.fillRect(-30, WALL_Y - 40, 780, 2);
+  ctx.fillRect(-30 - sideX, WALL_Y - 40, 780 + sideX * 2, 2);
   if (view.spells && view.spells.holyLight) { // 수호의 빛: 성벽을 따라 흐르는 금빛 파동
     for (let k = 0; k < 2; k++) {
       ctx.globalAlpha = 0.55;
@@ -985,12 +987,14 @@ export function drawCoins() {
 // 테마 배경 (맨 아래 층, 월드 변환 wt() 상태에서 호출)
 export function drawBackground(theme) {
   const bg = background(theme);
-  ctx.drawImage(bg, -BLEED, -BLEED, WORLD_W + BLEED * 2, WORLD_H + BLEED * 2);
+  const wide = sideX > 0.5;
+  if (wide) { sides(bg, -BLEED, -BLEED, WORLD_H + BLEED * 2); mid(bg, -BLEED, -BLEED, WORLD_H + BLEED * 2); }
+  else ctx.drawImage(bg, -BLEED, -BLEED, WORLD_W + BLEED * 2, WORLD_H + BLEED * 2);
   // 세로로 긴 화면: 월드 위 여분(topExtra)을 테마별 원경(하늘·먼 배경)으로 채운다(§2.2) — 전체 타일을 topExtra 높이에 맞춰 늘린다(맨 아래 = 지평선)
   if (topExtra > 0.5) {
-    ctx.drawImage(farBg(theme), -BLEED, -topExtra, WORLD_W + BLEED * 2, topExtra);
-    const sh = Math.min(90, topExtra);
-    ctx.drawImage(seam(theme), -BLEED, -sh, WORLD_W + BLEED * 2, sh);
+    const far = farBg(theme), sh = Math.min(90, topExtra), sm = seam(theme);
+    if (wide) { sides(far, -BLEED, -topExtra, topExtra); mid(far, -BLEED, -topExtra, topExtra); sides(sm, -BLEED, -sh, sh); mid(sm, -BLEED, -sh, sh); }
+    else { ctx.drawImage(far, -BLEED, -topExtra, WORLD_W + BLEED * 2, topExtra); ctx.drawImage(sm, -BLEED, -sh, WORLD_W + BLEED * 2, sh); }
   }
   // 어두운 테마(동굴·묘지·화산·마왕성): 적이 걷는 전장 가운데에 넓은 빛 웅덩이(가산 1장) → 중간 톤을 올려 적이 배경에서 떠 보이게 (§2.2)
   const LP = LIGHT_POOL[theme];
@@ -1000,6 +1004,40 @@ export function drawBackground(theme) {
     spr(gl(LP[0]), 360, 470, 1000, 1150);
     ctx.globalAlpha = 1;
     additive(false);
+  }
+  edgeShade();
+}
+// 넓은 화면(폴더블 펼침·가로·데스크톱): 월드 밖 양옆을 같은 테마 그림으로 잇는다.
+// 가장자리 띠(STRIP)를 거울처럼 번갈아 뒤집어 붙인다(핑퐁) → 이음매 없음, 가운데 길·강이 복제되지 않음, 늘린 그림 없음.
+// img 는 월드 x = left 부터 가로로 놓인 텍스처(hw = 반폭). ponytail: 핑퐁 타일 — 테마별 전용 옆 지형 그림은 필요해지면 추가
+const STRIP = 240;
+function sides(img, left, y, h) {
+  const k = img.width / (img.hw * 2), o = 2; // o = 안쪽으로 겹쳐 그리는 폭(반픽셀 틈 방지)
+  for (let n = 0, d = 0; d < sideX + 1 && n < 10; n++, d += STRIP) {
+    const w = Math.min(STRIP, sideX + 1 - d), flip = n % 2 === 0; // 짝수 칸 = 거울, 홀수 칸 = 원본 그대로
+    for (const side of [-1, 1]) {
+      const dx = side < 0 ? -d - w : WORLD_W + d - o; // 그릴 자리(월드 x), 폭 w + o
+      const src = side < 0 ? (flip ? -o : STRIP - w) : (flip ? WORLD_W - w : WORLD_W - STRIP - o); // 원본 띠(월드 x)
+      ctx.save();
+      if (flip) { ctx.translate(dx * 2 + w + o, 0); ctx.scale(-1, 1); }
+      ctx.drawImage(img, (src - left) * k, 0, (w + o) * k, img.height, dx, y, w + o, h);
+      ctx.restore();
+    }
+  }
+}
+// 넓은 화면: 가운데는 월드 0~720만(굽힌 여백 BLEED가 거울 띠 위에 겹쳐 이음매가 생기지 않게)
+function mid(img, left, y, h) {
+  const k = img.width / (img.hw * 2);
+  ctx.drawImage(img, (0 - left) * k, 0, WORLD_W * k, img.height, 0, y, WORLD_W, h);
+}
+// 화면 양옆 가장자리 비네트: 좁은 화면은 전장 가장자리 100, 넓은 화면은 옆 여분 전체에 걸쳐 바깥으로 어두워진다
+// → 전장(720 폭)이 자연스럽게 중심이 되고, 옆 여분의 UI(스킬 스택·영웅 상태)도 읽힌다
+function edgeShade() {
+  const w = 100 + sideX, a = 0.34 + 0.3 * Math.min(1, sideX / 160);
+  for (const side of [-1, 1]) {
+    const x0 = side < 0 ? -sideX : WORLD_W + sideX, x1 = x0 - side * w;
+    ctx.fillStyle = lin(ctx, x0, 0, x1, 0, [[0, `rgba(8,4,20,${a})`], [0.55, `rgba(10,6,24,${a * 0.3})`], [1, 'rgba(10,6,24,0)']]);
+    ctx.fillRect(Math.min(x0, x1), -topExtra - 40, w, 1016 + topExtra + 40);
   }
 }
 // 이음매 텍스처: 전장 배경 맨 위 90줄을 위아래로 뒤집고 위로 갈수록 투명하게(한 번 굽기)

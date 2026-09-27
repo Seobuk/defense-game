@@ -34,8 +34,9 @@ export function createRenderer(canvas) {
     scale = Math.min(W / WORLD_W, H / WORLD_H);
     ox = (W - WORLD_W * scale) / 2;
     oy = H - WORLD_H * scale; // 월드는 아래(성벽·하단 패널 쪽)에 붙인다. 위 여분 = topExtra (배경이 채움)
+    // 넓은 화면(폴더블 안쪽 화면·데스크톱): 월드 720 폭은 그대로, 양옆 여분(sideX)은 world.js가 테마 배경·성벽을 이어 그린다
     lastCW = canvas.clientWidth; lastCH = canvas.clientHeight; lastDpr = dpr;
-    C.setView(W, H, scale, ox, oy, oy / scale);
+    C.setView(W, H, scale, ox, oy, oy / scale, ox / scale);
     C.setScale(scale);
     fx.resetGlows();
   }
@@ -49,7 +50,7 @@ export function createRenderer(canvas) {
     if (!view) return { coins: 0 };
     checkSize();
     const dt = Math.min(0.1, Math.max(0, +dtReal || 0));
-    const da = opts.hitstop ? 0 : dt;
+    const da = opts.hitstop ? 0 : dt * hud.slowmoScale(); // 합동 필살 슬로 모션: 연출 시계도 같이 느려진다
     T += da;
     RT += dt;
     C.setClock(T, RT, dt, ++frameNo);
@@ -120,6 +121,8 @@ export function createRenderer(canvas) {
     fx.drawFireballs();
     fx.drawHeroShots();
     fx.drawSouls();
+    units.drawHeroReveal(view); // 이펙트 위로 영웅 윤곽을 한 번 더(마법이 터져도 영웅이 묻히지 않게)
+    fx.drawCollab(view);
     world.drawLoots();
     world.drawCoins();
     fx.drawNums();
@@ -137,8 +140,27 @@ export function createRenderer(canvas) {
     const r = canvas.getBoundingClientRect(), k = r.width > 0 ? W / r.width : 1;
     return { x: ((cx - r.left) * k - ox) / scale, y: ((cy - r.top) * k - oy) / scale };
   }
+  // 월드 좌표 → 화면(clientX/Y). UI가 영웅 머리 위·스킬 착탄 지점에 DOM을 맞출 때
+  function toScreen(x, y) {
+    const r = canvas.getBoundingClientRect(), k = W > 0 ? r.width / W : 1;
+    return { x: r.left + (ox + x * scale) * k, y: r.top + (oy + y * scale) * k };
+  }
+  // 캔버스 안 배치(CSS px, 캔버스 왼쪽 위 기준): 월드 720 폭 열의 위치와 양옆·위 여분.
+  // UI 규칙: sideCss(한쪽 여백)가 충분히 넓으면(예: ≥ 96px) 스킬 스택·영웅 상태를 여백으로, 아니면 전장 위에 겹쳐 둔다.
+  function layout() {
+    checkSize();
+    const r = canvas.getBoundingClientRect(), k = W > 0 ? r.width / W : 1, u = scale * k;
+    return {
+      unit: u,                                   // 월드 1 = CSS px
+      worldLeft: ox * k, worldRight: (ox + WORLD_W * scale) * k, worldTop: oy * k, worldBottom: (oy + WORLD_H * scale) * k,
+      sideCss: ox * k, topCss: oy * k,           // 한쪽 옆 여백 · 위 여백 (CSS px)
+      sideX: C.sideX, topExtra: C.topExtra,      // 같은 여백(월드 단위)
+      width: r.width, height: r.height,
+    };
+  }
 
   resize();
   // topExtra: 월드 y=0 위로 보이는 여분(월드 단위). DOM HUD는 화면 맨 위라 HUD 띠 = 월드 y < 90 - topExtra
-  return { resize, frame, toWorld, get topExtra() { return C.topExtra; } };
+  // sideX: 넓은 화면에서 월드 x=0 왼쪽/x=720 오른쪽으로 보이는 여분(월드 단위)
+  return { resize, frame, toWorld, toScreen, layout, get topExtra() { return C.topExtra; }, get sideX() { return C.sideX; } };
 }

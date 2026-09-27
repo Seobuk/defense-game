@@ -1,8 +1,8 @@
-// 엠블럼 — 판타지 스킬 14종 · 원소 융합 8종 · 히든 조합 14종의 "그린" 아이콘(캔버스 경로 → 오프스크린 캐시).
+// 엠블럼 — 판타지 스킬 14종 · 원소 융합 8종 · 히든 조합 14종 · 협공 15종의 "그린" 아이콘(캔버스 경로 → 오프스크린 캐시).
 // 한 벌의 손: 굵은 잉크 외곽(INK2) + 3단 셀 셰이딩 + 좌상단 광택 + 뒤 빛. 카드 선택·스킬 칩·도감(DOM, dataURL)과
 // 컷인·조합 줄(캔버스)이 같은 그림을 쓴다. ART.md §8 · §10.4 · §10.9
 // 좌표: 100 × 100 (중심 0,0), 그림은 ±44 안.
-import { FUSIONS } from '../config.js';
+import { FUSIONS, COLLABS } from '../config.js';
 import { TAU, INK2, EL, bake, cel, lin, rad, rgb, shine } from './core.js';
 
 const LW = 4.2;
@@ -416,10 +416,57 @@ function fusionArt(key) {
   };
 }
 
-export const hasEmblem = key => !!(SPELL_ART[key] || SYN_ART[key] || PERK_ART[key] || FUSION_EL[key]);
+// ═════════ 협공(영웅 × 마법사) — 영웅 클래스 무기 문장 + 마법사 스킬 ═════════
+const MET = c => lin(c, -20, -40, 20, 40, [[0, '#ffffff'], [0.35, '#dfe8f4'], [0.62, '#9aa8c0'], [1, '#5a6478']]);
+const WEAPON = { // 오른쪽 위를 향한 무기(중심 0,0, ±40)
+  knight: x => { // 넓은 장검 + 금 가드
+    P(x, [-6, 26, -6, -30, 0, -42, 6, -30, 6, 26]); ink(x, MET(x));
+    x.beginPath(); x.moveTo(0, -34); x.lineTo(0, 22); x.lineWidth = 2; x.strokeStyle = 'rgba(255,255,255,0.8)'; x.stroke();
+    P(x, [-20, 26, 20, 26, 16, 34, -16, 34]); ink(x, '#ffc92e');
+    P(x, [-4, 34, 4, 34, 4, 46, -4, 46]); ink(x, '#8a4a1a', 3); C(x, 0, 48, 5); ink(x, '#ffc92e', 3);
+  },
+  ranger: x => { // 활 + 초록 깃 화살
+    x.beginPath(); x.arc(-22, 0, 40, -1.1, 1.1); x.lineWidth = 7; x.strokeStyle = INK2; x.stroke(); x.lineWidth = 3.4; x.strokeStyle = '#c8843a'; x.stroke();
+    x.beginPath(); x.moveTo(-22 + Math.cos(-1.1) * 40, Math.sin(-1.1) * 40); x.lineTo(-22 + Math.cos(1.1) * 40, Math.sin(1.1) * 40); x.lineWidth = 1.6; x.strokeStyle = '#fff6dc'; x.stroke();
+    P(x, [-20, -2, 30, -2, 30, -6, 44, 0, 30, 6, 30, 2, -20, 2]); ink(x, '#e8eef8', 3);
+    for (const d of [-1, 1]) { P(x, [-24, 0, -14, 0, -20, d * 9, -30, d * 9]); ink(x, '#5fe06e', 2.6); }
+  },
+  sorcerer: x => { // 지팡이 + 보라 오브
+    x.beginPath(); x.moveTo(-26, 40); x.lineTo(14, -18); stroke2(x, '#a0683a', 5);
+    orb(x, 20, -26, 13, '#ffffff', '#c08aff', '#5a1fa8', 3.6); star4(x, 34, -40, 8);
+  },
+  cleric: x => { // 철퇴 + 후광
+    x.beginPath(); x.ellipse(10, -34, 20, 6, 0, 0, TAU); x.lineWidth = 7; x.strokeStyle = INK2; x.stroke(); x.lineWidth = 3.4; x.strokeStyle = '#ffe07a'; x.stroke();
+    x.beginPath(); x.moveTo(-24, 38); x.lineTo(4, -2); stroke2(x, '#8a5a2a', 5);
+    burstShape(x, 10, -12, 18, 6, 0.62); ink(x, cel(x, -8, -30, 28, 6, '#ffd23a'));
+  },
+  assassin: x => { // 쌍단검 교차
+    for (const d of [-1, 1]) {
+      x.save(); x.rotate(d * 0.6);
+      P(x, [-4, 18, -4, -26, 0, -38, 4, -26, 4, 18]); ink(x, MET(x), 3.4);
+      P(x, [-12, 18, 12, 18, 10, 23, -10, 23]); ink(x, '#b04dff', 3);
+      P(x, [-3, 23, 3, 23, 3, 34, -3, 34]); ink(x, '#2a1b36', 2.6);
+      x.restore();
+    }
+  },
+};
+const COLLAB_ART = Object.fromEntries(COLLABS.filter(c => c.cls).map(c => [c.key, x => {
+  glowBack(x, '#ff6fd2', 50, 0, 0, 0.45);
+  x.save(); x.translate(-14, -12); x.scale(0.64, 0.64); SPELL_ART[c.spells[0]](x); x.restore();
+  x.save(); x.translate(16, 14); x.scale(0.62, 0.62); WEAPON[c.cls](x); x.restore();
+  burstShape(x, 0, 2, 12, 4, 0.3); ink(x, '#ffe0f4', 2.6); // 두 힘이 만나는 불꽃
+}]));
+COLLAB_ART.unison = x => { // 합동 필살: 검과 지팡이가 교차 + 큰 별
+  glowBack(x, '#ffd23a', 50, 0, 0, 0.6);
+  x.save(); x.rotate(-0.5); x.scale(0.9, 0.9); WEAPON.knight(x); x.restore();
+  x.save(); x.rotate(0.6); x.translate(6, 4); x.scale(0.9, 0.9); WEAPON.sorcerer(x); x.restore();
+  burstShape(x, 0, -4, 22, 4, 0.32); ink(x, lin(x, 0, -26, 0, 18, [[0, '#ffffff'], [1, '#ffb0e0']]), 3);
+};
+
+export const hasEmblem = key => !!(SPELL_ART[key] || SYN_ART[key] || PERK_ART[key] || FUSION_EL[key] || COLLAB_ART[key]);
 // 엠블럼 캔버스(반폭 50 월드 단위). res = 1 단위당 픽셀
 export function emblem(key, res = 1.6) {
-  const art = SPELL_ART[key] || SYN_ART[key] || PERK_ART[key] || (FUSION_EL[key] ? fusionArt(key) : null);
+  const art = SPELL_ART[key] || SYN_ART[key] || PERK_ART[key] || COLLAB_ART[key] || (FUSION_EL[key] ? fusionArt(key) : null);
   if (!art) return null;
   return bake('em|' + key + '|' + res.toFixed(2), 50, 50, x => { x.lineJoin = 'round'; x.lineCap = 'round'; art(x); }, res);
 }

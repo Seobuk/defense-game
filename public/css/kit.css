@@ -289,3 +289,5 @@
 @media (prefers-reduced-motion: reduce) {
   .k-btn.is-ready, .k-btn.is-ready::after, .k-badge.new, .k-dot, .k-rcard[data-r="legend"]::before { animation: none; }
 }
+/* 옛 WebView(Chrome < 123)는 HTML 글자의 paint-order 를 무시해 외곽선이 글자를 덮어 뭉개진다 → 외곽선만 끈다(main.js 가 .no-po) */
+.no-po *, .no-po *::before, .no-po *::after { -webkit-text-stroke-width: 0 !important; }
