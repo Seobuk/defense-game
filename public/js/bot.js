@@ -4,7 +4,7 @@ import { act } from './sim.js';
 import { unlockedClasses, autoEquipAll } from './hero.js';
 import { buyMeta, startSlots } from './run.js';
 
-// 대포 1문의 기대 DPS 지표 (부채꼴 추가 탄은 일부만 맞는다고 가정)
+// 마법사 1명의 기본 주문 기대 DPS 지표 (부채꼴 추가 발사체는 일부만 맞는다고 가정)
 function power(lv) {
   const s = cannonStats(lv);
   return s.dmg * s.rate * (1 + s.crit * (s.critMult - 1)) * (1 + (s.shots - 1) * 0.35);

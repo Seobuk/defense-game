@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { fmt, mulberry32 } from '../public/js/util.js';
 import {
-  DT, upgradeCost, SKILLS, SPELL_KEYS, FUSIONS, SPELL_SLOTS, SPELL_MAX_LV, AWAKEN_KEYS, META_KEYS, metaCost, metaMax, metaFx,
+  DT, upgradeCost, cannonStats, ALLY_SPELLS, BASIC_SPELLS, SKILLS, SPELL_KEYS, FUSIONS, SPELL_SLOTS, SPELL_MAX_LV, AWAKEN_KEYS, META_KEYS, metaCost, metaMax, metaFx,
   startGoldAmount, RUN_GEMS, MAX_STAGE,
 } from '../public/js/config.js';
 import { createGame, startStage, step, act, drainEvents, setPlayer, tickPick, refreshFusion, serializeRun, normalizeRun, cardCount } from '../public/js/sim.js';
@@ -209,26 +209,29 @@ function addiction() {
     giant: { atk: 60, crit: 15, multi: 1 },
   };
   for (const [key, lv] of Object.entries(LV)) {
-    const sg = createGame({ stage: key === 'giant' ? 1 : 12, players: [{ lv }, { lv: { wall: 200 } }], seed: 3 });
+    const sg = createGame({ stage: key === 'giant' ? 5 : 12, players: [{ lv }, { lv: { wall: 200 } }], seed: 3 });
     const sev = drainEvents(sg);
     assert.ok(sg.players[0].syn.includes(key), `${key} 활성`);
     assert.ok(sev.some(e => e.type === 'synergy' && e.key === key && e.o === 0 && e.first), `${key} 발견 이벤트`);
     assert.ok(sg.discovered.has(key));
     const rev = [];
     let pierced = false, homed = false, burned = false;
+    const mods = new Set();
     for (let t = 0; t < 90 && sg.phase === 'play'; t += DT) {
       if (sg.pick) { resolvePick(sg, rev); continue; }
       step(sg, DT);
       rev.push(...drainEvents(sg));
-      pierced ||= sg.bullets.some(b => b.hit && b.hit.length >= 2);
+      pierced ||= sg.bullets.some(b => b.owner === 0 && b.hit.length >= 2);
       homed ||= sg.bullets.some(b => b.tgt && typeof b.tgt === 'object');
       burned ||= sg.enemies.some(e => e.burnT > 0);
+      for (const b of sg.bullets) if (b.owner === 0) mods.add(b.syn);
     }
-    const kinds = new Set(of(rev, 'hit').map(e => e.kind));
-    if (key === 'flame') assert.ok(burned && kinds.has('flame'), '화상');
-    if (key === 'pierce') assert.ok(pierced && kinds.has('pierce'), '관통');
+    const kinds = new Set(of(rev, 'hit').filter(e => e.o === 0).map(e => e.kind));
+    assert.deepEqual([...kinds], ['fireball'], `${key}: P1 기본 주문 = 화염구`);
+    if (key === 'flame') assert.ok(burned && mods.has('flame') && of(rev, 'shards').some(e => e.o === 0 && e.pts.length > 0), '화상 + 화염구 파편');
+    if (key === 'pierce') assert.ok(pierced && mods.has('pierce'), '관통');
     if (key === 'chain') assert.ok(of(rev, 'chain').some(e => e.o === 0 && e.pts.length >= 2), '체인');
-    if (key === 'homing') assert.ok(homed && kinds.has('homing'), '유도');
+    if (key === 'homing') assert.ok(homed && mods.has('homing'), '유도');
     if (key === 'thorns') assert.ok(of(rev, 'thorns').length > 0, '가시 반사');
     if (key === 'giant') {
       const d = sg.players[0].stats.dmg;
@@ -268,7 +271,7 @@ function addiction() {
   const hev = [];
   run(hg, 15, hev);
   const hd = hg.players[0].stats.dmg;
-  assert.ok(of(hev, 'hit').some(e => Math.abs(e.dmg - hd * 1.25) < 1e-6), '쌍둥이 +25%');
+  assert.ok(of(hev, 'hit').some(e => Math.abs(e.dmg - hd * BASIC_SPELLS[0].dmg * 1.25) < 1e-6), '쌍둥이 +25%');
 
   // 빙하 운석: 한쪽 빙결 → 3초 안 다른 쪽 운석 → 보스 운석 피해 3배
   const bg = createGame({ stage: 10, players: [{ lv: { wall: 400 } }, { lv: { wall: 400 } }], seed: 8 });
@@ -369,12 +372,74 @@ function addiction() {
   // 넉백: 잡몹은 밀려나고 보스는 그대로
   const kg = createGame({ stage: 2, players: [{ lv: { atk: 3 } }, {}], seed: 12 });
   run(kg, 6);
-  const tgt = kg.enemies[0];
-  const y0 = tgt.y;
+  const ys = kg.enemies.map(e => [e, e.y]);
   kg.freezeT = 1; // 이동 멈춤
   run(kg, 0.5);
-  assert.ok(tgt.dead || tgt.y < y0, '넉백');
+  assert.ok(ys.some(([e, y0]) => e.dead || e.y < y0), '넉백');
   console.log('중독성 레이어 통과');
+}
+
+// ── 2) 성벽 마법사 = 주문만 시전 (기본 공격 없음) ──
+function mageSpells() {
+  // 기본 주문: P1 화염구(작은 폭발), P2 서리 화살(관통·둔화). 발사체 kind·caster, 시전마다 cast 이벤트
+  const g = createGame({ stage: 5, players: [{ lv: { atk: 5 } }, { lv: { atk: 5 } }], seed: 60 });
+  const ev = [];
+  const kinds = new Set();
+  let slowed = false;
+  for (let t = 0; t < 20 && g.phase === 'play'; t += DT) {
+    if (g.pick) { resolvePick(g, ev); continue; }
+    step(g, DT);
+    ev.push(...drainEvents(g));
+    for (const b of g.bullets) kinds.add(`${b.caster}:${b.kind}:${b.pierce}`);
+    slowed ||= g.enemies.some(e => !e.dead && e.slowT > 0);
+  }
+  assert.deepEqual([...kinds].sort(), ['0:fireball:1', '1:frostbolt:2'], '발사체 = 화염구(P1) · 서리 화살(P2, 2마리 관통)');
+  const casts = of(ev, 'cast');
+  const ok = e => [e.x, e.y, e.tx, e.ty].every(Number.isFinite);
+  assert.ok(casts.some(e => e.o === 0 && e.spell === 'fireball' && e.basic && ok(e)), '화염구 시전 이벤트');
+  assert.ok(casts.some(e => e.o === 1 && e.spell === 'frostbolt' && e.basic && ok(e)), '서리 화살 시전 이벤트');
+  assert.ok(of(ev, 'boom').some(e => e.kind === 'fireball' && e.o === 0), '화염구 폭발');
+  assert.ok(slowed, '서리 화살 둔화');
+  const hits = of(ev, 'hit');
+  assert.ok(hits.every(e => (e.o !== 0 || e.kind === 'fireball') && (e.o !== 1 || e.kind === 'frostbolt')), '기본 공격(매직 미사일) 없음');
+
+  // 카드 스킬은 P1 주문서에서 각자 쿨타임대로 시전(cast basic:false) + 주문 치명타
+  const cg = createGame({ stage: 5, players: [{ lv: { atk: 150, crit: 15, wall: 300 } }, { lv: { wall: 300 } }], seed: 61, run: { spells: { judgment: 3, iceLance: 3 } } });
+  const cev = [];
+  run(cg, 8, cev);
+  for (const k of ['judgment', 'iceLance']) assert.ok(of(cev, 'cast').some(e => e.o === 0 && e.spell === k && !e.basic && ok(e)), `${k} 시전 이벤트`);
+  assert.ok(of(cev, 'hit').some(e => e.o === 3 && e.caster === 0 && e.crit), '스킬 피해도 치명타');
+
+  // 시전 속도 = 쿨타임 단축(상한), 다중 시전 = 연속 시전 확률
+  const casts60 = lv => {
+    const sg = createGame({ stage: 25, players: [{ lv: { wall: 400, ...lv } }, { lv: { wall: 400 } }], seed: 62, run: { spells: { judgment: 1 } } });
+    const e = []; run(sg, 60, e);
+    return of(e, 'cast').filter(x => x.spell === 'judgment').length;
+  };
+  const base = casts60({}), fast = casts60({ rate: 15 }), echo = casts60({ multi: 5 });
+  assert.ok(fast > base * 1.25 && echo > base * 1.2, `심판 광선 시전 ${base} → 시전 속도 ${fast} · 다중 시전 ${echo}`);
+  assert.ok(cannonStats({ rate: 15 }, { rateMul: 9 }).cdMul <= 1 / 0.6 + 1e-9, '쿨타임 단축 상한');
+
+  // AI 동료: 네임드 보스를 잡을 때마다 냉기·번개 주문 1개(런당 최대 3), 이어하기에 남는다
+  const strong = { lv: { atk: 90, rate: 12, crit: 10, multi: 3, wall: 30 } };
+  const ag = createGame({ stage: 10, players: [strong, strong], seed: 5 });
+  const aev = [];
+  runUntilEnd(ag, 600, aev);
+  assert.equal(ag.phase, 'clear');
+  assert.deepEqual(ag.allySpells, { [ALLY_SPELLS[0]]: 1 });
+  assert.ok(aev.some(e => e.type === 'allySpell' && e.spell === ALLY_SPELLS[0] && e.level === 1));
+  startStage(ag, 11);
+  assert.deepEqual(ag.run.checkpoint.allySpells, ag.allySpells, '체크포인트에 저장');
+  const lev = [];
+  run(ag, 10, lev);
+  assert.ok(of(lev, 'cast').some(e => e.o === 1 && e.spell === ALLY_SPELLS[0]), 'AI 동료가 익힌 주문 시전');
+  ag.allySpells = Object.fromEntries(ALLY_SPELLS.map(k => [k, 2]));
+  while (ag.pick) resolvePick(ag);
+  ag.enemies.push({ id: 99999, named: true, isBoss: true, dead: false, hp: 1, maxHp: 1, shield: 0, x: 300, y: 300, r: 30, reduce: 1, gold: 1, beh: 'walk', type: 'slime' });
+  assert.ok(act(ag, 0, { type: 'skill', skill: 'meteor' }), '운석으로 네임드 처치');
+  assert.equal(Object.keys(ag.allySpells).length, 3, '최대 3개');
+  assert.deepEqual(normalizeRun({ allySpells: { iceLance: 9, fireball: 2 } }).allySpells, { iceLance: 5 }, '동료 주문 검증');
+  console.log('성벽 마법사 주문 시전 통과');
 }
 
 // ── 3) 판타지 스킬 선택 (런 전체 누적 빌드: 슬롯 6 · Lv1~5 · 각성) ──
@@ -504,7 +569,7 @@ function fantasySpellEffects() {
   {
     const g = mk('curseMark'); const ev = []; run(g, 3, ev);
     const st = g.players[0].stats;
-    assert.ok(of(ev, 'hit').some(e => e.o === 0 && !e.crit && e.dmg > st.dmg * 1.3), '저주 낙인: 받는 피해 증가');
+    assert.ok(of(ev, 'hit').some(e => e.o === 0 && !e.crit && e.dmg > st.dmg * BASIC_SPELLS[0].dmg * 1.3), '저주 낙인: 받는 피해 증가');
   }
   {
     const g = mk('soulHarvest');
@@ -1014,6 +1079,7 @@ function classParity(snap, n) {
 
 smoke();
 addiction();
+mageSpells();
 fantasyPick();
 fantasySpellEffects();
 fantasyFusions();
@@ -1034,6 +1100,7 @@ runLifecycle();
 reviveWard();
 slaughterPace();
 
+if (process.argv.includes('--unit')) process.exit(0); // 단위 테스트만(캠페인 생략)
 const parityAt = FULL ? [40, 80] : [40];
 const seeds = FULL ? [SEED, SEED + 1, SEED + 2] : [SEED];
 let snaps = null;

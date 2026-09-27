@@ -14,12 +14,12 @@ export const GOLD_POS = { x: 70, y: 40 }; // 동전이 날아갈 HUD 위치(월�
 export const MAX_STAGE = 100;
 
 // ── 인게임 업그레이드 ──
-// 마법 판타지 개편(DESIGN.md 최신 사용자 결정): 대포 → 성벽 마법사 2인, 탄환 → 마력 구체. 키는 그대로 유지
+// 성벽 마법사 2인은 기본 공격 없이 주문만 시전한다(DESIGN.md '성벽 마법사 주문 시전'). 키는 그대로 유지
 export const UPGRADES = [
-  { key: 'atk', name: '마력', desc: '마력 구체 데미지 상승' },
-  { key: 'rate', name: '시전 속도', desc: '시전 간격 단축 (최대 초당 15회)' },
-  { key: 'crit', name: '치명타', desc: '치명타 확률 상승 (최대 80%, 2.5배)' },
-  { key: 'multi', name: '다중 시전', desc: '한 번에 여러 발의 마력 구체를 부채꼴로 시전' },
+  { key: 'atk', name: '마력', desc: '모든 주문 피해 상승' },
+  { key: 'rate', name: '시전 속도', desc: '기본 주문 시전 간격 단축(최대 초당 15회) + 주문 쿨타임 단축(최대 -40%)' },
+  { key: 'crit', name: '치명타', desc: '주문 치명타 확률 상승 (최대 80%, 2.5배)' },
+  { key: 'multi', name: '다중 시전', desc: '기본 주문 발사체 수 증가(1 → 3 → 5 …) + 쿨타임 주문 연속 시전 확률' },
   { key: 'wall', name: '성벽 결계', desc: '성벽에 두른 룬 방어막의 최대 내구력 증가' },
 ];
 export const UPGRADE_KEYS = UPGRADES.map(u => u.key);
@@ -36,6 +36,15 @@ export const upgradeMax = stat => MAX[stat] ?? Infinity;
 const SHOTS = [1, 3, 5, 7, 9, 12];
 const SPREAD = [0, 0.35, 0.8, 1.3, 1.9, 2.97]; // 부채꼴 전체 각도(rad), 12발 ≈ 170°
 export const CRIT_MULT = 2.5;
+// 쿨타임 주문: 시전 속도 레벨당 쿨타임 cdPer 단축(배율 상한 cdCap = 쿨타임 -40%), 다중 시전 레벨당 연속 시전 확률 echoPer,
+// 연속 시전은 첫 시전 echoDelay초 뒤
+export const SPELL_CAST = { cdPer: 0.03, cdCap: 1 / 0.6, echoPer: 0.08, echoDelay: 0.3 };
+
+// 마법사별 고유 기본 주문(스킬이 없을 때의 주력 공격). [0] = P1(나), [1] = P2(AI 동료)
+export const BASIC_SPELLS = [
+  { key: 'fireball', name: '화염구', desc: '마력 75% 화염구가 작게 폭발해 주변 적에게도 35% 피해', dmg: 0.75, pierce: 1, splashR: 44, splashPct: 0.35 },
+  { key: 'frostbolt', name: '서리 화살', desc: '마력 65% 서리 화살이 적 2마리를 꿰뚫고 1.2초간 25% 둔화', dmg: 0.65, pierce: 2, slow: 0.25, slowT: 1.2 },
+];
 
 export const atkDmg = lv => 10 * (1 + 0.1 * lv) * 1.065 ** lv;
 export const fireRate = lv => Math.min(15, 1.5 + 0.9 * lv);
@@ -53,6 +62,8 @@ export function cannonStats(lv, fx = {}) {
     rate: fireRate(lv.rate | 0) * (fx.rateMul || 1),
     crit: critChance(lv.crit | 0),
     critMult: CRIT_MULT,
+    cdMul: Math.min(SPELL_CAST.cdCap, (1 + SPELL_CAST.cdPer * (lv.rate | 0)) * (fx.rateMul || 1)), // 쿨타임 주문 쿨타임 ÷ cdMul
+    echo: SPELL_CAST.echoPer * m,                                                                  // 쿨타임 주문 연속 시전 확률
     shots: SHOTS[m],
     spread: SPREAD[m],
     boomR: critBoomRadius(fx.critBoom | 0),
@@ -165,11 +176,12 @@ export const LEGEND_T = 10;        // 전설의 학살: 골드 2배 지속(초)
 // 조합 효과 수치
 export const SYN_FX = {
   burn: 0.3, burnT: 2,              // 불꽃: 적중 피해의 30%를 2초에 걸쳐
-  pierce: 3,                        // 관통: 최대 3마리
+  pierce: 2,                        // 관통탄: 기본 주문 관통 +2마리
   chainN: 3, chainPct: 0.5, chainR: 180, // 체인: 3마리, 50%, 반경
   homingTurn: 7,                    // 유도: 초당 회전(rad)
   thorns: 20,                       // 요새화: 반사 = 내 탄환 피해 × 20
-  giant: 2,                         // 거인 사냥꾼: 엘리트/보스 피해 ×2
+  giant: 2,                         // 거인 사냥꾼: 엘리트/보스 주문 치명타 피해 ×2
+  shardN: 4, shardR: 140, shardPct: 0.3, // 불꽃 산탄: 화염구 파편 수·반경·피해 비율
   twin: 1.25, golden: 1.5,
   glacierWindow: 3, glacier: 3,     // 빙결 후 3초 안에 상대 운석 → 보스 운석 피해 ×3
   doubleWindow: 1.5, doubleFreeze: 10,
@@ -181,22 +193,22 @@ export const SYN_FX = {
 export const SYNERGIES = [
   { key: 'flame', name: '불꽃 산탄', kind: 'cannon', test: lv => lv.multi >= 2 && lv.crit >= 10,
     hint: '흩어지는 마력에 날카로운 눈이 깃들면, 불씨가 된다.',
-    desc: '다중 시전 2 이상 + 치명타 10 이상: 맞은 적이 2초 동안 타오르며 피해의 30%를 더 입는다.' },
+    desc: '다중 시전 2 이상 + 치명타 10 이상: 화염구가 터지며 불꽃 파편이 주변 적에게 흩어지고, 기본 주문에 맞은 적은 2초 동안 피해의 30%를 더 입는다.' },
   { key: 'pierce', name: '관통탄', kind: 'cannon', test: lv => lv.multi === 0 && lv.atk >= 25,
     hint: '한 발만 고집하는 자의 마력은 멈추지 않는다.',
-    desc: '다중 시전 0 + 마력 25 이상: 마력 구체가 적을 최대 3마리까지 꿰뚫는다.' },
+    desc: '다중 시전 0 + 마력 25 이상: 기본 주문이 적을 2마리 더 꿰뚫는다.' },
   { key: 'chain', name: '체인 라이트닝', kind: 'cannon', test: lv => lv.crit >= 12 && lv.rate >= 12,
     hint: '빠르고 날카로운 손끝에서 번개가 튄다.',
-    desc: '치명타 12 이상 + 시전 속도 12 이상: 치명타가 주변 적 최대 3마리에게 50% 피해로 번진다.' },
+    desc: '치명타 12 이상 + 시전 속도 12 이상: 주문 치명타가 주변 적 최대 3마리에게 50% 피해로 번진다.' },
   { key: 'homing', name: '유도 미사일', kind: 'cannon', test: lv => lv.multi >= 5,
     hint: '하늘을 가득 메운 마력은 스스로 길을 찾는다.',
-    desc: '다중 시전 MAX: 마력 구체가 진행 방향의 적을 쫓아간다.' },
+    desc: '다중 시전 MAX: 기본 주문이 진행 방향의 적을 쫓아간다.' },
   { key: 'thorns', name: '요새화', kind: 'cannon', test: lv => lv.wall >= 25 && lv.wall > lv.atk,
     hint: '창보다 방패를 믿는 자의 성벽엔 가시가 돋는다.',
-    desc: '성벽 결계 25 이상이고 마력 레벨보다 높음: 성벽을 때린 적이 내 마력 구체 피해의 20배를 되돌려 받는다.' },
+    desc: '성벽 결계 25 이상이고 마력 레벨보다 높음: 성벽을 때린 적이 내 주문 피해의 20배를 되돌려 받는다.' },
   { key: 'giant', name: '거인 사냥꾼', kind: 'cannon', test: lv => lv.atk >= 60 && lv.crit >= 15,
     hint: '거대한 것일수록 급소도 크다.',
-    desc: '마력 60 이상 + 치명타 MAX: 엘리트·보스에게 주는 피해 +100%.' },
+    desc: '마력 60 이상 + 치명타 MAX: 엘리트·보스에게 주문 치명타가 터지면 피해 +100%.' },
   { key: 'glacier', name: '빙하 운석', kind: 'duo',
     hint: '얼음이 녹기 전에 하늘이 무너진다면…',
     desc: '한 마법사의 빙결 후 3초 안에 다른 마법사가 운석: 얼어붙은 적이 산산조각, 보스는 운석 피해 3배.' },
@@ -242,50 +254,50 @@ export const AWAKEN_KEYS = AWAKENINGS.map(a => a.key);
 export const AWAKEN_BY_KEY = Object.fromEntries(AWAKENINGS.map(a => [a.key, a]));
 
 // 스킬 14종 (7원소 × 2). lv[0..4] = Lv1~5 수치, desc[0..4] = Lv별 한국어 설명.
-// 피해 관련 mul 은 game.players[0].stats.dmg(공격력) 배율 — 대포가 강해지면 스킬도 강해진다.
+// 피해 관련 mul 은 시전자 마법사의 stats.dmg(마력) 배율 — 마법사가 강해지면 스킬도 강해진다. 쿨타임(cd)은 시전 속도로 줄어든다.
 export const SPELLS = [
   { key: 'fireball', name: '파이어볼', element: 'fire', rarity: 'rare', icon: '🔥',
-    lv: [{ mul: 2.5, r: 100, cd: 3.5 }, { mul: 3.5, r: 120, cd: 3.0 }, { mul: 5, r: 140, cd: 2.5 }, { mul: 6.5, r: 155, cd: 2.2 }, { mul: 8.5, r: 170, cd: 1.9 }],
-    desc: ['가장 앞선 적 주변에 3.5초마다 폭발(공격력 250%, 반경 100)',
-      '폭발 강화(공격력 350%, 반경 120), 3.0초마다',
-      '폭발 강화(공격력 500%, 반경 140), 2.5초마다',
-      '폭발 강화(공격력 650%, 반경 155), 2.2초마다',
-      '폭발 최대(공격력 850%, 반경 170), 1.9초마다'] },
+    lv: [{ mul: 1.5, r: 100, cd: 3.5 }, { mul: 2.1, r: 120, cd: 3.0 }, { mul: 3, r: 140, cd: 2.5 }, { mul: 3.9, r: 155, cd: 2.2 }, { mul: 5.1, r: 170, cd: 1.9 }],
+    desc: ['가장 앞선 적 주변에 3.5초마다 폭발(마력 150%, 반경 100)',
+      '폭발 강화(마력 210%, 반경 120), 3.0초마다',
+      '폭발 강화(마력 300%, 반경 140), 2.5초마다',
+      '폭발 강화(마력 390%, 반경 155), 2.2초마다',
+      '폭발 최대(마력 510%, 반경 170), 1.9초마다'] },
   { key: 'flameBullet', name: '불꽃 마탄', element: 'fire', rarity: 'common', icon: '🔥',
     lv: [{ burn: 0.25, dur: 2 }, { burn: 0.4, dur: 2.5 }, { burn: 0.6, dur: 3 }, { burn: 0.85, dur: 3 }, { burn: 1.15, dur: 3.5 }],
-    desc: ['내 마력 구체에 맞은 적이 2초간 피해의 25%를 화상으로 추가 입는다',
+    desc: ['내 기본 주문(화염구)에 맞은 적이 2초간 피해의 25%를 화상으로 추가 입는다',
       '화상 피해 40%, 2.5초', '화상 피해 60%, 3초', '화상 피해 85%, 3초', '화상 피해 115%, 3.5초'] },
   { key: 'lightningStrike', name: '낙뢰', element: 'lightning', rarity: 'common', icon: '⚡',
-    lv: [{ mul: 3, n: 1, cd: 2.2 }, { mul: 3.5, n: 2, cd: 2.0 }, { mul: 4, n: 3, cd: 1.8 }, { mul: 4.8, n: 4, cd: 1.6 }, { mul: 5.8, n: 5, cd: 1.4 }],
-    desc: ['2.2초마다 무작위 적 1마리에게 낙뢰(공격력 300%)',
-      '2마리에게 350%, 2.0초마다', '3마리에게 400%, 1.8초마다', '4마리에게 480%, 1.6초마다', '5마리에게 580%, 1.4초마다'] },
+    lv: [{ mul: 1.8, n: 1, cd: 2.2 }, { mul: 2.1, n: 2, cd: 2.0 }, { mul: 2.4, n: 3, cd: 1.8 }, { mul: 2.88, n: 4, cd: 1.6 }, { mul: 3.48, n: 5, cd: 1.4 }],
+    desc: ['2.2초마다 무작위 적 1마리에게 낙뢰(마력 180%)',
+      '2마리에게 210%, 2.0초마다', '3마리에게 240%, 1.8초마다', '4마리에게 288%, 1.6초마다', '5마리에게 348%, 1.4초마다'] },
   { key: 'chainLightning', name: '연쇄 번개', element: 'lightning', rarity: 'rare', icon: '⚡',
     lv: [{ chance: 0.25, mul: 0.6, n: 2 }, { chance: 0.35, mul: 0.8, n: 3 }, { chance: 0.5, mul: 1, n: 4 }, { chance: 0.6, mul: 1.2, n: 5 }, { chance: 0.7, mul: 1.5, n: 6 }],
-    desc: ['내 마력 구체 명중 시 25% 확률로 번개가 주변 2마리에게 전이(60%)',
+    desc: ['내 기본 주문 명중 시 25% 확률로 번개가 주변 2마리에게 전이(60%)',
       '35% 확률, 3마리, 80%', '50% 확률, 4마리, 100%', '60% 확률, 5마리, 120%', '70% 확률, 6마리, 150%'] },
   { key: 'iceLance', name: '얼음 창', element: 'frost', rarity: 'common', icon: '❄️',
-    lv: [{ mul: 2, cd: 1.8 }, { mul: 2.6, cd: 1.5 }, { mul: 3.4, cd: 1.2 }, { mul: 4.3, cd: 1.0 }, { mul: 5.5, cd: 0.85 }],
-    desc: ['1.8초마다 관통하는 얼음 창 시전(공격력 200%)',
-      '260%, 1.5초마다', '340%, 1.2초마다', '430%, 1.0초마다', '550%, 0.85초마다'] },
+    lv: [{ mul: 1.2, cd: 1.8 }, { mul: 1.56, cd: 1.5 }, { mul: 2.04, cd: 1.2 }, { mul: 2.58, cd: 1.0 }, { mul: 3.3, cd: 0.85 }],
+    desc: ['1.8초마다 관통하는 얼음 창 시전(마력 120%)',
+      '156%, 1.5초마다', '204%, 1.2초마다', '258%, 1.0초마다', '330%, 0.85초마다'] },
   { key: 'frostWard', name: '서리 결계', element: 'frost', rarity: 'rare', icon: '❄️',
     lv: [{ r: 260, slow: 0.35 }, { r: 300, slow: 0.5 }, { r: 340, slow: 0.65 }, { r: 370, slow: 0.7 }, { r: 400, slow: 0.75 }],
     desc: ['성벽 근처(반경 260) 적의 이동속도 35% 감소',
       '반경 300, 50% 감소', '반경 340, 65% 감소', '반경 370, 70% 감소', '반경 400, 75% 감소'] },
   { key: 'tornado', name: '회오리', element: 'wind', rarity: 'rare', icon: '🌪️',
-    lv: [{ mul: 0.8, r: 70, spd: 170, cd: 5 }, { mul: 1.1, r: 85, spd: 180, cd: 4.2 }, { mul: 1.5, r: 100, spd: 190, cd: 3.6 },
-      { mul: 1.9, r: 110, spd: 195, cd: 3.2 }, { mul: 2.4, r: 120, spd: 200, cd: 2.8 }],
-    desc: ['5초마다 토네이도가 올라가며 주변 적을 밀어내고 초당 공격력 80%',
-      '4.2초마다, 반경 85, 초당 110%', '3.6초마다, 반경 100, 초당 150%', '3.2초마다, 반경 110, 초당 190%', '2.8초마다, 반경 120, 초당 240%'] },
+    lv: [{ mul: 0.48, r: 70, spd: 170, cd: 5 }, { mul: 0.66, r: 85, spd: 180, cd: 4.2 }, { mul: 0.9, r: 100, spd: 190, cd: 3.6 },
+      { mul: 1.14, r: 110, spd: 195, cd: 3.2 }, { mul: 1.44, r: 120, spd: 200, cd: 2.8 }],
+    desc: ['5초마다 토네이도가 올라가며 주변 적을 밀어내고 초당 마력 48%',
+      '4.2초마다, 반경 85, 초당 66%', '3.6초마다, 반경 100, 초당 90%', '3.2초마다, 반경 110, 초당 114%', '2.8초마다, 반경 120, 초당 144%'] },
   { key: 'gale', name: '질풍', element: 'wind', rarity: 'common', icon: '🌪️',
     lv: [{ mul: 0.15 }, { mul: 0.25 }, { mul: 0.4 }, { mul: 0.55 }, { mul: 0.7 }],
-    desc: ['공격속도 +15%', '공격속도 +25%', '공격속도 +40%', '공격속도 +55%', '공격속도 +70%'] },
+    desc: ['기본 주문 시전 속도 +15%', '시전 속도 +25%', '시전 속도 +40%', '시전 속도 +55%', '시전 속도 +70%'] },
   { key: 'holyLight', name: '수호의 빛', element: 'holy', rarity: 'common', icon: '✨',
     lv: [{ rate: 0.006 }, { rate: 0.012 }, { rate: 0.02 }, { rate: 0.028 }, { rate: 0.036 }],
     desc: ['성벽이 매초 최대 체력의 0.6% 재생', '1.2% 재생', '2% 재생', '2.8% 재생', '3.6% 재생'] },
   { key: 'judgment', name: '심판 광선', element: 'holy', rarity: 'rare', icon: '✨',
-    lv: [{ mul: 3, w: 50, cd: 4 }, { mul: 4, w: 60, cd: 3.4 }, { mul: 5.5, w: 70, cd: 2.8 }, { mul: 7, w: 80, cd: 2.5 }, { mul: 9, w: 90, cd: 2.2 }],
-    desc: ['4초마다 세로 광선이 폭 50 범위 적에게 공격력 300%',
-      '3.4초마다, 폭 60, 400%', '2.8초마다, 폭 70, 550%', '2.5초마다, 폭 80, 700%', '2.2초마다, 폭 90, 900%'] },
+    lv: [{ mul: 1.8, w: 50, cd: 4 }, { mul: 2.4, w: 60, cd: 3.4 }, { mul: 3.3, w: 70, cd: 2.8 }, { mul: 4.2, w: 80, cd: 2.5 }, { mul: 5.4, w: 90, cd: 2.2 }],
+    desc: ['4초마다 세로 광선이 폭 50 범위 적에게 마력 180%',
+      '3.4초마다, 폭 60, 240%', '2.8초마다, 폭 70, 330%', '2.5초마다, 폭 80, 420%', '2.2초마다, 폭 90, 540%'] },
   { key: 'curseMark', name: '저주 낙인', element: 'dark', rarity: 'rare', icon: '🌑',
     lv: [{ mul: 0.15 }, { mul: 0.25 }, { mul: 0.4 }, { mul: 0.55 }, { mul: 0.7 }],
     desc: ['모든 적이 받는 피해 +15%', '+25%', '+40%', '+55%', '+70%'] },
@@ -294,16 +306,19 @@ export const SPELLS = [
     desc: ['처치 시 골드 +20%, 성벽 최대 체력의 0.4% 회복',
       '골드 +35%, 0.8% 회복', '골드 +50%, 1.4% 회복', '골드 +65%, 1.8% 회복', '골드 +80%, 2.4% 회복'] },
   { key: 'babyDragon', name: '새끼 드래곤', element: 'summon', rarity: 'legend', icon: '🐉',
-    lv: [{ mul: 2, cd: 2.5, breathT: 0.6 }, { mul: 2.8, cd: 2.1, breathT: 0.7 }, { mul: 3.8, cd: 1.7, breathT: 0.8 },
-      { mul: 4.8, cd: 1.5, breathT: 0.9 }, { mul: 6, cd: 1.3, breathT: 1.0 }],
-    desc: ['따라다니는 새끼 드래곤이 2.5초마다 0.6초간 브레스(초당 공격력 200%)',
-      '2.1초마다 0.7초, 초당 280%', '1.7초마다 0.8초, 초당 380%', '1.5초마다 0.9초, 초당 480%', '1.3초마다 1.0초, 초당 600%'] },
+    lv: [{ mul: 1.2, cd: 2.5, breathT: 0.6 }, { mul: 1.68, cd: 2.1, breathT: 0.7 }, { mul: 2.28, cd: 1.7, breathT: 0.8 },
+      { mul: 2.88, cd: 1.5, breathT: 0.9 }, { mul: 3.6, cd: 1.3, breathT: 1.0 }],
+    desc: ['따라다니는 새끼 드래곤이 2.5초마다 0.6초간 브레스(초당 마력 120%)',
+      '2.1초마다 0.7초, 초당 168%', '1.7초마다 0.8초, 초당 228%', '1.5초마다 0.9초, 초당 288%', '1.3초마다 1.0초, 초당 360%'] },
   { key: 'stoneGolem', name: '돌 골렘', element: 'summon', rarity: 'legend', icon: '🗿',
     lv: [{ hpMul: 0.6 }, { hpMul: 0.9 }, { hpMul: 1.3 }, { hpMul: 1.7 }, { hpMul: 2.2 }],
     desc: ['성벽 앞에 골렘이 서서 적의 공격을 대신 받는다(체력 성벽 최대치의 60%)',
       '체력 90%', '체력 130%', '체력 170%', '체력 220%'] },
 ];
 export const SPELL_KEYS = SPELLS.map(s => s.key);
+// AI 동료 마법사(P2)가 네임드 보스를 잡을 때마다 이 순서로 하나씩 익히는 냉기·번개 주문(런당 최대 3)
+export const ALLY_SPELLS = ['iceLance', 'lightningStrike', 'chainLightning'];
+export const allySpellLv = stage => Math.min(5, Math.ceil(stage / 20));
 export const SPELL_BY_KEY = Object.fromEntries(SPELLS.map(s => [s.key, s]));
 
 // 융합 효과 수치
