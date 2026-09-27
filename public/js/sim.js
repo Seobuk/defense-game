@@ -1,32 +1,33 @@
 // 순수 시뮬레이션 (DOM 없음, node 실행 가능)
 import {
   WORLD_W, WORLD_H, WALL_Y, CANNONS, BULLET_SPEED, BULLET_R, MAX_STAGE,
-  UPGRADE_KEYS, upgradeCost, upgradeMax, cannonStats, wallMax,
+  TRAIN_KEYS, trainMax, cannonStats, wallMax,
   goldPerKill, starsFor, RUN_GEMS, META_KEYS, metaMax, metaFx, SKILLS,
   COMBO_WINDOW, COMBO_TIERS, FRENZY, LEGEND_T, SYN_FX as FX, SYNERGIES, SYN_KEYS,
-  SPELL_KEYS, SPELL_BY_KEY, RARITY_WEIGHT, MANA_MAX, MANA_FRAC, PICK_AUTO_T,
+  SPELL_KEYS, RARITY_WEIGHT, MANA_MAX, MANA_FRAC, PICK_AUTO_T,
   SPELL_SLOTS, SPELL_MAX_LV, AWAKEN_KEYS, AWAKEN_BY_KEY, BASIC_SPELLS, ALLY_SPELLS, allySpellLv,
+  FUSIONS, FUSION_KEYS, FUSION_BY_KEY, FUSION_FX, fusionParts, SKILL_BY_KEY, EARLY_FLOORS, EARLY_MARKS,
+  COLLABS, COLLAB_BY_KEY, COLLAB_BRANCH_RANKS, COLLAB_FX, collabOn, collabPow, FRONT_Y, ENTRY_RUSH, inReach,
 } from './config.js';
-import { themeOf, ENEMY_TYPES, BOSSES, ELITE, buildStage, enemyHp, enemyDmg, enemySpeedMul, bossHpMul } from './stages.js';
+import { themeOf, ENEMY_TYPES, BOSSES, ELITE, buildStage, enemyHp, enemyDmg, enemySpeedMul, bossHpMul, DENSITY } from './stages.js';
 import { mulberry32, clamp, toInt } from './util.js';
-import { autoUpgrade, autoSkill, autoHero, pickCard } from './bot.js';
-import { initSpells, updateSpells, onBasicHit, onKill as onSpellKill, frostSlowMul, spellRateMul, curseMul, golemAbsorb } from './spells.js';
+import { autoSkill, autoHero, pickCard } from './bot.js';
+import { initSpells, updateSpells, onSpellHit, onKill as onSpellKill, frostSlowMul, spellRateMul, curseMul, golemAbsorb } from './spells.js';
 import {
   HERO_CLASSES, HERO_MELEE_R, spawnHeroUnit, updateHeroUnit, heroTakeDamage,
   heroOnKill, heroGainXp, heroClearXp, castHeroUlt, heroBonuses, lootDrop,
   equipItem, sellItem, sellItemsByRarity, autoEquipAll, hasMilestone,
 } from './hero.js';
-import { allocateTalent } from './talents.js';
+import { allocateTalent, branchSpent } from './talents.js';
 
 const KINDS = ['human', 'bot', 'remote'];
-const LV_CAP = 3000; // 무한 업그레이드의 안전 상한(수치 폭주 방지)
 const BOT_INTERVAL = 0.25;
 const MAX_EVENTS = 4000;
 const CANNON_SYN = SYNERGIES.filter(s => s.kind === 'cannon');
 const DUO_SYN = SYNERGIES.filter(s => s.kind === 'duo' && s.test);
-const FUSION_SYN = SYNERGIES.filter(s => s.kind === 'fusion' && s.test);
-// spells.js 에 넘기는 콜백 묶음 (함수 선언은 호이스팅되어 이 시점에 미리 참조해도 안전)
-const SPELL_API = { damage, killEnemy, damageWall, emit, chainArc, frontMost, spellHit };
+const SKILL_KEYS = [...SPELL_KEYS, ...FUSION_KEYS]; // 슬롯에 들어가는 스킬(기본 14 + 융합 8)
+// spells.js · hero.js 에 넘기는 콜백 묶음 (함수 선언은 호이스팅되어 이 시점에 미리 참조해도 안전)
+const SPELL_API = { damage, killEnemy, damageWall, emit, chainArc, frontMost, spellHit, aimTarget, collabProc };
 const KB_K = 20, KB_MAX = 4;  // 넉백: 피해/최대체력 비례, 1타 최대 px
 const BOMB_LINK = 1.8;          // 자폭병끼리 유폭 반경 배율
 const FUSE_T = 1;               // 자폭병 성벽 도착 후 자폭까지(초)
@@ -34,23 +35,25 @@ const BULLET_LIFE = 1.5;         // 기본 주문 발사체 수명(초)
 const FROST_SLOW = BASIC_SPELLS[1].slow; // 서리 화살 둔화(이동속도 감소 비율)
 const COMBO_ZONE = WALL_Y - 750; // 이 선을 넘은 적이 있어야 콤보 시간이 줄어듦
 const HERO_MOVE_HOLD = 6;        // 탭 이동 후 자동 복귀까지(초)
-const ACCEL_LEAD = 1.2, RUSH = 2; // 학살 가속: 필드가 비면 다음 스폰 묶음을 1.2초 뒤로 당기고 그 묶음은 2배 빠르게(압도적이면 층당 15~25초)
+const ACCEL_LEAD = 1.2, RUSH = 3; // 학살 가속: 전선이 비면 다음 스폰 묶음을 1.2초 뒤로 당기고 그 묶음은 3배 빠르게(압도적이면 층당 약 20~30초)
+const FAST_SPAWN = 3.5, FAST_FRAC = 0.6; // 정복한 층(도전 시작 때 최고 기록의 60% 이하): 스폰 일정이 3.5배 빠르게 흐른다
 const ARCANE_AT = 0.85;         // 비전 충전 추가 카드가 뜨는 처치 진행률
 const HERO_REVIVE_HP = 0.4;      // 성직자 부활 결계 강화
 const REVIVE_HP = 0.5, REVIVE_FREEZE = 1.5; // 부활 결계: 성벽 50% 회복 + 잠깐 빙결
 // 광폭화: 층이 BERSERK_T초를 넘기면 적 피해가 BERSERK_STEP초마다 2배, 이동은 감속·밀쳐내기 무시 — 버티기만 하는 교착을 끝낸다
-const BERSERK_T = 80, BERSERK_STEP = 10;
+const BERSERK_T = 70, BERSERK_STEP = 10;
 // hero.js 에 넘기는 콜백 묶음(spells.js와 동일한 모양)
 const HERO_API = SPELL_API;
 
+// 마법사 수련 레벨(정비 화면 영구 강화) — 두 마법사 모두 run.js가 meta.training을 넘긴다
 const lvOf = src => {
   const lv = {};
-  for (const k of UPGRADE_KEYS) lv[k] = toInt(src?.[k], 0, Math.min(LV_CAP, upgradeMax(k)));
+  for (const k of TRAIN_KEYS) lv[k] = toInt(src?.[k], 0, trainMax(k));
   return lv;
 };
 const posNum = v => { v = Number(v); return Number.isFinite(v) && v > 0 ? v : 0; };
 
-function makePlayer(init, i, fx) {
+function makePlayer(init, i, fx, stage = 1) {
   init = init && typeof init === 'object' ? init : {};
   const lv = lvOf(init.lv);
   const gold = Number(init.gold);
@@ -62,7 +65,7 @@ function makePlayer(init, i, fx) {
     lv,
     cd: { meteor: 0, freeze: 0 },
     angle: -Math.PI / 2,
-    stats: cannonStats(lv, fx),
+    stats: cannonStats(lv, fx, stage),
     syn: [],       // 활성 마법사 조합 키 (refreshSyn 이 채움)
     fireT: 0,
   };
@@ -70,8 +73,7 @@ function makePlayer(init, i, fx) {
 
 // 영웅 특성 합산(영웅이 없으면 null). heroUnit.tb는 updateHeroUnit이 0.5초마다(특성을 찍으면 즉시) 갱신
 const heroTb = g => (g.heroUnit ? g.heroUnit.tb : null);
-const lvSum = g => g.players[0].lv.wall + g.players[1].lv.wall;
-const wallCap = g => Math.floor(wallMax(lvSum(g)) * g.fx.wallMul);
+const wallCap = g => wallMax(g.stage, Math.max(g.players[0].lv.wall, g.players[1].lv.wall), g.fx.wallMul);
 
 // ── 런(도전) 상태 ──
 // 런 필드(저장·이어하기 대상). spells/rerollLeft 는 game 최상위(g.spells, g.rerollLeft)에 둔다
@@ -81,10 +83,16 @@ const GEM_KEYS = ['floor', 'first', 'boss', 'flawless'];
 export function normalizeRun(raw) {
   const o = v => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
   const r = o(raw);
-  const spells = {};
-  for (const k of SPELL_KEYS) {
+  const spells = {}, fusionParts = {};
+  for (const k of SKILL_KEYS) {
     const v = toInt(o(r.spells)[k], 0, SPELL_MAX_LV);
     if (v > 0 && Object.keys(spells).length < SPELL_SLOTS) spells[k] = v;
+  }
+  // 융합 스킬이 품은 재료 두 스킬(없거나 틀리면 재료 칸의 첫 스킬)
+  for (const k of FUSION_KEYS) {
+    if (!spells[k]) continue;
+    const gr = FUSION_BY_KEY[k].groups, p = Array.isArray(o(r.fusionParts)[k]) ? r.fusionParts[k] : [];
+    fusionParts[k] = gr.map((ks, i) => (ks.includes(p[i]) ? p[i] : ks[0]));
   }
   const allySpells = {};
   for (const k of ALLY_SPELLS) {
@@ -97,11 +105,11 @@ export function normalizeRun(raw) {
   const pl = Array.isArray(r.players) ? r.players : [];
   const lo = o(r.loadout);
   return {
-    v: 1,
+    v: 2,
     stage: toInt(r.stage, 1, MAX_STAGE),
-    players: [0, 1].map(i => ({ gold: posNum(o(pl[i]).gold), lv: lvOf(o(o(pl[i]).lv)) })),
+    players: [0, 1].map(i => ({ gold: posNum(o(pl[i]).gold) })), // 이번 도전에서 번 골드(도전 종료 때 meta.gold로)
     auto: !!r.auto,
-    spells, allySpells,
+    spells, fusionParts, allySpells,
     rerollLeft: r.rerollLeft == null ? null : toInt(r.rerollLeft, 0, 99),
     awaken, gems,
     reviveUsed: !!r.reviveUsed,
@@ -124,10 +132,10 @@ export function normalizeRun(raw) {
 export function serializeRun(g) {
   const r = g.run;
   return {
-    v: 1, stage: g.stage,
-    players: g.players.map(p => ({ gold: p.gold, lv: { ...p.lv } })),
+    v: 2, stage: g.stage,
+    players: g.players.map(p => ({ gold: p.gold })),
     auto: g.players[0].auto,
-    spells: { ...g.spells }, allySpells: { ...g.allySpells }, rerollLeft: g.rerollLeft,
+    spells: { ...g.spells }, fusionParts: JSON.parse(JSON.stringify(g.fusionParts)), allySpells: { ...g.allySpells }, rerollLeft: g.rerollLeft,
     awaken: { ...r.awaken }, gems: { ...r.gems },
     reviveUsed: r.reviveUsed, heroRevive: r.heroRevive, arcane: r.arcane, floors: r.floors, bosses: r.bosses, firstClears: r.firstClears, flawless: r.flawless,
     time: r.time, startBest: r.startBest,
@@ -135,18 +143,18 @@ export function serializeRun(g) {
   };
 }
 
-// 영구 강화 × 각성 → 런 배율
+// 영구 강화 × 각성 → 런 배율(각성 효과는 보석 강화 '각성 숙련'만큼 커진다)
 function computeFx(g) {
-  const f = metaFx(g.metaLv), a = g.run.awaken, A = AWAKEN_BY_KEY;
-  f.atkMul *= 1 + A.power.atk * a.power;
-  f.rateMul *= 1 + A.haste.rate * a.haste;
-  f.wallMul *= 1 + A.ward.wall * a.ward;
-  f.goldMul *= 1 + A.fortune.gold * a.fortune;
+  const f = metaFx(g.metaLv), a = g.run.awaken, A = AWAKEN_BY_KEY, k = f.awakenMul;
+  f.atkMul *= 1 + A.power.atk * k * a.power;
+  f.rateMul *= 1 + A.haste.rate * k * a.haste;
+  f.wallMul *= 1 + A.ward.wall * k * a.ward;
+  f.goldMul *= 1 + A.fortune.gold * k * a.fortune;
   return f;
 }
 function refreshFx(g) {
   g.fx = computeFx(g);
-  for (const p of g.players) p.stats = cannonStats(p.lv, g.fx);
+  for (const p of g.players) p.stats = cannonStats(p.lv, g.fx, g.stage);
   const max = wallCap(g);
   g.wall.hp = Math.min(max, g.wall.hp + Math.max(0, max - g.wall.max));
   g.wall.max = max;
@@ -156,7 +164,9 @@ function emit(g, ev) {
   if (g.events.length < MAX_EVENTS) g.events.push(ev);
 }
 
-// opts: { stage, players, best, seed, discovered, hero, metaLv:{key:lv}, run:(serializeRun 모양, 없으면 새 런), seenSpells }
+// opts: { stage, players, best, seed, discovered, hero, metaLv:{key:lv}, run:(serializeRun 모양, 없으면 새 런), seenSpells,
+//         startCards(도전 시작 무료 카드 수 — run.js newRun이 START_CARDS), collabOff(테스트: 협공 효과 끄기) }
+// players[i].lv = 마법사 수련 레벨(run.js가 meta.training을 넘긴다)
 export function createGame(opts = {}) {
   const pl = Array.isArray(opts.players) ? opts.players : [];
   const run = normalizeRun(opts.run);
@@ -178,7 +188,6 @@ export function createGame(opts = {}) {
     heroRng: mulberry32(((opts.seed ?? (Math.random() * 2 ** 32)) >>> 0) + 0x9e3779b9),
     spawns: [], spawnIdx: 0, nextId: 1,
     wallLost: 0,   // 이번 스테이지 성벽 피해 누적
-    lastLoss: 0,   // 직전 스테이지 성벽 손실 비율(패배=1) — 봇 판단용
     botT: 0,
     bossBar: { name: '', hp: 0, maxHp: 0, shield: 0 },
     // 중독성 레이어
@@ -188,7 +197,11 @@ export function createGame(opts = {}) {
     discovered: new Set(Array.isArray(opts.discovered) ? opts.discovered.filter(k => SYN_KEYS.includes(k)) : []),
     killTimes: [], lastSkill: { meteor: null, freeze: null }, chain: null, critStopT: 0,
     // 판타지 스킬 (런 전체 누적 빌드)
-    mana: { cur: 0, max: MANA_MAX }, spells: { ...run.spells }, fusions: [], pick: null,
+    mana: { cur: 0, max: MANA_MAX }, spells: { ...run.spells }, fusions: [], pick: null, pickQ: 0,
+    fusionParts: run.fusionParts, // { [융합 키]: [재료 a, 재료 b] }
+    book: {},          // 실제로 발동하는 스킬 레벨 = 기본 스킬 + 융합 스킬이 품은 재료(융합 레벨) — spells.js가 읽는다
+    collabs: [], collabT: {}, collabOff: !!opts.collabOff, // 켜진 협공 키 · collabProc 간격 · 테스트용 끄기
+    linkT: 0,          // 합동 필살: 영웅 궁극기 뒤 남은 창(초)
     allySpells: { ...run.allySpells }, // AI 동료(P2) 주문서: 네임드 보스 처치마다 ALLY_SPELLS 순서로 1개(런당 최대 3)
     seenSpells: new Set(Array.isArray(opts.seenSpells) ? opts.seenSpells.filter(k => SPELL_KEYS.includes(k)) : []),
     // 런(도전): 영구 강화 레벨 · 런 기록. fx = 영구 강화 × 각성 배율
@@ -207,16 +220,23 @@ export function createGame(opts = {}) {
     summons: [],        // 영웅 소환물(늑대·그림자 분신·비전 분신) — hero.js가 관리, 렌더러가 그린다
     heroBuff: null,     // 전군 강화 함성 { t, mul }: 두 마법사 + 영웅 피해 배율
     dmgDone: [0, 0, 0], // 이번 도전 실제 피해 [P1, P2, 영웅(소환물 포함)] — 기여도 표시·밸런스 러너용
+    dmgSkill: [0, 0],   // 그중 고른 스킬(카드·융합·동료 주문)이 낸 피해 [P1, P2] — 나머지는 기본 주문
+    _skill: false,      // 지금 들어가는 피해가 스킬 피해인가(dmgSkill 집계용)
+    _env: false,        // 자폭병 연쇄 폭발 중(기여도 집계 제외)
   };
   for (const k of Object.keys(g.spells)) g.seenSpells.add(k);
   g.fx = computeFx(g);
-  g.players = [makePlayer(pl[0], 0, g.fx), makePlayer(pl[1], 1, g.fx)];
+  const st0 = toInt(opts.stage ?? (opts.run ? run.stage : 1), 1, MAX_STAGE);
+  g.players = [makePlayer(pl[0], 0, g.fx, st0), makePlayer(pl[1], 1, g.fx, st0)];
   // 새로고침: 영웅 Lv5(1회) + 영구 강화. 런 전체에서 쓰는 횟수(이어하기면 저장값)
   g.rerollLeft = run.rerollLeft ?? (g.hero && hasMilestone(g.hero.level, 'reroll1') ? 1 : 0) + g.fx.rerolls;
   initSpells(g);
-  refreshFusion(g);
-  startStage(g, opts.stage ?? (opts.run ? run.stage : 1));
+  refreshFusion(g); // 시작 스킬끼리 융합 조건이면 바로 합체
+  startStage(g, st0);
   refreshSyn(g);
+  // 도전 시작 무료 카드(첫 층부터 스킬 맛 — 눈에 띄는 쿨타임 공격 스킬만) + 영웅 Lv30 카드 1장
+  for (let k = toInt(opts.startCards, 0, 3); k > 0; k--) triggerPick(g, true);
+  if (g.stage === 1 && g.run.floors === 0 && g.hero && g.hero.cls && hasMilestone(g.hero.level, 'extraCard')) triggerPick(g);
   return g;
 }
 
@@ -241,6 +261,7 @@ export function startStage(g, stage) {
   g.progress.total = plan.total;
   g.progress.killed = 0;
   g.spawnT = g.rushT = 0;
+  g.fastFloor = stage <= Math.floor(g.run.startBest * FAST_FRAC); // 정복한 층 빠른 진행(UI 표시용)
   g.wall.max = wallCap(g);
   g.wall.hp = g.wall.max;
   g.wallLost = 0;
@@ -253,28 +274,30 @@ export function startStage(g, stage) {
   g.lastSkill.meteor = g.lastSkill.freeze = null;
   g.chain = null;
   g.pick = null;
+  g.pickQ = 0;
+  g.linkT = 0;
+  g.collabT = {};
   initSpells(g); // 스킬 빌드(g.spells)는 런 전체 유지, 전장 효과·쿨타임만 새로
-  g._manaMark = Math.max(1, Math.ceil(plan.total * MANA_FRAC));
-  g._manaDone = false;
+  // 카드 지점(처치 수): 1~5층은 30%·70% 두 장, 이후 60% 한 장. 비전 충전이 차면 85%에 한 장 더(gainMana)
+  g._marks = (stage <= EARLY_FLOORS ? EARLY_MARKS : [MANA_FRAC]).map(f => Math.max(1, Math.ceil(plan.total * f)));
   g._manaN = 0;
   g.mana = { cur: 0, max: MANA_MAX };
   for (const p of g.players) {
-    p.stats = cannonStats(p.lv, g.fx);
+    p.stats = cannonStats(p.lv, g.fx, stage);
     p.fireT = 0;
   }
   // 영웅: 스테이지마다 성문에서 다시 걸어 나간다(레벨·장비는 g.hero에 영구 보존)
   g.heroUnit = g.hero && g.hero.cls ? spawnHeroUnit(g.hero) : null;
   g.summons.length = 0; // 소환물은 영웅을 따라 다시 나온다
   g.heroBuff = null;
+  refreshCollab(g); // 클래스·특성이 바뀌었을 수 있다
   g.run.checkpoint = serializeRun(g); // 이어하기: 이 스테이지 시작부터
-  // 영웅 Lv30: 도전 시작(1층) 시 카드 1장 추가
-  if (stage === 1 && g.run.floors === 0 && g.hero && g.hero.cls && hasMilestone(g.hero.level, 'extraCard')) triggerPick(g);
 }
 
 export function setPlayer(g, i, init) {
   if (i !== 0 && i !== 1) return;
   const ratio = g.wall.max > 0 ? g.wall.hp / g.wall.max : 1;
-  g.players[i] = makePlayer(init, i, g.fx);
+  g.players[i] = makePlayer(init, i, g.fx, g.stage);
   g.wall.max = wallCap(g);
   g.wall.hp = g.wall.max * ratio;
   refreshSyn(g);
@@ -307,17 +330,17 @@ export function drainEvents(g) {
 }
 
 // ── 판타지 스킬 카드 뽑기 ──
-// 아직 발견 못 한 융합을 완성시키는 카드인지(참일 때 UI는 조건 없이 ✦ 표시만)
+// 이 카드를 고르면 아직 없는 융합이 완성(합체)되는가(참일 때 UI는 조건 없이 ✦ 표시만)
 function wouldFuse(g, key) {
+  if (FUSION_BY_KEY[key]) return false;
   const hyp = { ...g.spells, [key]: (g.spells[key] || 0) + 1 };
-  return FUSION_SYN.some(f => !g.discovered.has(f.key) && f.test(hyp));
+  return FUSIONS.some(f => !g.spells[f.key] && f.test(hyp));
 }
 
 // 영웅 Lv50 마일스톤: 전설 카드 확률 상승
 function rarityWeight(g, key) {
-  const w = RARITY_WEIGHT[SPELL_BY_KEY[key].rarity];
-  const boosted = g.hero && SPELL_BY_KEY[key].rarity === 'legend' && hasMilestone(g.hero.level, 'legendBoost');
-  return boosted ? w * 2 : w;
+  const r = SKILL_BY_KEY[key].rarity, w = RARITY_WEIGHT[r];
+  return g.hero && r === 'legend' && hasMilestone(g.hero.level, 'legendBoost') ? w * 2 : w;
 }
 function weightedKey(g, keys) {
   let sum = 0;
@@ -329,18 +352,22 @@ function weightedKey(g, keys) {
 
 // 선택지 수 = 3 + 영웅 Lv15(+1) + 영구 강화 '카드 선택지'(+1)
 export const cardCount = g => 3 + (g.hero && hasMilestone(g.hero.level, 'choose4') ? 1 : 0) + g.fx.choices;
+// 쓰는 슬롯 수(기본 스킬·융합 스킬 모두 1칸)
+export const slotsUsed = g => Object.keys(g.spells).length;
 
-// 슬롯 6칸 · Lv1~5. 슬롯이 차면 보유 스킬 강화 카드만, 모자라는 자리는 각성 카드로 채운다(중복 없음)
-function genCards(g) {
+// 슬롯 6칸 · Lv1~5. 슬롯이 차면 보유 스킬(융합 스킬 포함) 강화 카드만, 모자라는 자리는 각성 카드로 채운다(중복 없음).
+// 융합 스킬은 새 카드로 나오지 않고(합체로만 생긴다) 가진 뒤에 강화 카드로 나온다. starter = 도전 시작 무료 카드(쿨타임 공격 스킬만)
+const STARTER = ['fireball', 'lightningStrike', 'iceLance', 'tornado', 'judgment'];
+function genCards(g, starter = false) {
   const n = cardCount(g);
-  const full = Object.keys(g.spells).length >= SPELL_SLOTS;
-  let pool = SPELL_KEYS.filter(k => (g.spells[k] || 0) < SPELL_MAX_LV && (!full || g.spells[k] > 0));
+  const full = slotsUsed(g) >= SPELL_SLOTS;
+  let pool = SKILL_KEYS.filter(k => (g.spells[k] || 0) < SPELL_MAX_LV && (g.spells[k] > 0 || (!full && !FUSION_BY_KEY[k])));
+  if (starter && pool.some(k => STARTER.includes(k))) pool = pool.filter(k => STARTER.includes(k));
   const cards = [];
   while (cards.length < n && pool.length) {
     const k = weightedKey(g, pool);
     pool = pool.filter(x => x !== k);
-    const spell = SPELL_BY_KEY[k];
-    cards.push({ spell: k, level: (g.spells[k] || 0) + 1, rarity: spell.rarity, fusionHint: wouldFuse(g, k) });
+    cards.push({ spell: k, level: (g.spells[k] || 0) + 1, rarity: SKILL_BY_KEY[k].rarity, fusionHint: wouldFuse(g, k), fusion: !!FUSION_BY_KEY[k] });
   }
   const aw = AWAKEN_KEYS.slice();
   while (cards.length < n && aw.length) {
@@ -350,40 +377,96 @@ function genCards(g) {
   return cards;
 }
 
-function triggerPick(g) {
-  if (g.pick) return; // 이미 선택 중이면 새로 띄우지 않음(마나만 계속 쌓일 수 있음)
-  const cards = genCards(g);
+// 카드 선택을 띄운다. 이미 떠 있으면 대기열(pickQ)에 쌓았다가 고르는 즉시 다음 카드를 띄운다
+function triggerPick(g, starter = false) {
+  if (g.pick) { g.pickQ++; return; }
+  const cards = genCards(g, starter);
   if (!cards.length) return; // 모든 스킬 만렙인 극단적 상황
-  g.pick = { cards, autoLeft: g.players[0].auto ? PICK_AUTO_T : null };
-  emit(g, { type: 'pickOffer' });
+  g.pick = { cards, autoLeft: g.players[0].auto ? PICK_AUTO_T : null, starter };
+  emit(g, { type: 'pickOffer', queued: g.pickQ });
 }
 
-// 층마다 처치 진행률 60%(MANA_FRAC) 지점에서 마나가 가득 차 카드 1장.
-// 영웅 장비의 마나 충전%만큼 그 지점이 앞당겨진다. 비전 충전이 1 이상이면 층 막바지에 1장 더
+// 층마다 처치 진행률 지점(g._marks: 1~5층 30%·70%, 이후 60%)에서 마나가 가득 차 카드 1장.
+// 영웅 장비의 마나 충전%만큼 지점이 앞당겨진다. 비전 충전(마법사 비전 특성)이 1 이상이면 층 막바지(85%)에 1장 더
 function gainMana(g) {
-  if (g.pick || g._manaDone) return;
+  const marks = g._marks, n = g._manaN;
+  if (n >= marks.length) return;
   const manaMul = g.hero ? heroBonuses(g.hero).manaMul : 1;
-  const mark = Math.max(1, g._manaMark / manaMul), n = g._manaN | 0;
-  // 비전 충전(마법사 비전 특성): 층마다 tb.mana씩 쌓여 1이 되면 그 층 막바지(처치 85%)에 카드 1장 더
-  const at = n === 0 ? mark : Math.max(mark + 1, g.progress.total * ARCANE_AT);
-  const from = n === 0 ? 0 : mark;
-  g.mana.cur = clamp(MANA_MAX * (g.progress.killed - from) / (at - from), 0, MANA_MAX);
+  const at = Math.max(1, marks[n] / manaMul), from = n === 0 ? 0 : marks[n - 1] / manaMul;
+  g.mana.cur = clamp(MANA_MAX * (g.progress.killed - from) / Math.max(1, at - from), 0, MANA_MAX);
   if (g.progress.killed < at) return;
   g._manaN = n + 1;
-  if (n === 0) g.run.arcane = Math.min(2, g.run.arcane + (heroTb(g) ? heroTb(g).mana : 0));
-  else g.run.arcane -= 1;
-  g._manaDone = n > 0 || g.run.arcane < 1;
+  if (n === 0) {
+    g.run.arcane = Math.min(2, g.run.arcane + (heroTb(g) ? heroTb(g).mana : 0));
+    if (g.run.arcane >= 1) { // 비전 충전: 이 층 막바지에 1장 더
+      g.run.arcane -= 1;
+      marks.push(Math.max(marks[marks.length - 1] + 1, Math.ceil(g.progress.total * ARCANE_AT)));
+    }
+  }
   g.mana.cur = MANA_MAX;
   triggerPick(g);
 }
 
-// 원소 융합 재계산 (스킬 레벨이 바뀔 때). 새로 켜진 것만 synergy 이벤트(기존 발견 목록 재사용)
-// export: applyPick이 내부에서 부르지만, 테스트가 game.spells를 직접 바꾼 뒤 재계산시키는 용도로도 씀
+// 실제로 발동하는 스킬 레벨: 기본 스킬 + 융합 스킬이 품은 재료 두 스킬(융합 레벨)
+function bookOf(g) {
+  const b = {};
+  for (const [k, v] of Object.entries(g.spells)) if (!FUSION_BY_KEY[k]) b[k] = v;
+  for (const f of g.fusions) for (const k of g.fusionParts[f] || []) b[k] = Math.max(b[k] || 0, g.spells[f]);
+  return b;
+}
+
+// 융합 = 합체: 두 재료를 모두 가진 융합이 있으면 재료 둘을 빼고 융합 스킬 하나를 넣는다(슬롯 1칸 해제, 레벨 = 평균 내림).
+// fusionMerge 이벤트 + 히든 조합 발견(첫 발견이면 synergy first + hitstop). 그다음 book·협공 재계산.
+// export: applyPick이 부르지만, 테스트가 game.spells를 직접 바꾼 뒤 재계산시키는 용도로도 씀
 export function refreshFusion(g) {
-  const old = g.fusions;
-  const cur = FUSION_SYN.filter(s => s.test(g.spells)).map(s => s.key);
-  for (const k of cur) if (!old.includes(k)) synergy(g, k, -1, WORLD_W / 2, WALL_Y / 2 - 100);
-  g.fusions = cur;
+  for (let merged = true; merged;) {
+    merged = false;
+    for (const f of FUSIONS) {
+      if (g.spells[f.key] || !f.test(g.spells)) continue;
+      const from = fusionParts(f, g.spells);
+      const level = Math.max(1, Math.floor((g.spells[from[0]] + g.spells[from[1]]) / 2));
+      delete g.spells[from[0]];
+      delete g.spells[from[1]];
+      g.spells[f.key] = level;
+      g.fusionParts[f.key] = from;
+      emit(g, { type: 'fusionMerge', fusion: f.key, from, level, slotFreed: true });
+      synergy(g, f.key, -1, WORLD_W / 2, WALL_Y / 2 - 100);
+      merged = true;
+    }
+  }
+  for (const k of Object.keys(g.fusionParts)) if (!g.spells[k]) delete g.fusionParts[k];
+  g.fusions = FUSION_KEYS.filter(k => g.spells[k] > 0);
+  g.book = bookOf(g);
+  refreshCollab(g);
+}
+
+// ── 영웅 × 마법사 협공 ──
+// 켜진 협공 재계산(스킬·클래스·특성이 바뀔 때). 새로 켜진 것만 synergy(o:2) + collab 이벤트
+function refreshCollab(g) {
+  const hero = g.hero, cls = hero && hero.cls, old = g.collabs;
+  g.collabs = !cls ? [] : COLLABS.filter(c => c.cls === cls && c.spells.some(k => g.book[k] > 0)
+    && (!c.branch || branchSpent(hero, cls, c.branch) >= COLLAB_BRANCH_RANKS)).map(c => c.key);
+  const h = g.heroUnit, x = h ? h.x : WORLD_W / 2, y = h ? h.y - 40 : WALL_Y - 80;
+  for (const k of g.collabs) {
+    if (old.includes(k)) continue;
+    synergy(g, k, 2, x, y);
+    emit(g, { type: 'collab', key: k, cls, spells: collabSlots(g, k) });
+  }
+}
+
+// 협공에 엮인 내 슬롯 스킬 키(기본 스킬 또는 그 스킬을 품은 융합 스킬) — UI가 영웅 초상 ↔ 스킬 아이콘 빛줄기를 잇는다
+export function collabSlots(g, key) {
+  const c = COLLAB_BY_KEY[key];
+  if (!c) return [];
+  return Object.keys(g.spells).filter(k => c.spells.includes(k) || (g.fusionParts[k] || []).some(p => c.spells.includes(p)));
+}
+
+// 협공 효과가 실제로 터진 순간(연출용). 같은 협공은 procGap초에 한 번만
+function collabProc(g, key, x, y) {
+  const t = g.collabT[key];
+  if (t != null && g.phaseT - t < COLLAB_FX.procGap) return;
+  g.collabT[key] = g.phaseT;
+  emit(g, { type: 'collabProc', key, x, y });
 }
 
 function applyPick(g, i, index) {
@@ -396,28 +479,29 @@ function applyPick(g, i, index) {
     g.run.awaken[card.awaken]++;
     refreshFx(g);
     emit(g, { type: 'spellPick', spell: null, awaken: card.awaken, level: card.level, rarity: card.rarity });
-    return true;
+  } else {
+    let level = card.level;
+    const tb = heroTb(g);
+    if (tb && tb.cap.cardBless && level < SPELL_MAX_LV && g.heroRng() < 0.3) { // 카드 축복(성직자 궁극 특성): 레벨 +1
+      level++;
+      emit(g, { type: 'heroProc', kind: 'cardBless', spell: card.spell, level });
+    }
+    g.spells[card.spell] = level;
+    if (!FUSION_BY_KEY[card.spell]) g.seenSpells.add(card.spell);
+    emit(g, { type: 'spellPick', spell: card.spell, level, rarity: card.rarity });
+    refreshFusion(g);
   }
-  let level = card.level;
-  const tb = heroTb(g);
-  if (tb && tb.cap.cardBless && level < SPELL_MAX_LV && g.heroRng() < 0.3) { // 카드 축복(성직자 궁극 특성): 레벨 +1
-    level++;
-    emit(g, { type: 'heroProc', kind: 'cardBless', spell: card.spell, level });
-  }
-  g.spells[card.spell] = level;
-  g.seenSpells.add(card.spell);
-  emit(g, { type: 'spellPick', spell: card.spell, level, rarity: card.rarity });
-  refreshFusion(g);
+  if (g.pickQ > 0) { g.pickQ--; triggerPick(g); } // 대기 중인 카드
   return true;
 }
 
 // 카드 새로고침(런 전체 rerollLeft회: 영웅 Lv5 + 영구 강화). 자동 선택 카운트다운도 처음부터
 function rerollPick(g, i) {
   if (i !== 0 || !g.pick || !(g.rerollLeft > 0)) return false;
-  const cards = genCards(g);
+  const cards = genCards(g, g.pick.starter);
   if (!cards.length) return false;
   g.rerollLeft--;
-  g.pick = { cards, autoLeft: g.pick.autoLeft == null ? null : PICK_AUTO_T };
+  g.pick = { cards, autoLeft: g.pick.autoLeft == null ? null : PICK_AUTO_T, starter: g.pick.starter };
   emit(g, { type: 'pickOffer', reroll: true });
   return true;
 }
@@ -437,25 +521,7 @@ export function act(g, i, action) {
   if (action.type === 'reroll') return rerollPick(g, i);
   if (g.pick) return false; // 카드 선택 중엔 다른 조작 불가(전투 정지)
   const p = g.players[i];
-  if (action.type === 'upgrade') {
-    const stat = action.stat;
-    if (!UPGRADE_KEYS.includes(stat)) return false;
-    const lv = p.lv[stat];
-    if (lv >= upgradeMax(stat) || lv >= LV_CAP) return false;
-    const cost = upgradeCost(stat, lv);
-    if (!(p.gold >= cost)) return false;
-    p.gold -= cost;
-    p.lv[stat] = lv + 1;
-    p.stats = cannonStats(p.lv, g.fx);
-    if (stat === 'wall') {
-      const max = wallCap(g);
-      g.wall.hp += max - g.wall.max;
-      g.wall.max = max;
-    }
-    emit(g, { type: 'upgrade', o: i, stat, lv: lv + 1 });
-    refreshSyn(g);
-    return true;
-  }
+  // 도전 중 골드 강화('upgrade')는 없다 — 마법사 수련은 정비 화면(run.js buyTraining)
   if (action.type === 'skill') {
     const sk = action.skill;
     if (g.phase !== 'play' || !Object.hasOwn(SKILLS, sk) || p.cd[sk] > 0) return false;
@@ -470,7 +536,7 @@ export function act(g, i, action) {
     else meteor(g, i, dbl);
     return true;
   }
-  if (action.type === 'auto') {
+  if (action.type === 'auto') { // 자동 진행 봇(카드 자동 선택·영웅 자동 궁극기). 테스트·봇용 — 전투 화면에는 토글이 없다
     p.auto = !!action.on;
     return true;
   }
@@ -483,6 +549,7 @@ export function act(g, i, action) {
     hero.cls = action.cls;
     g.run.loadout.cls = action.cls;
     g.heroUnit = spawnHeroUnit(hero);
+    refreshCollab(g);
     return true;
   }
   if (action.type === 'heroMove') {
@@ -497,11 +564,14 @@ export function act(g, i, action) {
     if (ok) {
       if (g.heroUnit) g.heroUnit.tbT = 0; // 다음 프레임에 효과 반영
       emit(g, { type: 'talent', cls: g.hero.cls, key: action.key });
+      refreshCollab(g); // 갈래 조건 협공
     }
     return ok;
   }
   if (action.type === 'heroUlt') {
-    return !!g.heroUnit && castHeroUlt(g, HERO_API);
+    if (!g.heroUnit || !castHeroUlt(g, HERO_API)) return false;
+    g.linkT = COLLAB_FX.linkT; // 합동 필살: 3초 안에 마법사 쿨타임 스킬이 터지면 2배(spells.js)
+    return true;
   }
   if (action.type === 'equip') {
     return !!g.hero && equipItem(g.hero, action.itemId);
@@ -559,15 +629,11 @@ export function step(g, dt) {
   if (g.pick) return; // 카드 선택 중엔 전투 정지(시간도 멈춤). 실시간 진행은 tickPick()이 맡는다
   if (dt > 0.1) dt = 0.1;
   g.phaseT += dt;
-  // 자동 강화 / AI 스킬
+  // AI 비상 스킬 · 자동 진행 봇(영웅)
   g.botT += dt;
   if (g.botT >= BOT_INTERVAL) {
     g.botT -= BOT_INTERVAL;
-    for (let i = 0; i < 2; i++) {
-      const p = g.players[i];
-      if (p.auto) autoUpgrade(g, i);
-      if (p.kind === 'bot' && g.phase === 'play') autoSkill(g, i);
-    }
+    for (let i = 0; i < 2; i++) if (g.players[i].kind === 'bot' && g.phase === 'play') autoSkill(g, i);
     if (g.players[0].auto) autoHero(g); // 영웅은 플레이어(0번) 소유
   }
   if (g.phase !== 'play') return;
@@ -580,14 +646,16 @@ export function step(g, dt) {
   if (g.frenzyT > 0) g.frenzyT = Math.max(0, g.frenzyT - dt);
   if (g.legendT > 0) g.legendT = Math.max(0, g.legendT - dt);
   if (g.critStopT > 0) g.critStopT -= dt;
+  if (g.linkT > 0) g.linkT = Math.max(0, g.linkT - dt);
   if (g.phaseT > BERSERK_T) {
     if (g.berserk === 1) emit(g, { type: 'berserk' });
     g.berserk = 2 ** ((g.phaseT - BERSERK_T) / BERSERK_STEP);
   }
 
-  // 학살 가속: 필드가 비면 다음 스폰 묶음(burst)을 바로 당긴다(압도적인 층은 빨리 지나간다)
-  g.spawnT += g.spawnT < g.rushT ? dt * RUSH : dt;
-  if (g.enemies.length === 0 && g.spawnIdx < g.spawns.length && g.spawns[g.spawnIdx].t - ACCEL_LEAD > g.spawnT) {
+  // 학살 가속: 전선(사거리) 안에 적이 없고 접근로 윗부분도 비면 다음 스폰 묶음(burst)을 바로 당긴다
+  // (압도적이면 묶음이 접근로에서 줄지어 쏟아져 층이 빨리 지나간다. 전선에 적이 버티고 있으면 원래 일정)
+  g.spawnT += (g.spawnT < g.rushT ? dt * RUSH : dt) * (g.fastFloor ? FAST_SPAWN : 1);
+  if (!g.enemies.some(e => inReach(e) || e.y < FRONT_Y / 3) && g.spawnIdx < g.spawns.length && g.spawns[g.spawnIdx].t - ACCEL_LEAD > g.spawnT) {
     const sp = g.spawns, b = sp[g.spawnIdx].burst;
     let j = g.spawnIdx;
     while (j + 1 < sp.length && sp[j + 1].burst === b) j++;
@@ -596,7 +664,11 @@ export function step(g, dt) {
   }
   while (g.spawnIdx < g.spawns.length && g.spawns[g.spawnIdx].t <= g.spawnT) {
     const s = g.spawns[g.spawnIdx++];
-    spawnEnemy(g, s.type, s.x, null, s.elite, s.boss);
+    const e = spawnEnemy(g, s.type, s.x, null, s.elite, s.boss);
+    if (e && !e.isBoss) { // 잡몹 밀도(stages.js DENSITY): 수가 많은 만큼 한 마리는 약하다
+      e.share = 1 / DENSITY;
+      e.hp = e.maxHp *= e.share; e.dmg *= e.share; e.gold *= e.share;
+    }
   }
 
   updateCannons(g, dt);
@@ -632,10 +704,10 @@ export function step(g, dt) {
     const gem = base + fl + first;
     g.result = { stars, gems: [gem, gem], firstClear, time: g.phaseT, flawless };
     g.best = Math.max(g.best, g.stage);
-    g.lastLoss = 1 - ratio;
     g.phase = 'clear';
     g.phaseT = 0;
     g.pick = null; // 마지막 처치와 같은 스텝에 뜬 카드는 버린다(드묾)
+    g.pickQ = 0;
     g.bullets.length = 0;
     g.eshots.length = 0;
     emit(g, { type: 'clear', stage: g.stage, stars, gems: [gem, gem] });
@@ -656,7 +728,7 @@ function spawnEnemy(g, type, x, y, elite, boss) {
   const st = g.stage;
   const em = elite ? ELITE : null;
   const r = elite ? T.r * em.r : T.r;
-  const hp = enemyHp(st) * T.hp * (em ? em.hp : 1) * (elite || boss ? bossHpMul(st) : 1);
+  const hp = enemyHp(st) * T.hp * (em ? em.hp : 1) * (elite || boss ? bossHpMul(st, !!boss) : 1);
   const e = {
     id: g.nextId++, type, name: elite ? '거대 ' + T.name : T.name,
     x: clamp(x, r, WORLD_W - r), y: y ?? -r, r,
@@ -667,12 +739,13 @@ function spawnEnemy(g, type, x, y, elite, boss) {
     speed: T.speed * enemySpeedMul(st) * (em ? em.speed : 1),
     vx: 0, vy: 0,
     dmg: enemyDmg(st) * T.dmg * (em ? em.dmg : 1),
-    gold: Math.ceil(goldPerKill(st) * T.gold * (em ? em.gold : 1)),
+    gold: goldPerKill(st) * T.gold * (em ? em.gold : 1), share: 1, // share = 잡몹 밀도 몫(경험치)
     reduce: T.beh === 'shield' ? 0.4 : 1,
     stopY: T.beh === 'thrower' ? 520 + g.rng() * 160 : 0,
     t: 0, t2: 0, t3: 0, atkT: 0, cycle: 0, enraged: false, dead: false,
-    burn: 0, burnT: 0, burnO: 0, // 불꽃 산탄: 남은 화상 피해, 남은 시간, 가해자
+    burn: 0, burnT: 0, burnO: 0, burnSk: false, // 화상: 남은 피해, 남은 시간, 가해자, 스킬 화상인가
     slowT: 0,                    // 서리 화살 둔화 남은 시간
+    born: g.phaseT, hit0: -1,    // 등장 시각 · 첫 피해 시각(kill 이벤트의 age/fought — 초반 템포 지표)
   };
   if (boss) {
     e.stopY = { lich: 260, golem: 520, demonLord: 300, dragon: 170 }[T.beh] ?? 0;
@@ -694,14 +767,22 @@ function summon(g, type, x, y) {
 }
 
 // ── 성벽 마법사: 기본 주문 시전 ──
+// 가장 앞선(성벽에 가까운) 적 — 전선(FRONT_Y)을 넘은 적만(사거리)
 function frontMost(g) {
   let best = null;
   const es = g.enemies;
   for (let j = 0; j < es.length; j++) {
     const e = es[j];
-    if (!e.dead && e.y + e.r > 0 && (!best || e.y > best.y)) best = e;
+    if (inReach(e) && e.y + e.r > 0 && (!best || e.y > best.y)) best = e;
   }
   return best;
+}
+
+// 지원 사격: 영웅이 싸우고 있는 적 → 없으면 화면 안의 보스·엘리트 → 가장 앞선 적. 성벽 마법사의 단일 대상 스킬이 노린다
+function aimTarget(g) {
+  const h = g.heroUnit, t = h && h.state !== 'down' ? h.fightE : null;
+  if (t && !t.dead && t.y + t.r > 0) return t;
+  return g.enemies.find(e => e.isBoss && inReach(e) && e.y + e.r > 0) || frontMost(g);
 }
 
 function updateCannons(g, dt) {
@@ -709,7 +790,7 @@ function updateCannons(g, dt) {
   const aura = tb && g.heroUnit.state !== 'down' ? 1 + tb.aura : 1;
   for (let i = 0; i < 2; i++) {
     const p = g.players[i], c = CANNONS[i];
-    const rate = p.stats.rate * (i === 0 ? spellRateMul(g) : 1) * aura; // 질풍: 플레이어 공격속도만 · 지휘관 오라: 두 마법사
+    const rate = p.stats.rate * (i === 0 ? spellRateMul(g) : 1) * aura; // 질풍: P1만 · 지휘관 오라: 두 마법사
     const iv = 1 / (g.frenzyT > 0 ? Math.min(FRENZY.rateCap, rate * FRENZY.rateMul) : rate);
     p.fireT += dt;
     if (!tgt) {
@@ -779,7 +860,7 @@ function updateBullets(g, dt) {
     if (!gone && b.y >= y0 && b.y <= y1) {
       for (let j = 0; j < es.length; j++) {
         const e = es[j];
-        if (e.dead) continue;
+        if (!inReach(e)) continue; // 접근로의 적은 사거리 밖
         const rr = e.r + BULLET_R, dy = b.y - e.y;
         if (dy > rr || dy < -rr) continue;
         const dx = b.x - e.x;
@@ -822,14 +903,23 @@ function steer(g, b, dt) {
   b.vx = vx;
 }
 
-// 주문 피해 공통(기본 주문·스킬): 시전자 o의 치명타 · 쌍둥이 포화 · 거인 사냥꾼(치명타 시 엘리트·보스 ×2) · 체인 라이트닝(치명타).
-// card = 쿨타임/카드 스킬(hit 이벤트 o:3, caster = 시전자), dot = 지속 피해(치명타는 기댓값만, 체인·히트스톱 없음). 치명타 등 적용 후 원피해 반환
+// 주문 피해 공통(기본 주문·스킬): 시전자 o의 치명타 · 쌍둥이 포화 · 거인 사냥꾼(치명타 시 엘리트·보스 ×2) · 체인 라이트닝(치명타)
+// · 모루와 망치/합동 작전(기사가 도발한 적). card = 쿨타임/카드 스킬(hit 이벤트 o:3, caster = 시전자, dmgSkill 집계),
+// dot = 지속 피해(치명타는 기댓값만, 체인·히트스톱 없음). 치명타 등 적용 후 원피해 반환
 function spellHit(g, e, raw, o, kind, card = false, dot = false, crit = !dot && g.rng() < g.players[o].stats.crit) {
-  const p = g.players[o], st = p.stats;
+  const p = g.players[o], st = p.stats, prev = g._skill;
+  if (card) g._skill = true;
   raw *= dot ? 1 + st.crit * (st.critMult - 1) : crit ? st.critMult : 1;
   if (g.duo.includes('twin')) raw *= FX.twin;
   if (g.heroBuff) raw *= g.heroBuff.mul; // 전군 강화 함성
   if (crit && e.isBoss && p.syn.includes('giant')) raw *= FX.giant;
+  const h = g.heroUnit;
+  if (h && h.state !== 'down' && h.engageR > 0 && (e.x - h.x) ** 2 + (e.y - h.y) ** 2 <= (h.engageR + e.r) ** 2) {
+    const anvil = collabOn(g, 'anvil');
+    const amp = (anvil ? COLLAB_FX.anvil * collabPow(g) : 0) + (h.tb ? h.tb.tauntAmp : 0);
+    if (amp > 0) raw *= 1 + amp;
+    if (anvil && !dot) collabProc(g, 'anvil', e.x, e.y);
+  }
   const maxHp = e.maxHp, dealt = damage(g, e, raw, o, !dot);
   emit(g, { type: 'hit', x: e.x, y: e.y, dmg: dealt, crit, o: card ? 3 : o, caster: o, kind, big: dealt >= maxHp * 0.05 || (e.isBoss && crit) });
   if (crit && e.isBoss && g.critStopT <= 0) {
@@ -837,11 +927,13 @@ function spellHit(g, e, raw, o, kind, card = false, dot = false, crit = !dot && 
     emit(g, { type: 'hitstop', ms: 60 });
   }
   if (crit && p.syn.includes('chain')) chainArc(g, e, raw * FX.chainPct, o);
-  if (crit && !card) critBoom(g, e, st, raw, o);
+  if (crit) critBoom(g, e, st, raw, o);
+  if (!dot) { g._skill = true; onSpellHit(g, e, raw, o, SPELL_API); } // 불꽃 마탄·연쇄 번개(고른 스킬의 피해)
+  g._skill = prev;
   return raw;
 }
 
-// 치명타 폭발(영구 강화 critBoom): 기본 주문 치명타일 때만
+// 치명타 폭발(영구 강화 critBoom): 모든 주문 치명타(지속 피해 제외)
 function critBoom(g, e, st, raw, o) {
   if (!(st.boomR > 0)) return;
   const splash = raw * st.boomRatio, es = g.enemies;
@@ -861,7 +953,7 @@ function basicHit(g, e, b) {
   const flame = p.syn.includes('flame'), es = g.enemies;
   const burn = q => { if (flame && !q.dead) { q.burn += raw * FX.burn; q.burnT = FX.burnT; q.burnO = o; } };
   if (!e.dead) {
-    if (!e.isBoss) e.y -= Math.min(KB_MAX, KB_K * raw / e.maxHp); // 넉백 (보스 면역)
+    if (!e.isBoss) e.y = Math.max(Math.min(e.y, FRONT_Y), e.y - Math.min(KB_MAX, KB_K * raw / e.maxHp)); // 넉백 (보스 면역, 전선 위로는 안 밀림)
     if (B.slow) e.slowT = B.slowT;
     burn(e);
   }
@@ -882,7 +974,6 @@ function basicHit(g, e, b) {
       if (near.length) emit(g, { type: 'shards', o, x, y, pts: near.map(q => [q.x, q.y]) });
     }
   }
-  onBasicHit(g, e, raw, o, SPELL_API); // 불꽃 마탄·연쇄 번개(판타지 스킬)
 }
 
 // 체인 라이트닝: 가장 가까운 적으로 차례차례 전이. n = 전이 최대 마리 수
@@ -910,13 +1001,20 @@ function chainArc(g, e, dmg, o, n = FX.chainN) {
 function damage(g, e, dmg, o, flash = true) {
   if (e.dead) return 0;
   dmg *= e.reduce * curseMul(g); // 저주 낙인(판타지 스킬): 받는 피해 배율
+  if (e.cursed && g.fusions.includes('twilight')) dmg *= 1 + FUSION_FX.cursedAmp; // 황혼의 저주
   let d = dmg;
   if (e.shield > 0) {
     const a = e.shield < d ? e.shield : d;
     e.shield -= a;
     d -= a;
   }
-  g.dmgDone[o === 2 ? 2 : o === 1 ? 1 : 0] += Math.min(dmg, dmg - d + Math.max(0, e.hp)); // 실제로 깎은 양(초과 피해 제외)
+  const dealt = Math.min(dmg, dmg - d + Math.max(0, e.hp)); // 실제로 깎은 양(초과 피해 제외)
+  const who = o === 2 ? 2 : o === 1 ? 1 : 0;
+  if (e.hit0 < 0) e.hit0 = g.phaseT;
+  if (!g._env) { // 자폭병 폭발(환경 피해)은 누구의 기여도도 아니다
+    g.dmgDone[who] += dealt;
+    if (who < 2 && g._skill) g.dmgSkill[who] += dealt;
+  }
   e.hp -= d;
   if (flash) e.hitT = 0.12;
   if (e.hp <= 0) killEnemy(g, e, o, true);
@@ -938,8 +1036,11 @@ function killEnemy(g, e, o, effects) {
   const gold = Math.ceil(e.gold * mult);
   for (const p of g.players) p.gold += gold; // 두 플레이어 모두 전액
   if (g.chain) { g.chain.kills++; g.chain.gold += gold; }
-  emit(g, { type: 'kill', x: e.x, y: e.y, enemy: e.type, gold, isBoss: e.isBoss, o });
+  emit(g, { type: 'kill', x: e.x, y: e.y, enemy: e.type, gold, isBoss: e.isBoss, o, age: g.phaseT - e.born, fought: e.hit0 < 0 ? 0 : g.phaseT - e.hit0 });
+  const prev = g._skill;
+  g._skill = true;
   onSpellKill(g, e, o, gold, SPELL_API); // 영혼 수확·황혼·증기 폭발·망령 군단
+  g._skill = prev;
   if (g.hero && g.hero.cls) heroOnKill(g, e, HERO_API, o); // 영웅 경험치 + 장비 드롭
   if (e.named) {
     learnAllySpell(g);
@@ -962,13 +1063,15 @@ function killEnemy(g, e, o, effects) {
   }
 }
 
-// AI 동료 마법사: 네임드 보스를 잡을 때마다 냉기·번개 주문을 하나씩 익힌다(런당 최대 3, 층이 높을수록 높은 레벨)
+// AI 동료 마법사: 네임드 보스를 잡을 때마다 냉기·번개 주문을 하나씩 익힌다(런당 최대 3, 층이 높을수록 높은 레벨).
+// 다 익힌 뒤에는 익힌 주문이 그 층 레벨까지 오른다
 function learnAllySpell(g) {
-  const key = ALLY_SPELLS.find(k => !g.allySpells[k]);
-  if (!key) return;
-  const level = allySpellLv(g.stage);
-  g.allySpells[key] = level;
-  emit(g, { type: 'allySpell', spell: key, level, x: CANNONS[1].x, y: CANNONS[1].y - 40 });
+  const level = allySpellLv(g.stage), key = ALLY_SPELLS.find(k => !g.allySpells[k]);
+  const keys = key ? [key] : ALLY_SPELLS.filter(k => g.allySpells[k] < level);
+  for (const k of keys) {
+    g.allySpells[k] = Math.max(g.allySpells[k] || 0, level);
+    emit(g, { type: 'allySpell', spell: k, level: g.allySpells[k], x: CANNONS[1].x, y: CANNONS[1].y - 40 });
+  }
 }
 
 // ── 콤보 / 광란 ──
@@ -1013,7 +1116,8 @@ function explode(g, e, o, gold) {
   if (root) g.chain = { kills: 1, gold };
   const R = e.elite ? 160 : 90;
   emit(g, { type: 'boom', x: e.x, y: e.y, r: R, kind: 'bomber' });
-  const dmg = e.maxHp * 0.5, es = g.enemies;
+  const dmg = e.maxHp * 0.5, es = g.enemies, env = g._env;
+  g._env = true;
   for (let j = 0; j < es.length; j++) {
     const q = es[j];
     if (q.dead) continue;
@@ -1023,6 +1127,7 @@ function explode(g, e, o, gold) {
     if (dx * dx + dy * dy > rr * rr) continue;
     damage(g, q, link ? q.hp + q.shield : dmg, o);
   }
+  g._env = env;
   if (e.y + R >= WALL_Y) damageWall(g, e.dmg * 3);
   if (!root) return;
   const c = g.chain;
@@ -1072,7 +1177,7 @@ function damageWall(g, dmg, src = null) {
     g.wall.hp = 0;
     g.phase = 'defeat';
     g.pick = null;
-    g.lastLoss = 1;
+    g.pickQ = 0;
     g.run.time += g.phaseT;
     g.phaseT = 0;
     endCombo(g);
@@ -1103,7 +1208,10 @@ function updateEnemies(g, dt) {
       e.burn -= d;
       e.burnT -= dt;
       if (e.burnT <= 0) e.burn = e.burnT = 0;
+      const prev = g._skill;
+      g._skill = !!e.burnSk; // 스킬(불꽃 마탄·불꽃 회오리)이 붙인 화상
       damage(g, e, d, e.burnO, false);
+      g._skill = prev;
       if (e.dead) continue;
     }
     if (e.stunT > 0) { e.stunT -= dt; e.vx = e.vy = 0; continue; } // 기사 궁극기 기절
@@ -1151,6 +1259,7 @@ function updateEnemies(g, dt) {
 
 // 아래로 이동. 성벽에 닿으면 공격하고 true. 영웅이 도발/근접 범위 안이면 성벽 대신 영웅을 노린다
 function walk(g, e, dt, spd) {
+  if (!e.named && e.y < FRONT_Y) spd *= ENTRY_RUSH; // 접근로는 몰려 내려온다
   // 서리 결계(판타지 스킬): 성벽 근처 감속. 광폭화 중엔 감속 무시 + 최대 3배속
   spd *= g.berserk > 1 ? Math.min(3, g.berserk) : frostSlowMul(g, e) * (e.slowT > 0 ? 1 - FROST_SLOW : 1); // + 서리 화살 둔화
   const h = g.heroUnit;
@@ -1159,6 +1268,10 @@ function walk(g, e, dt, spd) {
     const dx = h.x - e.x, dy = h.y - e.y, d2 = dx * dx + dy * dy;
     if (d2 <= r * r) {
       const d = Math.sqrt(d2) || 1;
+      if (collabOn(g, 'frostBastion')) { // 서리 방벽: 기사가 붙잡은 적은 얼어붙듯 느려진다
+        e.slowT = Math.max(e.slowT, 0.5);
+        collabProc(g, 'frostBastion', e.x, e.y);
+      }
       if (d <= e.r + HERO_MELEE_R) {
         e.vx = e.vy = 0;
         e.state = 'attackHero';

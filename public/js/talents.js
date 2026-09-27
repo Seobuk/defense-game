@@ -10,7 +10,7 @@ export const TALENTS = {
     { key: 'guard', name: '수호', desc: '도발 범위와 피해 감소 — 적을 붙잡는 방패', nodes: [
       N('guard1', '강철 피부', '최대 체력 +10%', 3, { hp: 0.1 }),
       N('guard2', '도발의 함성', '도발 범위 +15', 3, { taunt: 15 }),
-      N('guard3', '방패 막기', '받는 피해 -6%', 2, { dr: 0.06 }),
+      N('guard3', '방패 막기', '받는 피해 -6%, 협공 효과 +15%', 2, { dr: 0.06, collab: 0.15 }),
       N('guard4', '가시 갑옷', '맞을 때마다 공격력의 30%를 되돌려 준다', 3, { thorns: 0.3 }),
       N('guard5', '불굴의 의지', '처치 시 체력 3% 회복', 2, { killHeal: 0.03 }),
       N('guard6', '튕기는 방패', '궁극 특성: 4초마다 방패를 던져 적 5마리를 튕기며 공격력 150% + 0.6초 기절', 1, {}, 'shieldToss'),
@@ -27,7 +27,7 @@ export const TALENTS = {
       N('command1', '전술 교범', '성벽 마법사 시전 속도 +4%', 3, { aura: 0.04 }),
       N('command2', '행군', '이동 속도 +10%', 3, { move: 0.1 }),
       N('command3', '결의', '궁극기 쿨타임 -10%', 2, { ultCd: 0.1 }),
-      N('command4', '진두지휘', '공격력 +8%', 3, { atk: 0.08 }),
+      N('command4', '합동 작전', '공격력 +8%, 기사가 도발한 적이 받는 성벽 마법사 주문 피해 +8%', 3, { atk: 0.08, tauntAmp: 0.08 }),
       N('command5', '전우애', '궁극기 효과 +25%', 2, { ultPow: 0.25 }),
       N('command6', '전군 강화 함성', '궁극 특성: 궁극기를 쓰면 8초간 두 마법사와 영웅의 피해 +40%', 1, {}, 'warcry'),
     ] },
@@ -45,7 +45,7 @@ export const TALENTS = {
       N('rapid1', '빠른 손', '공격 속도 +8%', 3, { aspd: 0.08 }),
       N('rapid2', '다중 화살', '공격마다 20% 확률로 다른 적에게 화살 1발 더', 3, { multi: 0.2 }),
       N('rapid3', '바람걸음', '이동 속도 +10%', 2, { move: 0.1 }),
-      N('rapid4', '예리한 화살촉', '공격력 +8%', 3, { atk: 0.08 }),
+      N('rapid4', '마법 화살촉', '공격력 +8%, 협공 효과 +15%', 3, { atk: 0.08, collab: 0.15 }),
       N('rapid5', '속사 본능', '공격 속도 +8%', 2, { aspd: 0.08 }),
       N('rapid6', '화살 폭풍', '궁극 특성: 모든 공격이 3연사(한 발당 70%)', 1, {}, 'arrowStorm'),
     ] },
@@ -77,7 +77,7 @@ export const TALENTS = {
     ] },
     { key: 'arcane', name: '비전', desc: '마나 충전 가속 — 스킬 카드를 더 자주', nodes: [
       N('arcane1', '마나 순환', '비전 충전 +5%: 층마다 쌓여 100%가 되면 그 층에 스킬 카드 1장 추가', 3, { mana: 0.05 }),
-      N('arcane2', '비전 지식', '공격력 +8%', 3, { atk: 0.08 }),
+      N('arcane2', '비전 공명', '공격력 +8%, 협공 효과 +15%', 3, { atk: 0.08, collab: 0.15 }),
       N('arcane3', '집중', '궁극기 쿨타임 -12%', 2, { ultCd: 0.12 }),
       N('arcane4', '마력 과부하', '공격 속도 +8%', 3, { aspd: 0.08 }),
       N('arcane5', '마나 폭주', '비전 충전 +5%', 2, { mana: 0.05 }),
@@ -105,7 +105,7 @@ export const TALENTS = {
       N('bless1', '풍요', '처치 골드 +3%', 3, { gold: 0.03 }),
       N('bless2', '지혜', '영웅 경험치 +8%', 3, { xp: 0.08 }),
       N('bless3', '행운', '치명타 확률 +4%', 2, { crit: 0.04 }),
-      N('bless4', '은총', '공격력 +8%', 3, { atk: 0.08 }),
+      N('bless4', '은총의 연대', '공격력 +8%, 협공 효과 +15%', 3, { atk: 0.08, collab: 0.15 }),
       N('bless5', '신의 선물', '궁극기 쿨타임 -10%', 2, { ultCd: 0.1 }),
       N('bless6', '카드 축복', '궁극 특성: 스킬 카드를 고르면 30% 확률로 레벨 +1 추가', 1, {}, 'cardBless'),
     ] },
@@ -121,7 +121,7 @@ export const TALENTS = {
     ] },
     { key: 'poison', name: '독', desc: '중독 누적과 확산', nodes: [
       N('poison1', '독 바르기', '공격 피해의 15%를 4초 동안 독으로(중첩)', 3, { poison: 0.15 }),
-      N('poison2', '맹독', '공격력 +8%', 3, { atk: 0.08 }),
+      N('poison2', '그림자 공조', '공격력 +8%, 협공 효과 +15%', 3, { atk: 0.08, collab: 0.15 }),
       N('poison3', '독 확산', '중독된 적이 죽으면 반경 90 적에게 남은 독의 50% 전이', 2, { spread: 0.5 }),
       N('poison4', '연속 베기', '공격 속도 +8%', 3, { aspd: 0.08 }),
       N('poison5', '부식', '중독된 적이 받는 영웅 피해 +10%', 2, { poisonAmp: 0.1 }),
@@ -142,7 +142,8 @@ export const TALENTS = {
 export const TALENT_FX_KEYS = ['atk', 'aspd', 'hp', 'crit', 'move', 'range', 'dr', 'critDmg', 'boss',
   'taunt', 'thorns', 'killHeal', 'wallKill', 'holy', 'undead', 'aura', 'ultCd', 'ultPow',
   'pierce', 'multi', 'wolf', 'wolfPow', 'burn', 'splash', 'slow', 'freeze', 'mana',
-  'heal', 'regen', 'wallRegen', 'smite', 'gold', 'xp', 'blink', 'ambush', 'poison', 'spread', 'poisonAmp', 'execute', 'bossExec'];
+  'heal', 'regen', 'wallRegen', 'smite', 'gold', 'xp', 'blink', 'ambush', 'poison', 'spread', 'poisonAmp', 'execute', 'bossExec',
+  'tauntAmp', 'collab']; // tauntAmp = 도발한 적이 받는 마법사 주문 피해, collab = 협공 효과 배율(config.js collabPow)
 export const CAPSTONES = Object.values(TALENTS).flatMap(bs => bs.map(b => b.nodes[5].cap));
 
 // 노드 찾기: { branch, index, node } | null
@@ -164,6 +165,11 @@ export function talentSpent(hero, cls) {
   return s;
 }
 export const talentLeft = (hero, cls) => Math.max(0, talentPoints(hero) - talentSpent(hero, cls));
+// 한 갈래에 찍은 랭크 합(협공 갈래 조건)
+export function branchSpent(hero, cls, branchKey) {
+  const b = (TALENTS[cls] || []).find(x => x.key === branchKey), a = allocOf(hero, cls);
+  return b ? b.nodes.reduce((s, n) => s + (a[n.key] | 0), 0) : 0;
+}
 
 // 찍을 수 있나: 노드가 있고, 최대 랭크 전이고, 남은 포인트가 있고, 갈래의 앞 노드가 최대 랭크
 export function canAllocate(hero, cls, key) {

@@ -1,6 +1,6 @@
 // 영웅(클래스 필드 유닛) · 장비 — 순수 함수, DOM 없음 (sim.js가 호출)
-// api = sim.js가 넘겨주는 { damage, killEnemy, damageWall, emit, chainArc, frontMost } (spells.js와 동일한 SPELL_API 재사용)
-import { WALL_Y, CANNONS, WORLD_W } from './config.js';
+// api = sim.js가 넘겨주는 { damage, killEnemy, damageWall, emit, chainArc, frontMost, spellHit, aimTarget, collabProc } (spells.js와 동일한 SPELL_API)
+import { WALL_Y, CANNONS, WORLD_W, SPELL_BY_KEY, COLLAB_FX, collabOn, collabPow, FRONT_Y } from './config.js';
 import { clamp } from './util.js';
 import { talentBonus } from './talents.js';
 
@@ -10,7 +10,7 @@ export const HERO_CLASSES = {
     name: '기사', role: '근접 탱커 — 도발로 적을 붙잡는다', weapon: '검',
     base: { hp: 260, atk: 12, range: 48, atkSpd: 1.0, moveSpd: 95 },
     passive: '반경 120 안의 적은 성벽 대신 기사를 노린다(도발)',
-    taunt: 120, melee: true, dps: 1,
+    taunt: 120, melee: true, dps: 1.6,
     ult: { name: '성스러운 방패', cd: 26, dur: 3, r: 170 },
     ultDesc: '3초간 무적 + 주변 적 기절',
     unlock: () => true,
@@ -18,8 +18,8 @@ export const HERO_CLASSES = {
   ranger: {
     name: '궁수', role: '원거리 속사 — 관통 화살', weapon: '활',
     base: { hp: 150, atk: 9, range: 400, atkSpd: 2.6, moveSpd: 115 },
-    passive: '화살이 최대 2마리를 관통한다',
-    pierce: 2, melee: false, dps: 1.0,
+    passive: '화살이 최대 2마리를 관통하고, 맞은 적을 살짝 밀어낸다',
+    pierce: 2, push: 20, melee: false, dps: 0.82,
     ult: { name: '화살비', cd: 20, dur: 2.2, r: 170 },
     ultDesc: '전방 넓은 범위에 화살비',
     unlock: () => true,
@@ -28,7 +28,7 @@ export const HERO_CLASSES = {
     name: '마법사', role: '원거리 광역 마법', weapon: '지팡이',
     base: { hp: 150, atk: 11, range: 340, atkSpd: 0.9, moveSpd: 100 },
     passive: '공격이 착탄 지점 주변에도 피해를 준다',
-    splash: 60, melee: false, dps: 1.0,
+    splash: 60, melee: false, dps: 1.2,
     ult: { name: '블리자드', cd: 30, dur: 4, r: 220 },
     ultDesc: '넓은 범위에 냉기 폭풍(큰 피해)',
     unlock: () => true,
@@ -37,7 +37,7 @@ export const HERO_CLASSES = {
     name: '성직자', role: '근접·신성 광역, 성벽·자신 회복', weapon: '철퇴',
     base: { hp: 220, atk: 10, range: 72, atkSpd: 1.1, moveSpd: 95 },
     passive: '공격할 때마다 성벽과 자신을 소량 회복, 언데드에 추가 피해',
-    healOnHit: 0.006, undeadBonus: 1.5, melee: true, dps: 1.3,
+    healOnHit: 0.006, undeadBonus: 1.5, melee: true, dps: 0.9,
     ult: { name: '천상의 치유', cd: 28, dur: 0, r: 260 },
     ultDesc: '성벽 대량 회복 + 주변 신성 폭발',
     unlock: best => best >= 20,
@@ -46,7 +46,7 @@ export const HERO_CLASSES = {
     name: '암살자', role: '순간이동 연속 베기, 보스 특화', weapon: '단검',
     base: { hp: 170, atk: 13, range: 56, atkSpd: 1.6, moveSpd: 130 },
     passive: '치명타 확률 +20%p, 보스 피해 +30%',
-    critBonus: 0.2, bossBonus: 1.3, melee: true, dps: 0.65, blink: 1.6, // blink = 그림자 순간이동 쿨타임(초)
+    critBonus: 0.2, bossBonus: 1.3, melee: true, dps: 0.8, blink: 1.6, // blink = 그림자 순간이동 쿨타임(초)
     ult: { name: '그림자 난무', cd: 24, dur: 1.6, n: 5 },
     ultDesc: '적 최대 5마리를 순식간에 베어넘긴다',
     unlock: best => best >= 40,
@@ -79,7 +79,7 @@ export const MAX_HERO_LV = 99;
 export const xpToNext = level => Math.floor(100 * 1.06 ** (level - 1));
 export const heroClearXp = (stage, firstClear) => Math.ceil((stage * 0.5 + 5) * (firstClear ? 2.4 : 1));
 const XP_KILL = { normal: 0.4, elite: 3, named: 15 };
-export const xpForKill = (e, stage) => (e.named ? XP_KILL.named : e.isBoss ? XP_KILL.elite : XP_KILL.normal) * (1 + stage * 0.03);
+export const xpForKill = (e, stage) => (e.named ? XP_KILL.named : e.isBoss ? XP_KILL.elite : XP_KILL.normal * (e.share || 1)) * (1 + stage * 0.03);
 
 export const MILESTONES = [
   { lv: 5, key: 'reroll1', desc: '도전마다 카드 새로고침 1회' },
@@ -212,9 +212,10 @@ export function heroPower(hero) {
 }
 
 const SELL_MUL = { common: 1, uncommon: 1.6, rare: 2.6, epic: 4.2, legend: 7 };
+// 판매 골드(영구 재화 — 마법사 수련에 쓴다)
 export function sellValue(item) {
   if (!item) return 0;
-  return Math.ceil(itemPower(item) * 0.8 * (SELL_MUL[item.rarity] || 1));
+  return Math.ceil(itemPower(item) * 0.06 * (SELL_MUL[item.rarity] || 1));
 }
 
 // 가방(30칸). 초과 시 가장 낮은 등급(동급이면 가장 낮은 전투력)을 자동 판매하고 그 아이템을 반환
@@ -297,13 +298,17 @@ export function heroBonuses(hero) {
 }
 
 // ── 영웅 전투 스탯 ──
-// 피해 기준 = P1 성벽 마법사의 기본 주문 DPS(마력 × 시전 속도 × 다중 시전 × 치명타). 마법사가 강해지는 만큼 영웅도 같은 비중을 유지한다.
-// 영웅 DPS = 기준 × HERO_K × 클래스 배율(dps) × 레벨 배율 × (장비·특성). 특성을 다 찍으면 전체 화력의 25~40%(test/sim.test.js로 확인)
-export const HERO_K = 0.2;
+// 피해 기준 = P1 성벽 마법사의 마력(층 공명 × 수련 × 각성) × 치명타 기대값 × (기본 + 스킬 레벨 합). 마법사가 스킬로 강해지는 만큼
+// 영웅도 같은 비중을 유지한다. 영웅 DPS = 기준 × HERO_K × 클래스 배율(dps) × 레벨 배율 × (장비·특성). 특성을 다 찍으면 전체 화력의 25~40%(test/sim.test.js)
+export const HERO_K = 0.17;
+const REF0 = 3, REF1 = 0.6; // 기준 = 마력 × (REF0 + REF1 × 스킬 레벨 합)
 export function mageRef(g) {
   const s = g.players[0] && g.players[0].stats;
   if (!s) return 10;
-  return s.dmg * s.rate * (1 + (s.shots - 1) * 0.35) * (1 + s.crit * (s.critMult - 1));
+  let lv = 0;
+  for (const v of Object.values(g.book || {})) lv += v;
+  for (const k of g.fusions || []) lv += g.spells[k]; // 융합 스킬은 재료 둘 + 전용 시전
+  return s.dmg * (1 + s.crit * (s.critMult - 1)) * (REF0 + REF1 * lv);
 }
 const buffMul = g => (g.heroBuff ? g.heroBuff.mul : 1);
 
@@ -320,7 +325,7 @@ export function heroCombatStats(g, hero, tb = talentBonus(hero, hero.cls)) {
     dmg: dps / cls.base.atkSpd, // 1타 피해(공격 속도 보너스는 atkSpd로 따로)
     maxHp: Math.max(60, Math.round((g.wall ? g.wall.max : 200) * hpFrac)),
     range: cls.base.range * (1 + tb.range),
-    atkSpd: cls.base.atkSpd * (1 + gear.atkSpeedPct / 100 + tb.aspd),
+    atkSpd: cls.base.atkSpd * (1 + gear.atkSpeedPct / 100 + tb.aspd + (g.collabs && collabOn(g, 'galeArrow') ? COLLAB_FX.galeArrow * collabPow(g) : 0)), // 질풍 화살
     moveSpd: cls.base.moveSpd * (1 + tb.move),
     critChance: clamp(0.05 + (cls.critBonus || 0) + gear.crit / 100 + tb.crit, 0, 0.9),
     critMult: 1.5 + gear.critDmgPct / 100 + tb.critDmg,
@@ -336,7 +341,7 @@ export function heroCombatStats(g, hero, tb = talentBonus(hero, hero.cls)) {
 export const HERO_GATE = { x: (CANNONS[0].x + CANNONS[1].x) / 2, y: WALL_Y - 30 };
 export const HERO_RALLY = { x: WORLD_W / 2, y: 520 }; // 적이 없을 때 모이는 전장 중앙
 export const HERO_MELEE_R = 26; // 도발 근접 판정 여유 반경(sim.js의 walk()도 이 값을 쓴다)
-export const ROAM_TOP = 140;    // 스폰 직후 구역(y < ROAM_TOP)의 적은 쫓지 않는다
+export const ROAM_TOP = FRONT_Y;  // 전선 위 접근로(y < ROAM_TOP)의 적은 쫓지 않는다 — 영웅은 전장 가운데가 전선
 const RETREAT_HP = 0.3, RETURN_HP = 0.8;  // 30% 아래 후퇴 → 80% 회복 후 재진격
 const REGEN = { rest: 0.03, retreat: 0.04, wall: 0.14 }; // 초당 최대 체력 비율: 비전투 / 후퇴 중 / 성벽 곁
 const RETARGET_T = 0.25;
@@ -350,7 +355,7 @@ export function spawnHeroUnit(hero) {
     mode: 'rally',            // 'engage'(근접 돌진) | 'kite'(원거리 거리 유지) | 'rally'(집결·두리번) | 'retreat' | 'move'(탭 이동)
     gait: 'walk',             // 'idle'|'walk'|'run'
     speed: 0, dir: -Math.PI / 2, vx: 0, vy: 0, facing: 1,
-    atkT: 0, windup: 0, atkN: 0, tgt: null,
+    atkT: 0, windup: 0, atkN: 0, tgt: null, fightE: null, // fightE = 지금 실제로 치고 있는 적(성벽 마법사 지원 사격이 노린다)
     ultCd: 0, ultT: 0, invulnT: 0, blinkT: 0, ambushT: 0,
     moveTo: null, respawnT: 0,
     level: hero.level, tier: heroTier(hero.level),
@@ -429,12 +434,18 @@ function performAttack(g, hero, h, cls, st, target, api) {
   h.atkN++;
   const rng = g.heroRng;
   const undead = UNDEAD_TYPES.includes(target.type);
+  // 협공(영웅 × 마법사 스킬) — config.js COLLABS
+  const pow = collabPow(g), on = k => collabOn(g, k);
+  const thunder = on('thunderArrow'), frostShot = on('frostShot'), gale = on('galeArrow'), purge = on('purgeFlame'), shadowExec = on('shadowExec');
   const mul = e => {
     let m = 1 + tb.holy * (UNDEAD_TYPES.includes(e.type) ? 2 : 1);
     if (e.isBoss) m *= st.bossMul * (tb.bossExec && e.hp < e.maxHp * 0.3 ? 1 + tb.bossExec : 1);
     if (UNDEAD_TYPES.includes(e.type)) m *= (cls.undeadBonus || 1) + tb.undead;
+    if (purge && e.burnT > 0) m *= 1 + COLLAB_FX.purgeAmp * pow;                                  // 정화의 불꽃
+    if (shadowExec && e.isBoss && e.hp < e.maxHp * 0.3) m *= 1 + COLLAB_FX.shadowBoss * pow;       // 그림자 처형
     return m;
   };
+  const chill = e => e.slowT > 0 || e.frozen || e.stunT > 0;
   const crit = rng() < st.critChance;
   let dmg = st.dmg * (crit ? st.critMult : 1);
   if (h.ambushT > 0) { dmg *= 1 + tb.ambush; h.ambushT = 0; }
@@ -453,9 +464,20 @@ function performAttack(g, hero, h, cls, st, target, api) {
   }
   if (cap.arrowStorm) api.emit(g, { type: 'heroProc', kind: 'arrowStorm', x: h.x, y: h.y, tx: target.x, ty: target.y });
   function shoot(t, d, c) {
+    if (frostShot && !c && chill(t)) { d *= st.critMult; c = true; api.collabProc(g, 'frostShot', t.x, t.y); } // 빙결 사격: 차가운 적에게 치명타
     heroHit(g, api, t, d, c);
     onHitFx(t, d);
-    const pierce = (cls.pierce || 0) + tb.pierce;
+    if (cls.push && !t.dead && !t.isBoss) t.y = Math.max(Math.min(t.y, FRONT_Y), t.y - cls.push); // 궁수: 밀어내기(전선 위로는 안 밀림)
+    if (gale) api.collabProc(g, 'galeArrow', t.x, t.y);
+    if (frostShot && !t.dead) t.slowT = Math.max(t.slowT, 1.2);
+    if (thunder) { // 뇌전 화살: 성벽 마법사의 번개가 화살을 타고 튄다(마법사 스킬 피해로 집계)
+      const prev = g._skill;
+      g._skill = true;
+      api.chainArc(g, t, d * COLLAB_FX.thunderArrow * pow, 0, 2);
+      g._skill = prev;
+      api.collabProc(g, 'thunderArrow', t.x, t.y);
+    }
+    const pierce = (cls.pierce || 0) + tb.pierce + (gale ? 1 : 0);
     let n = 0;
     for (const e of g.enemies) {
       if (n >= pierce || e === t || e.dead) continue;
@@ -469,9 +491,12 @@ function performAttack(g, hero, h, cls, st, target, api) {
     if (tb.slow && rng() < tb.slow) e.slowT = Math.max(e.slowT, 1.5);
     if (tb.freeze && !e.named && rng() < tb.freeze) e.stunT = Math.max(e.stunT || 0, 0.8);
     if (tb.poison) { e.poison = (e.poison || 0) + d * tb.poison * (cap.plague ? 2 : 1); e.poisonT = 4; }
-    if (tb.execute && !e.isBoss && e.hp > 0 && e.hp <= e.maxHp * tb.execute) {
+    if (purge) { e.burn += d * COLLAB_FX.purgeBurn * pow; e.burnT = Math.max(e.burnT, 2); e.burnO = 2; api.collabProc(g, 'purgeFlame', e.x, e.y); }
+    const exe = tb.execute + (shadowExec ? COLLAB_FX.shadowExec * pow : 0);
+    if (exe && !e.isBoss && e.hp > 0 && e.hp <= e.maxHp * exe) {
       api.damage(g, e, e.hp + e.shield, 2);
       api.emit(g, { type: 'heroProc', kind: 'execute', x: e.x, y: e.y });
+      if (shadowExec) api.collabProc(g, 'shadowExec', e.x, e.y);
     }
   }
 
@@ -485,15 +510,30 @@ function performAttack(g, hero, h, cls, st, target, api) {
       if (Math.hypot(e.x - target.x, e.y - target.y) <= r + e.r) {
         heroHit(g, api, e, dmg * 0.6 * m * mul(e), false);
         if (cap.meteor && !e.dead) { e.burn += dmg * 0.3; e.burnT = Math.max(e.burnT, 2); e.burnO = 2; }
+        if (on('frostEcho') && !e.dead) e.slowT = Math.max(e.slowT, 1.5); // 서리 메아리: 광역도 둔화
       }
     }
     if (cap.meteor && !target.dead) heroHit(g, api, target, dmg * 0.4 * mul(target), false);
+  }
+  if (on('frostEcho') && !target.dead) target.slowT = Math.max(target.slowT, 1.5);
+  // 쌍화염: 영웅의 공격마다 착탄 지점에 성벽 마법사(P1)의 파이어볼 폭발
+  if (on('twinFlame')) {
+    const lv = Math.max(g.book.fireball || 0, g.book.flameBullet || 0, 1), p = SPELL_BY_KEY.fireball.lv[lv - 1];
+    const fd = g.players[0].stats.dmg * p.mul * COLLAB_FX.twinFlame * pow, x = target.x, y = target.y;
+    for (const e of g.enemies) if (!e.dead && (e.x - x) ** 2 + (e.y - y) ** 2 <= (p.r + e.r) ** 2) api.spellHit(g, e, fd, 0, 'fire', true);
+    api.emit(g, { type: 'spell', key: 'fireball', o: 0, x, y, r: p.r, collab: 'twinFlame' });
+    api.collabProc(g, 'twinFlame', x, y);
   }
   // 성직자: 공격마다 성벽·자신 회복 + 신성 폭발
   if (cls.healOnHit) {
     const k = cls.healOnHit * (1 + tb.heal);
     g.wall.hp = Math.min(g.wall.max, g.wall.hp + g.wall.max * k);
     h.hp = Math.min(h.maxHp, h.hp + h.maxHp * k);
+    const gl = g.spellFx && g.spellFx.golem;
+    if (on('sanctuary') && gl && gl.hp < gl.maxHp) { // 수호 성벽: 골렘도 치유
+      gl.hp = Math.min(gl.maxHp, gl.hp + gl.maxHp * k * 2 * pow);
+      api.collabProc(g, 'sanctuary', gl.x, gl.y);
+    }
   }
   if (tb.smite) aoe(g, api, h.x, h.y, 70, dmg * tb.smite, 'holy', target);
   // 궁극 특성(N타마다)
@@ -732,6 +772,7 @@ export function updateHeroUnit(g, dt, api) {
     attackT = inRange(h, target, st.range) ? target : inRange(h, near, st.range) ? near : null;
   }
 
+  h.fightE = attackT;
   const iv = 1 / st.atkSpd;
   if (attackT) {
     h.state = 'attack';
@@ -782,7 +823,9 @@ export function heroTakeDamage(g, dmg, api, src = null) {
   const h = g.heroUnit;
   if (!h || h.state === 'down' || h.invulnT > 0) return;
   const stats = h.st || heroCombatStats(g, g.hero, h.tb);
-  const dealt = dmg * (1 - stats.dmgReduce);
+  const iron = collabOn(g, 'ironLine') ? Math.min(0.6, COLLAB_FX.ironLine * collabPow(g)) : 0; // 철벽 전선
+  const dealt = dmg * (1 - stats.dmgReduce) * (1 - iron);
+  if (iron) api.collabProc(g, 'ironLine', h.x, h.y);
   h.hp -= dealt;
   api.emit(g, { type: 'heroHit', x: h.x, y: h.y, dmg });
   if (src && !src.dead && h.tb.thorns) {
@@ -826,12 +869,23 @@ export function castHeroUlt(g, api) {
     case 'ranger':
       for (const e of enemiesIn(cls.ult.r)) heroHit(g, api, e, stats.dmg * 2.2 * pow, false);
       break;
-    case 'sorcerer':
-      for (const e of enemiesIn(r)) {
+    case 'sorcerer': {
+      const inR = enemiesIn(r);
+      for (const e of inR) {
         heroHit(g, api, e, stats.dmg * (absZero ? 5 : 3.5) * pow, false, 'frost');
         if (absZero && !e.dead) e.stunT = Math.max(e.stunT || 0, e.named ? 1.5 : 3);
       }
+      if (collabOn(g, 'stormCall') && inR.length) { // 폭풍 소환: 궁극기 범위 안 모든 적에게 성벽 마법사(P1)의 낙뢰
+        const lv = Math.max(g.book.lightningStrike || 0, g.book.tornado || 0, 1);
+        const ld = g.players[0].stats.dmg * SPELL_BY_KEY.lightningStrike.lv[lv - 1].mul * collabPow(g);
+        inR.forEach((e, k) => {
+          if (k < 12) api.emit(g, { type: 'spell', key: 'lightningStrike', o: 0, x: e.x, y: e.y, collab: 'stormCall' });
+          if (!e.dead) api.spellHit(g, e, ld, 0, 'lightning', true);
+        });
+        api.collabProc(g, 'stormCall', h.x, h.y);
+      }
       break;
+    }
     case 'cleric':
       g.wall.hp = Math.min(g.wall.max, g.wall.hp + g.wall.max * 0.25 * pow);
       h.hp = Math.min(h.maxHp, h.hp + h.maxHp * 0.5);
@@ -889,9 +943,11 @@ export function heroOnKill(g, e, api, o) {
   if (tb) {
     // 독 확산 / 역병: 중독된 적이 죽으면(누가 잡았든) 주변으로 독이 번진다
     if (e.poison > 0 && (tb.spread || tb.cap.plague)) {
-      const r = tb.cap.plague ? 150 : 90, frac = tb.cap.plague ? 1 : tb.spread, pts = [];
-      for (const q of g.enemies) {
-        if (q.dead || q === e || (q.x - e.x) ** 2 + (q.y - e.y) ** 2 > (r + q.r) ** 2) continue;
+      const r = tb.cap.plague ? 150 : 90, pts = [];
+      const near = g.enemies.filter(q => !q.dead && q !== e && (q.x - e.x) ** 2 + (q.y - e.y) ** 2 <= (r + q.r) ** 2);
+      // 번지는 독은 남은 독을 나눠 갖는다(총량 보존 — 밀집한 무리에서 독이 기하급수로 불어나지 않게)
+      const frac = (tb.cap.plague ? 1 : tb.spread) * Math.min(1, 1 / Math.max(1, near.length));
+      for (const q of near) {
         q.poison = (q.poison || 0) + e.poison * frac;
         q.poisonT = 4;
         pts.push([q.x, q.y]);
@@ -901,6 +957,11 @@ export function heroOnKill(g, e, api, o) {
     if (o === 2 && h.state !== 'down') {
       if (tb.killHeal) h.hp = Math.min(h.maxHp, h.hp + h.maxHp * tb.killHeal);
       if (tb.wallKill) g.wall.hp = Math.min(g.wall.max, g.wall.hp + g.wall.max * tb.wallKill);
+      if (collabOn(g, 'soulHunt') && g.spellT) { // 영혼 사냥: 영웅의 처치가 성벽 마법사 스킬 대기 시간을 줄인다
+        const cut = COLLAB_FX.soulHunt * collabPow(g);
+        for (const k of Object.keys(g.spellT)) if (typeof g.spellT[k] === 'number' && k !== 'dragon') g.spellT[k] -= cut;
+        api.collabProc(g, 'soulHunt', e.x, e.y);
+      }
     }
   }
   const chance = e.named ? DROP_CHANCE.named : e.isBoss ? DROP_CHANCE.elite : DROP_CHANCE.normal;

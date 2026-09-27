@@ -1,7 +1,7 @@
 // localStorage 저장/불러오기 + 오프라인 보상 계산. 절대 throw 하지 않는다.
-// v2(로그라이트): 메타(영구) + 진행 중 도전(run, 스테이지 시작 시점). v1 → v2 마이그레이션 포함
+// v3(스킬 중심): 메타(영구, 골드·마법사 수련 포함) + 진행 중 도전(run, 스테이지 시작 시점). v1·v2 → v3 마이그레이션 포함
 import {
-  META_KEYS, metaMax, SYN_KEYS, SPEEDS, MAX_STAGE, SPELL_KEYS,
+  META_KEYS, metaMax, SYN_KEYS, SPEEDS, MAX_STAGE, SPELL_KEYS, TRAIN_KEYS, trainMax, goldPerKill,
   offlineGemsPerHour, offlineXpPerMin, OFFLINE_CAP_HOURS,
 } from './config.js';
 import { toInt } from './util.js';
@@ -9,9 +9,29 @@ import { newHero, HERO_CLASS_KEYS, MAX_HERO_LV, SLOTS, RARITY_KEYS, SUBSTATS, BA
 import { normalizeRun } from './sim.js';
 import { normalizeTalents } from './talents.js';
 
-export const STORAGE_KEY = 'wallDefense.save.v1'; // 키는 그대로, 안의 스키마가 v:2
-export const SAVE_VERSION = 2;
+export const STORAGE_KEY = 'wallDefense.save.v1'; // 키는 그대로, 안의 스키마가 v:3
+export const SAVE_VERSION = 3;
 export const MIGRATE_GEMS_PER_BEST = 3; // v1 → v2: 사라지는 골드·강화 레벨 대신 최고 기록 × 3 보석
+
+// v2 → v3: 보석 강화 기본 마력·시전 속도·성벽 결계 → 마법사 수련(같은 비율 위치, 올림), 없어진 시작 골드 → 쓴 보석 환불,
+// 진행 중 도전의 옛 골드(층마다 ×1.18로 불어나던 런 재화) → 같은 '처치 수'만큼의 새 골드(도전이 끝나면 meta.gold로)
+export const MIGRATE_TRAIN = { power: ['atk', 30], haste: ['rate', 20], ward: ['wall', 20] }; // 옛 키: [수련 키, 옛 최대 레벨]
+const oldStartGoldGems = lv => { let s = 0; for (let i = 0; i < lv; i++) s += Math.ceil(12 * 1.25 ** i); return s; };
+const oldGoldPerKill = stage => 3 * 1.18 ** (stage - 1);
+export function migrateTraining(oldMetaLv) {
+  const t = {};
+  for (const k of TRAIN_KEYS) t[k] = 0;
+  for (const [old, [k, oldMax]] of Object.entries(MIGRATE_TRAIN)) {
+    const lv = toInt(oldMetaLv[old], 0, oldMax);
+    t[k] = Math.min(trainMax(k), Math.ceil(lv * trainMax(k) / oldMax));
+  }
+  return t;
+}
+function migrateRun(r) {
+  r = obj(r);
+  const stage = toInt(r.stage, 1, MAX_STAGE), pl = Array.isArray(r.players) ? r.players : [];
+  return { ...r, players: pl.map(p => ({ gold: Math.floor(num(obj(p).gold) / oldGoldPerKill(stage) * goldPerKill(stage)) })) };
+}
 const SAVE_DELAY = 1000;
 const DMG_MODES = ['full', 'simple', 'off'];
 
@@ -20,23 +40,30 @@ const bool = (v, d) => (typeof v === 'boolean' ? v : d);
 const obj = v => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
 const keys = (v, all) => (Array.isArray(v) ? [...new Set(v.filter(k => all.includes(k)))] : []);
 
-// 어떤 입력이 와도 올바른 v2 저장 객체로 (기본값 채우기 + 범위 검증 + v1 마이그레이션)
-// v1: 영웅·보석·최고 기록·도감·설정 유지, 퍼크 3종 → 같은 키의 영구 강화 레벨, 골드·강화 레벨·동료·층은 버리고 최고 기록 × 3 보석
+// 어떤 입력이 와도 올바른 v3 저장 객체로 (기본값 채우기 + 범위 검증 + v1·v2 마이그레이션)
+// v1: 영웅·보석·최고 기록·도감·설정 유지, 퍼크 pickaxe/critBoom → 같은 키의 영구 강화 레벨, 골드·강화 레벨·동료·층은 버리고 최고 기록 × 3 보석
+// v2: 위 MIGRATE_TRAIN 설명대로(손해 없이). 퍼크 startGold(v1)도 쓴 보석으로 환불
 export function normalize(d) {
   d = obj(d);
   const s = obj(d.settings);
-  const v1 = d.v !== SAVE_VERSION;
+  const ver = d.v === SAVE_VERSION ? 3 : d.v === 2 ? 2 : 1;
   const best = toInt(d.best, 0, MAX_STAGE);
-  const src = obj(v1 ? d.perks : d.metaLv);
+  const src = obj(ver === 1 ? d.perks : d.metaLv);
   const metaLv = {};
   for (const k of META_KEYS) metaLv[k] = toInt(src[k], 0, metaMax(k));
+  const training = {};
+  if (ver === 2) Object.assign(training, migrateTraining(src));
+  else for (const k of TRAIN_KEYS) training[k] = toInt(obj(d.training)[k], 0, trainMax(k));
+  const refund = ver < 3 ? oldStartGoldGems(toInt(src.startGold, 0, 15)) : 0;
   const lo = obj(d.lastLoadout);
   return {
     v: SAVE_VERSION,
     name: typeof d.name === 'string' && d.name.trim() ? d.name.trim().slice(0, 16) : '나',
     best,
-    gems: Math.floor(num(d.gems)) + (v1 ? best * MIGRATE_GEMS_PER_BEST : 0),
+    gems: Math.floor(num(d.gems)) + (ver === 1 ? best * MIGRATE_GEMS_PER_BEST : 0) + refund,
+    gold: ver === 3 ? Math.floor(num(d.gold)) : 0, // 영구 골드(마법사 수련 재화)
     metaLv,
+    training,                                       // 마법사 수련 레벨 {atk, rate, crit, multi, wall}
     auto: bool(d.auto, false),
     settings: {
       dmgNumbers: DMG_MODES.includes(s.dmgNumbers) ? s.dmgNumbers : 'full',
@@ -53,7 +80,7 @@ export function normalize(d) {
       cls: HERO_CLASS_KEYS.includes(lo.cls) ? lo.cls : null,
       startSpells: keys(lo.startSpells, SPELL_KEYS).slice(0, 2),
     },
-    run: !v1 && d.run && typeof d.run === 'object' ? normalizeRun(d.run) : null, // 이어하기(스테이지 시작 시점)
+    run: ver > 1 && d.run && typeof d.run === 'object' ? normalizeRun(ver === 2 ? migrateRun(d.run) : d.run) : null, // 이어하기(스테이지 시작 시점)
     lastSeen: num(d.lastSeen),
   };
 }

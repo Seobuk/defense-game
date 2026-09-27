@@ -1,9 +1,9 @@
 // 메타(영구) ↔ 런(도전) 연결 — 정비 화면·결과 화면·이어하기가 부르는 함수. DOM 없음
 // meta = save.js normalize() 결과 객체(제자리에서 바꾼다):
-//   { gems, best, metaLv, hero, discovered, seenSpells, runs, lastLoadout, auto, name, run, ... }
-import { META_KEYS, metaMax, metaCost, metaFx, RUN_GEMS, SPELL_KEYS } from './config.js';
+//   { gems, gold, best, metaLv, training, hero, discovered, seenSpells, runs, lastLoadout, auto, name, run, ... }
+import { META_KEYS, metaMax, metaCost, metaFx, RUN_GEMS, SPELL_KEYS, TRAIN_KEYS, trainMax, trainCost, START_CARDS } from './config.js';
 import { createGame, serializeRun, normalizeRun } from './sim.js';
-import { unlockedClasses, addXp, equipItem, autoEquipAll } from './hero.js';
+import { unlockedClasses, addXp, equipItem, autoEquipAll, sellItem, sellItemsByRarity } from './hero.js';
 import { allocateTalent, resetTalents } from './talents.js';
 
 export { serializeRun, normalizeRun };
@@ -17,6 +17,18 @@ export function buyMeta(meta, key) {
   if (!(meta.gems >= cost)) return false;
   meta.gems -= cost;
   meta.metaLv[key] = lv + 1;
+  return true;
+}
+
+// 마법사 수련 구매(골드, 정비 화면). 두 성벽 마법사 공통. 성공하면 true
+export function buyTraining(meta, key) {
+  if (!TRAIN_KEYS.includes(key)) return false;
+  const lv = meta.training[key] | 0;
+  if (lv >= trainMax(key)) return false;
+  const cost = trainCost(key, lv);
+  if (!(meta.gold >= cost)) return false;
+  meta.gold -= cost;
+  meta.training[key] = lv + 1;
   return true;
 }
 
@@ -34,23 +46,23 @@ export function validLoadout(meta, lo) {
   return { cls, startSpells };
 }
 
+// 두 마법사 모두 마법사 수련 레벨(meta.training)을 받는다
 const players = (meta, p0, p1, auto) => [
-  { name: meta.name, kind: 'human', auto, ...p0 },
-  { name: 'AI 동료', kind: 'bot', auto: true, ...p1 },
+  { name: meta.name, kind: 'human', auto, lv: meta.training, ...p0 },
+  { name: 'AI 동료', kind: 'bot', auto: true, lv: meta.training, ...p1 },
 ];
 const common = (meta, seed) => ({
   best: meta.best, seed, discovered: meta.discovered, seenSpells: meta.seenSpells, hero: meta.hero, metaLv: meta.metaLv,
 });
 
-// 새 도전(1층부터). 영구 강화 적용: 시작 골드(두 마법사), 배율, 새로고침, 시작 스킬 Lv1
+// 새 도전(1층부터). 마법사 수련 · 영구 강화(새로고침·선택지 등) · 시작 스킬 Lv1 적용. 1층 시작 시 무료 카드
 export function newRun(meta, loadout, seed) {
   const lo = validLoadout(meta, loadout);
   meta.hero.cls = lo.cls;
   meta.lastLoadout = lo;
-  const gold = metaFx(meta.metaLv).startGold;
   const game = createGame({
-    ...common(meta, seed), stage: 1,
-    players: players(meta, { gold }, { gold }, !!meta.auto),
+    ...common(meta, seed), stage: 1, startCards: START_CARDS,
+    players: players(meta, { gold: 0 }, { gold: 0 }, !!meta.auto),
     run: { spells: Object.fromEntries(lo.startSpells.map(k => [k, 1])), startBest: meta.best, loadout: lo },
   });
   meta.run = game.run.checkpoint;
@@ -63,10 +75,11 @@ export function restoreRun(meta, saved = meta.run, seed) {
   const r = normalizeRun(saved);
   if (r.loadout.cls && unlockedClasses(meta.best).includes(r.loadout.cls)) meta.hero.cls = r.loadout.cls;
   const [a, b] = r.players;
-  return createGame({ ...common(meta, seed), players: players(meta, a, b, r.auto), run: r });
+  // 1층 시작 체크포인트면 도전 시작 무료 카드도 다시(체크포인트는 카드를 고르기 전 상태)
+  return createGame({ ...common(meta, seed), players: players(meta, a, b, r.auto), run: r, startCards: r.stage === 1 && r.floors === 0 ? START_CARDS : 0 });
 }
 
-// 도전 종료 정산(성벽 붕괴·100층 돌파·포기 모두). meta에 보석·최고 기록·도감·뽑아 본 스킬을 반영하고 run 저장을 지운다.
+// 도전 종료 정산(성벽 붕괴·100층 돌파·포기 모두). meta에 보석·골드(이번 도전에서 번 P1 골드)·최고 기록·도감·뽑아 본 스킬을 반영하고 run 저장을 지운다.
 // 두 번 부르면 두 번째는 null
 export function endRun(game, meta) {
   const r = game.run;
@@ -77,7 +90,10 @@ export function endRun(game, meta) {
   const rewards = { ...r.gems, best: bestBonus };
   rewards.gems = rewards.floor + rewards.first + rewards.boss + rewards.flawless + bestBonus;
   const before = unlockedClasses(prevBest); // 도전 중 UI가 meta.best를 올려도 이번 해금을 놓치지 않게
+  const g0 = Number(game.players[0].gold);
+  rewards.gold = Number.isFinite(g0) && g0 > 0 ? Math.floor(g0) : 0; // 골드가 깨져도(NaN/Infinity) 영구 재화는 지켜야 함
   meta.gems += rewards.gems;
+  meta.gold = (meta.gold || 0) + rewards.gold;
   meta.best = Math.max(meta.best, cleared);
   meta.discovered = [...new Set([...meta.discovered, ...game.discovered])];
   meta.seenSpells = SPELL_KEYS.filter(k => meta.seenSpells.includes(k) || game.seenSpells.has(k));
@@ -99,7 +115,7 @@ export function applyOffline(meta, off) {
   return addXp(meta.hero, off.xp);
 }
 
-// 정비 화면(도전 사이)의 영웅 조작. 판매는 도전 중에만(골드가 런 한정이라)
+// 정비 화면(도전 사이) 조작: 마법사 수련 {type:'train', stat} · 영구 강화 {type:'meta', key} · 영웅 클래스·장착·판매(골드는 바로 meta.gold)
 // 특성: {type:'talent', cls, key}(1랭크) · {type:'talentReset', cls}(무료 초기화 — 정비 화면 전용) · {type:'autoTalent', on}
 export function campAct(meta, a) {
   const hero = meta.hero;
@@ -109,7 +125,21 @@ export function campAct(meta, a) {
       if (!unlockedClasses(meta.best).includes(a.cls)) return false;
       hero.cls = a.cls;
       return true;
+    case 'train': return buyTraining(meta, a.stat);
+    case 'meta': return buyMeta(meta, a.key);
     case 'equip': return equipItem(hero, a.itemId);
+    case 'sell': {
+      const v = sellItem(hero, a.itemId);
+      if (v == null) return false;
+      meta.gold += v;
+      return true;
+    }
+    case 'sellRarity': {
+      const v = sellItemsByRarity(hero, a.rarity);
+      if (!v) return false;
+      meta.gold += v;
+      return true;
+    }
     case 'talent': return unlockedClasses(meta.best).includes(a.cls) && allocateTalent(hero, a.cls, a.key);
     case 'talentReset': return resetTalents(hero, a.cls);
     case 'autoTalent': hero.autoTalent = !!a.on; return true;

@@ -1,90 +1,76 @@
-// 자동 강화 / AI 동료 로직 + 헤드리스 테스트용 메타 정책(보석 소비·로드아웃)
-import { UPGRADE_KEYS, upgradeCost, upgradeMax, cannonStats, wallMax, WALL_Y, META_KEYS, metaCost, metaMax, SPELL_SLOTS } from './config.js';
+// AI 동료(비상 스킬) · 자동 진행 봇(카드·영웅) + 헤드리스 테스트용 메타 정책(골드 수련·보석 소비·로드아웃)
+import { WALL_Y, META_KEYS, metaCost, metaMax, SPELL_SLOTS, TRAIN_KEYS, trainCost, trainMax, COLLABS, FUSION_BY_KEY } from './config.js';
 import { act } from './sim.js';
 import { unlockedClasses, autoEquipAll } from './hero.js';
-import { buyMeta, startSlots } from './run.js';
+import { buyMeta, buyTraining, startSlots } from './run.js';
 import { TALENTS, talentNode, canAllocate, allocateTalent, resetTalents } from './talents.js';
 
-// 마법사 1명의 기본 주문 기대 DPS 지표 (부채꼴 추가 발사체는 일부만 맞는다고 가정)
-function power(lv) {
-  const s = cannonStats(lv);
-  return s.dmg * s.rate * (1 + s.crit * (s.critMult - 1)) * (1 + (s.shots - 1) * 0.35);
-}
-
-// 슬롯별 취향: 오른쪽 대포(AI 동료)는 연사·치명·성벽 선호 → 두 대포 빌드가 자연히 갈라짐
-const TASTE = [{}, { rate: 1.3, crit: 1.3, wall: 6 }];
-
-// 골드당 효율이 가장 좋은 업그레이드를 살 수 있는 만큼 구매
-export function autoUpgrade(g, i) {
-  const p = g.players[i], taste = TASTE[i];
-  // 위험도: 직전 스테이지/이번 스테이지 성벽 손실 비율
-  const danger = Math.max(g.lastLoss, g.wall.max > 0 ? g.wallLost / g.wall.max : 0);
-  const wallW = 0.02 + danger * 2.5;
-  for (let n = 0; n < 60; n++) {
-    const base = power(p.lv);
-    const sum = g.players[0].lv.wall + g.players[1].lv.wall;
-    let best = null, bestV = 0, aff = null, affV = 0;
-    for (const k of UPGRADE_KEYS) {
-      const lv = p.lv[k];
-      if (lv >= upgradeMax(k)) continue;
-      const cost = upgradeCost(k, lv);
-      const gain = k === 'wall'
-        ? (wallMax(sum + 1) / wallMax(sum) - 1) * wallW
-        : power({ ...p.lv, [k]: lv + 1 }) / base - 1;
-      const v = gain * (taste[k] ?? 1) / cost;
-      if (v > bestV) { bestV = v; best = k; }
-      if (cost <= p.gold && v > affV) { affV = v; aff = k; }
-    }
-    // 최선이 비싸면 모으되, 절반 이상 효율의 대안은 바로 산다
-    const pick = best && upgradeCost(best, p.lv[best]) <= p.gold ? best : affV >= bestV * 0.5 ? aff : null;
-    if (!pick || !act(g, i, { type: 'upgrade', stat: pick })) break;
-  }
-}
-
-// 판타지 스킬 카드 선택 휴리스틱(자동 강화 · 헤드리스 봇 공용): 융합 완성 > 보유 스킬 강화 > 새 스킬(희귀도) > 각성
-const RARITY_RANK = { common: 0, rare: 1, legend: 2 };
+// 판타지 스킬 카드 선택 휴리스틱(자동 진행 · 헤드리스 봇 공용):
+// 융합 완성(합체) > 협공이 켜지는 스킬 > 보유 스킬(융합 스킬 우선) 강화 > 새 스킬(공격 스킬 우선) > 각성
+const NEW_VALUE = { fireball: 3, lightningStrike: 3, iceLance: 3, judgment: 3, babyDragon: 3, tornado: 2, curseMark: 2, flameBullet: 2,
+  chainLightning: 2, gale: 2, frostWard: 1, holyLight: 1, soulHarvest: 1, stoneGolem: 1 };
 export function pickCard(g, cards) {
   cards = cards || (g.pick && g.pick.cards) || [];
+  const cls = g.hero && g.hero.cls;
+  const collab = k => !!cls && COLLABS.some(c => c.cls === cls && !g.collabs.includes(c.key) && c.spells.includes(k));
   let idx = 0, best = -1;
   cards.forEach((c, i) => {
     const score = c.awaken ? (c.awaken === 'power' ? 2 : 1)
-      : (c.fusionHint ? 100 : 0) + ((g.spells[c.spell] || 0) > 0 ? 10 : 8) + RARITY_RANK[c.rarity];
+      : (c.fusionHint ? 100 : 0) + (collab(c.spell) ? 40 : 0)
+        + ((g.spells[c.spell] || 0) > 0 ? (FUSION_BY_KEY[c.spell] ? 14 : 12) : 8 + (NEW_VALUE[c.spell] || 0));
     if (score > best) { best = score; idx = i; }
   });
   return idx;
 }
 
 // ── 메타 정책(테스트·밸런스 러너용) ──
-// 휴리스틱 가치(레벨이 오를수록 체감) ÷ 비용이 가장 좋은 영구 강화를 살 수 있는 만큼 산다
+// 휴리스틱 가치(레벨이 오를수록 체감) ÷ 비용이 가장 좋은 것을 살 수 있는 만큼 산다
+function buyBest(keys, lvOf, max, cost, value, wallet, buy) {
+  const bought = [];
+  for (;;) {
+    let key = null, bestV = 0;
+    for (const k of keys) {
+      const lv = lvOf(k);
+      if (lv >= max(k) || cost(k, lv) > wallet()) continue;
+      const v = value(k, lv) / cost(k, lv);
+      if (v > bestV) { bestV = v; key = k; }
+    }
+    if (!key || !buy(key)) return bought;
+    bought.push(key);
+  }
+}
+
+// 보석: 편의·구조 강화
 function metaValue(k, lv) {
   switch (k) {
-    case 'power': return 10 * 0.06 / (1 + 0.06 * lv);
-    case 'haste': return 8 * 0.03 / (1 + 0.03 * lv);
-    case 'ward': return 3 * 0.08 / (1 + 0.08 * lv);
-    case 'greed': return 7 * 0.05 / (1 + 0.05 * lv);
-    case 'startGold': return 0.3 / (1 + 0.3 * lv);
+    case 'greed': return 3 * 0.05 / (1 + 0.05 * lv);
     case 'wisdom': return 2 * 0.1 / (1 + 0.1 * lv);
     case 'choice': return 1;
     case 'reroll': return 0.3;
     case 'startSlot': return 0.8;
     case 'revive': return 1.2;
     case 'critBoom': return 0.25 / (1 + 0.2 * lv);
+    case 'awaken': return 1.5 / (1 + 0.15 * lv);
   }
-  return 0; // pickaxe: 방치 보상만
+  return 0.05; // pickaxe: 방치 보상만(남는 보석)
 }
 export function botSpendGems(meta) {
-  const bought = [];
-  for (;;) {
-    let key = null, bestV = 0;
-    for (const k of META_KEYS) {
-      const lv = meta.metaLv[k] | 0;
-      if (lv >= metaMax(k) || metaCost(k, lv) > meta.gems) continue;
-      const v = metaValue(k, lv) / metaCost(k, lv);
-      if (v > bestV) { bestV = v; key = k; }
-    }
-    if (!key || !buyMeta(meta, key)) return bought;
-    bought.push(key);
+  return buyBest(META_KEYS, k => meta.metaLv[k] | 0, metaMax, metaCost, metaValue, () => meta.gems, k => buyMeta(meta, k));
+}
+
+// 골드: 마법사 수련(효과 ÷ 현재 배율)
+function trainValue(k, lv) {
+  switch (k) {
+    case 'atk': return 0.04 / (1 + 0.04 * lv);
+    case 'rate': return 0.025 / (1 + 0.02 * lv);
+    case 'crit': return 0.015 * 1.5 / (1.075 + 0.0225 * lv);
+    case 'multi': return 0.04 / (1 + 0.04 * lv);
+    case 'wall': return 0.02 / (1 + 0.05 * lv);
   }
+  return 0;
+}
+export function botSpendGold(meta) {
+  return buyBest(TRAIN_KEYS, k => meta.training[k] | 0, trainMax, trainCost, trainValue, () => meta.gold, k => buyTraining(meta, k));
 }
 
 // 로드아웃: 지정 클래스(해금 안 됐으면 가장 최근 해금 클래스) + 선호 순서대로 뽑아 본 시작 스킬
