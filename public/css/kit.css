@@ -1,4 +1,4 @@
-/* ═══════════ UI 키트 — 《벽 지키기》 공용 부품 (docs/ART.md §2, §4, §5, §7) ═══════════
+/* ═══════════ UI 키트 — 《대마법사의 용사 키우기》 공용 부품 (docs/ART.md §2, §4, §5, §7) ═══════════
    모든 화면(style.css · hero.css · ui.js · heroui.js)은 이 토큰과 .k-* 부품을 쓴다. 한 벌의 손으로 그린 것처럼.
    - 토큰: 색(--ink, --night-*, --gold-*, …) · 모서리(--r-*) · 이징(--ease-*) · 글꼴(fonts.css 의 --font-*)
    - 부품: k-btn(젤리 버튼) · k-panel(밤 유리) · k-modal/k-ribbon/k-close(로열 프레임) · k-card(속지 카드)

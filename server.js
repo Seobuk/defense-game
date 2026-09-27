@@ -51,4 +51,4 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => console.log(`벽 지키기 개발 서버: http://localhost:${PORT}`));
+server.listen(PORT, () => console.log(`대마법사의 용사 키우기 개발 서버: http://localhost:${PORT}`));

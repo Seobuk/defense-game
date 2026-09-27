@@ -1,4 +1,4 @@
-/* 벽 지키기 — 페이지 셸 · HUD · 패널 · 모달 (재질은 css/kit.css의 .k-* 부품, 여긴 배치만 — docs/ART.md §4) */
+/* 대마법사의 용사 키우기 — 페이지 셸 · HUD · 패널 · 모달 (재질은 css/kit.css의 .k-* 부품, 여긴 배치만 — docs/ART.md §4) */
 :root {
   --bg: #10131c;
   --ol: var(--ink); /* 구 버튼용 8방향 외곽선 색(레거시). --ink는 kit.css :root 가 정의 */

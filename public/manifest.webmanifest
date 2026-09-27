@@ -1,6 +1,6 @@
 {
-  "name": "벽 지키기: 100층 돌파",
-  "short_name": "벽 지키기",
+  "name": "대마법사의 용사 키우기",
+  "short_name": "용사 키우기",
   "description": "마법 성벽 디펜스 로그라이트 — 100층까지 밀어붙이기",
   "start_url": "./index.html",
   "scope": "./",

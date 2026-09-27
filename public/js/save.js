@@ -162,12 +162,12 @@ export function importSave(code) {
   if (!s) return bad('백업 코드를 붙여 넣어 주세요.');
   if (s.length > CODE_MAX) return bad('코드가 너무 길어요. 백업 코드만 붙여 넣어 주세요.');
   const m = CODE_RE.exec(s);
-  if (!m) return bad(/^WD\d/.test(s) ? '코드가 잘렸거나 바뀌었어요. 빠진 글자 없이 전체를 붙여 넣어 주세요.' : '벽 지키기 백업 코드가 아니에요.');
+  if (!m) return bad(/^WD\d/.test(s) ? '코드가 잘렸거나 바뀌었어요. 빠진 글자 없이 전체를 붙여 넣어 주세요.' : '대마법사의 용사 키우기 백업 코드가 아니에요.');
   if (+m[1] > SAVE_VERSION) return bad('더 새로운 버전에서 만든 코드예요. 게임을 업데이트한 뒤 복원해 주세요.');
   if (fnv(m[2]) !== m[3]) return bad('코드가 잘렸거나 바뀌었어요. 빠진 글자 없이 전체를 붙여 넣어 주세요.');
   let raw;
   try { raw = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(unb64url(m[2]))); } catch { return bad('코드를 읽을 수 없어요. 다시 복사해 주세요.'); }
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || !('hero' in raw || 'best' in raw)) return bad('벽 지키기 백업 코드가 아니에요.');
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || !('hero' in raw || 'best' in raw)) return bad('대마법사의 용사 키우기 백업 코드가 아니에요.');
   return { ok: true, data: normalize(raw) };
 }
 

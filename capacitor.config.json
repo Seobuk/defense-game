@@ -1,6 +1,6 @@
 {
   "appId": "io.github.seobuk.defensegame",
-  "appName": "벽 지키기",
+  "appName": "대마법사의 용사 키우기",
   "webDir": "public",
   "backgroundColor": "#10131c",
   "android": {

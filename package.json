@@ -2,7 +2,7 @@
   "name": "defense-game",
   "version": "0.1.0",
   "private": true,
-  "description": "벽 지키기: 100층 돌파 — 협동 캐주얼 웨이브 디펜스",
+  "description": "대마법사의 용사 키우기 — 마법 성벽 디펜스 로그라이트",
   "type": "module",
   "scripts": {
     "start": "node server.js",
