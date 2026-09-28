@@ -4,12 +4,14 @@ import {
   META_KEYS, metaMax, SYN_KEYS, SPEEDS, speedCap, MAX_STAGE, SPELL_KEYS, TRAIN_KEYS, trainMax, goldPerKill,
   offlineGemsPerHour, offlineXpPerMin, OFFLINE_CAP_HOURS,
 } from './config.js';
-import { toInt } from './util.js';
+import { toInt, newId, UUID_RE } from './util.js';
+export { newId }; // 프로필 id · 도전 기록 id(util.js)
 import { newHero, HERO_CLASS_KEYS, MAX_HERO_LV, SLOTS, RARITY_KEYS, SUBSTATS, BAG_SIZE } from './hero.js';
 import { normalizeRun } from './sim.js';
 import { migrateTalents, TALENT_VER, recommendNext, allocateTalent } from './talents.js';
 import { normShop, offlineGoldPerHour, offlineMul } from './shop.js'; // 4차 경제: 돌파·출정 준비 저장 · 방치 골드
 import { lockedRelics } from './relics.js'; // 4차 유물: 보석으로 해금한 유물(meta.relicUnlocked)
+import { normHistory, normLifetime, packRecord, BACKUP_RUNS, HISTORY_MAX } from './records.js'; // v0.1.1 도전 기록 · 평생 통계
 
 export const STORAGE_KEY = 'wallDefense.save.v1'; // 키는 그대로, 안의 스키마가 v:3
 export const SAVE_VERSION = 3;
@@ -75,6 +77,8 @@ export function normalize(d) {
       // 기존 저장은 autoNext 값을 따른다. 새 저장은 ON(카드는 어차피 직접 고르므로)
       autoNext: bool(s.autoNext, true),
       autoPick: bool(s.autoPick, false), // 카드 화면의 '자동 선택'(자동 진행과 별개, 기본 OFF) — sim players[0].autoPick
+      // 웹 영구 저장소 요청 결과(main.js, 한 번만 요청): 'on' 허용 · 'off' 거부 · 'na' 미지원 · '' 아직(APK는 부르지 않음)
+      storage: ['on', 'off', 'na'].includes(s.storage) ? s.storage : '',
     },
     hero: hero(d.hero),
     discovered: keys(d.discovered, SYN_KEYS),
@@ -89,6 +93,9 @@ export function normalize(d) {
     ...normShop(d), // 4차 경제(shop.js): trainBreak · gemBreak · prep — 없던 저장은 0/false
     relicUnlocked: keys(d.relicUnlocked, lockedRelics({})), // 4차 유물: 해금한 유물(시작 풀 8종은 늘 열려 있어 빼고 저장)
   };
+  // v0.1.1 도전 기록(records.js): 없던 저장 → 빈 목록, 평생 통계는 runs·프로필·마지막 접속으로 시드
+  out.history = normHistory(d.history, HISTORY_MAX, out.profile.id);
+  out.lifetime = normLifetime(d.lifetime, { runs: out.runs, createdAt: out.profile.createdAt, lastSeen: out.lastSeen });
   // 특성 개편 환불 + 진행 중 도전: 그 도전의 클래스는 추천 빌드로 한 번 다시 찍어 전력을 지킨다(정비에서 무료 초기화 가능)
   const c = out.run?.loadout?.cls;
   if (c && out.hero.talentNotice && obj(d.hero).talentVer !== TALENT_VER)
@@ -99,7 +106,6 @@ export function normalize(d) {
 // ── 프로필(닉네임) ── 나중에 서버 계정과 id로 잇는다(지금은 서버·로그인 없음). id = 프로필 UUID(기기에서 처음 한 번 만들고, 백업 코드로 옮기면 따라간다)
 export const NAME_MIN = 2, NAME_MAX = 10;
 const NAME_RE = /^[가-힣A-Za-z0-9]+$/;
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // → { ok, name(앞뒤 공백 자름), error(한국어) }
 export function checkName(v) {
   const name = typeof v === 'string' ? v.normalize('NFC').trim() : '', n = [...name].length; // NFC: 풀어 쓴(NFD) 한글도 받는다
@@ -109,15 +115,6 @@ export function checkName(v) {
     : n < NAME_MIN ? `${NAME_MIN}자 이상 적어 주세요`
     : n > NAME_MAX ? `${NAME_MAX}자까지 쓸 수 있어요` : '';
   return { ok: !error, name, error };
-}
-export function newId() {
-  const c = globalThis.crypto;
-  if (typeof c?.randomUUID === 'function') return c.randomUUID();
-  const b = new Uint8Array(16); // 대체 구현(RFC 4122 v4)
-  if (typeof c?.getRandomValues === 'function') c.getRandomValues(b); else for (let i = 0; i < 16; i++) b[i] = Math.random() * 256 | 0;
-  b[6] = (b[6] & 15) | 64; b[8] = (b[8] & 63) | 128;
-  const h = [...b].map(x => x.toString(16).padStart(2, '0')).join('');
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 function profile(p) {
   p = obj(p);
@@ -192,16 +189,23 @@ export function save(data) {
 }
 
 // 마지막으로 받은 데이터를 지금 기록 (lastSeen 갱신 포함)
+// 용량 초과면 도전 기록(history)만 오래된 절반씩 버리고 다시 — 게임 저장은 늘 한 덩어리(setItem 실패 = 이전 저장 그대로)
+const isQuota = e => e?.name === 'QuotaExceededError' || e?.name === 'NS_ERROR_DOM_QUOTA_REACHED' || e?.code === 22 || e?.code === 1014;
 export function flush() {
   clearTimeout(timer);
   timer = 0;
   if (!last) return false;
-  try {
-    last.lastSeen = Date.now();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(last));
-    return true;
-  } catch {
-    return false; // 용량 초과 / 저장소 막힘: 게임은 계속
+  last.lastSeen = Date.now();
+  const h0 = last.history; // 끝내 실패하면 메모리의 기록도 되돌린다(다음 저장이 빈 목록으로 덮지 않게)
+  for (;;) {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(last));
+      return true;
+    } catch (e) {
+      const h = last.history;
+      if (!isQuota(e) || !Array.isArray(h) || !h.length) { last.history = h0; return false; } // 저장소 막힘 · 기록을 다 비워도 안 들어감: 게임은 계속
+      last.history = h.slice(Math.ceil(h.length / 2));
+    }
   }
 }
 
@@ -233,7 +237,9 @@ const unb64url = s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/
 
 export function exportSave(data) {
   try {
-    const body = b64url(new TextEncoder().encode(JSON.stringify(normalize(data))));
+    const d = normalize(data);
+    d.history = d.history.slice(-BACKUP_RUNS).map(r => packRecord(r, d.profile.id)); // 메신저로 보낼 길이로: 평생 통계 + 최근 20건만(자리 배열)
+    const body = b64url(new TextEncoder().encode(JSON.stringify(d)));
     return `WD${SAVE_VERSION}-${body}-${fnv(body)}`;
   } catch {
     return '';
@@ -255,6 +261,7 @@ export function importSave(code, current = null) {
   try { raw = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(unb64url(m[2]))); } catch { return bad('코드를 읽을 수 없어요. 다시 복사해 주세요.'); }
   if (!raw || typeof raw !== 'object' || Array.isArray(raw) || !('hero' in raw || 'best' in raw)) return bad('대마법사의 용사 키우기 백업 코드가 아니에요.');
   const data = normalize(raw);
+  if (data.run?.log) data.run.log.id = newId(); // 도전 중 백업을 복원한 판은 갈래(fork): 원래 판과 다른 기록 id(서버 멱등 키가 겹치지 않게)
   // 프로필 없는·id가 깨진 코드: 이 기기의 프로필(id·만든 시각·이름)을 잇는다. 코드에 올바른 이름이 있으면 그 이름
   if (!UUID_RE.test(String(obj(raw.profile).id)) && current?.profile?.id) data.profile = { ...profile(current.profile), ...(data.profile.name ? { name: data.profile.name } : {}) };
   return { ok: true, data };

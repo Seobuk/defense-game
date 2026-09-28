@@ -8,7 +8,7 @@ import { serializeRun } from '../public/js/sim.js';
 
 const zeroMeta = Object.fromEntries(META_KEYS.map(k => [k, 0]));
 const zeroTrain = Object.fromEntries(TRAIN_KEYS.map(k => [k, 0]));
-const SETTINGS0 = { dmgNumbers: 'full', sound: true, shake: true, speed: 1, autoNext: true, autoPick: false }; // 새 저장 = 자동 진행 ON(카드는 늘 직접) · 카드 자동 선택 OFF
+const SETTINGS0 = { dmgNumbers: 'full', sound: true, shake: true, speed: 1, autoNext: true, autoPick: false, storage: '' }; // 새 저장 = 자동 진행 ON(카드는 늘 직접) · 카드 자동 선택 OFF
 const oldStartGoldGems = lv => { let s = 0; for (let i = 0; i < lv; i++) s += Math.ceil(12 * 1.25 ** i); return s; };
 
 // 깨진 입력 → 기본값, 절대 throw 없음
@@ -49,7 +49,7 @@ assert.equal(v1.gems, 40 + 12 * MIGRATE_GEMS_PER_BEST + oldStartGoldGems(4));
 assert.equal(v1.gold, 0, 'v1 인게임 골드(옛 경제)는 버림');
 assert.deepEqual(v1.metaLv, { ...zeroMeta, pickaxe: 20, critBoom: 2 });
 assert.deepEqual(v1.training, zeroTrain);
-assert.deepEqual(v1.settings, { dmgNumbers: 'simple', sound: false, shake: true, speed: 2, autoNext: false, autoPick: false });
+assert.deepEqual(v1.settings, { dmgNumbers: 'simple', sound: false, shake: true, speed: 2, autoNext: false, autoPick: false, storage: '' });
 assert.deepEqual(v1.discovered, ['flame']);
 assert.equal(v1.hero.cls, 'ranger');
 assert.equal(v1.hero.level, 30);
@@ -190,8 +190,13 @@ assert.ok(computeOffline({ ...base, metaLv: { pickaxe: 10 } }, 1_000_000 + 3 * 8
   assert.match(code, new RegExp(`^WD${SAVE_VERSION}-[A-Za-z0-9_-]+-[0-9a-f]{8}$`));
   const back = importSave(' \n' + code.slice(0, 20) + '\n ' + code.slice(20) + '\n'); // 메신저가 끊어 붙인 코드
   assert.ok(back.ok);
-  assert.deepEqual(back.data, normalize(JSON.parse(JSON.stringify(src))));
-  assert.equal(exportSave(back.data), code, '다시 백업해도 같은 코드');
+  const exp = normalize(JSON.parse(JSON.stringify(src)));
+  assert.notEqual(back.data.run.log.id, exp.run.log.id, '도전 중 코드 → 복원한 판은 새 기록 id(갈래)');
+  exp.run.log.id = back.data.run.log.id;
+  assert.deepEqual(back.data, exp);
+  assert.equal(exportSave(back.data), exportSave(exp), '다시 백업해도 같은 코드(판 id만 새로)');
+  const idle = { ...src, run: null };
+  assert.equal(exportSave(importSave(exportSave(idle)).data), exportSave(idle), '도전 없는 저장은 코드까지 그대로');
   const flip = code.slice(0, 10) + (code[10] === 'A' ? 'B' : 'A') + code.slice(11);
   for (const bad of [null, '', 'hello', code.slice(0, -3), flip, 'WD9-' + code.slice(4), '{"best":3}']) {
     const r = importSave(bad);

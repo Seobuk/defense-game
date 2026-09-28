@@ -112,6 +112,7 @@ export function createCamp(root, H = {}) {
       <button class="cp-tab" data-go="talent" role="tab" aria-selected="false">${icon('crit')}<span>특성</span><i class="cp-dot" hidden></i></button>
       <button class="cp-tab" data-go="shop" role="tab" aria-selected="false">${icon('shop')}<span>상점</span><i class="cp-dot" hidden></i></button>
       <button class="cp-tab" data-go="codex">${icon('codex')}<span>도감</span><i class="cp-dot" hidden></i></button>
+      <button class="cp-tab" data-go="records">${icon('trophy')}<span>기록</span></button>
     </nav>
     <div class="cp-ov" hidden>
       <div class="k-modal dark cp-pick" role="dialog" aria-modal="true" aria-labelledby="cp-pick-h">
@@ -159,7 +160,7 @@ export function createCamp(root, H = {}) {
   const portrait = (cls, px, lockedLook) => heroPortraitURL(cls, lockedLook ? 0 : heroTier(meta.hero.level), lockedLook ? null : meta.hero.equip, px);
 
   // ── 탭 ──
-  for (const b of $$('.cp-tab')) on(b, 'click', () => (b.dataset.go === 'codex' ? H.onOpenCodex?.() : setPane(b.dataset.go)));
+  for (const b of $$('.cp-tab')) on(b, 'click', () => (b.dataset.go === 'codex' ? H.onOpenCodex?.() : b.dataset.go === 'records' ? H.onOpenRecords?.(meta) : setPane(b.dataset.go)));
   function setPane(p) {
     pane = p;
     for (const b of $$('.cp-tab[role="tab"]')) b.setAttribute('aria-selected', String(b.dataset.go === p));

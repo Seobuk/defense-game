@@ -17,6 +17,7 @@
 <link rel="stylesheet" href="css/relics.css">
 <link rel="stylesheet" href="css/dungeon.css">
 <link rel="stylesheet" href="css/mutation.css">
+<link rel="stylesheet" href="css/records.css">
 <!-- iPhone/웹 PWA (docs/pwa-head.html). Capacitor APK에선 js/pwa.js가 스스로 비활성 -->
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="mobile-web-app-capable" content="yes">
@@ -250,7 +251,8 @@
           <div class="set-row"><span class="set-l"><img class="k-ico set-ico" src="assets/icons/settings.svg" alt="">버전 <b id="set-ver" class="k-badge ver-badge">-</b></span><button id="btn-check-update" class="k-btn s secondary">업데이트 확인</button></div>
           <div class="set-row"><span class="set-l"><img class="k-ico set-ico" src="assets/icons/chest.svg" alt="">저장 백업</span><button id="btn-backup" class="k-btn s secondary">코드 복사</button></div>
           <div class="set-row"><span class="set-l"><img class="k-ico set-ico" src="assets/icons/reroll.svg" alt="">저장 복원</span><button id="btn-restore" class="k-btn s neutral">코드 입력</button></div>
-          <p class="set-help">앱을 지우거나 기기를 바꾸면(안드로이드 ↔ 아이폰) 기록이 사라져요. 백업 코드를 메모에 보관해 두면 어디서든 이어서 할 수 있어요.</p>
+          <div class="set-row set-store-row"><span class="set-l"><img class="k-ico set-ico" src="assets/icons/wall.svg" alt="">기록 보호</span><b id="set-store" class="set-store">브라우저 기본</b></div>
+          <p class="set-help" id="set-help">앱을 지우거나 기기를 바꾸면(안드로이드 ↔ 아이폰) 기록이 사라져요. 백업 코드를 메모에 보관해 두면 어디서든 이어서 할 수 있어요.</p>
           <div class="set-row reset">
             <button id="btn-reset" class="k-btn s danger">저장 데이터 초기화</button>
             <div id="reset-confirm" hidden>

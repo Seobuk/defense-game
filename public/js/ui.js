@@ -24,6 +24,7 @@ import { createDungeonUI } from './dungeonui.js'; // 4차 던전(지역) 특성:
 import { mutOptionsHTML, mutCardLabel, mutBadgeHTML, mutName, mutTipHTML, upgradeHTML, createMutSheet } from './mutui.js'; // 4차 변이: 카드 A/B · 칸 배지 · 강화 수치 줄
 import { mutChoice } from './mutations.js';
 import { createNameUI } from './nameui.js'; // 4차 닉네임 입력 창
+import { createRecordUI } from './recordui.js'; // v0.1.1 도전 기록 화면
 
 const SYN_BY_KEY = Object.fromEntries(SYNERGIES.map(s => [s.key, s]));
 const KIND_TAG = { cannon: '마법', duo: '협동', event: '이벤트' };
@@ -170,7 +171,7 @@ export function createUI(root, handlers = {}) {
     'btn-open-settings', 'upd-progress', 'upd-progress-text', 'upd-progress-fill',
     'm-result', 'res-art', 'res-rb', 'res-h', 'res-floor', 'res-floor-l', 'res-best', 'res-best-txt', 'res-sub', 'res-boss', 'res-time', 'res-hero',
     'res-share', 'res-bar', 'res-legend', 'res-gem-list', 'res-gem-total', 'res-spells-card', 'res-spells', 'res-unlock', 'btn-res-done',
-    'res-gold-card', 'res-gold', 'res-gold-total', 'res-combos-card', 'res-combos', 'res-who', 'res-nick', 'res-no', 'set-nick', 'btn-nick',
+    'res-gold-card', 'res-gold', 'res-gold-total', 'res-combos-card', 'res-combos', 'res-who', 'res-nick', 'res-no', 'set-nick', 'btn-nick', 'set-store', 'set-help',
     'cont-por', 'cont-stage', 'cont-who', 'cont-spells', 'cont-gems', 'cont-main', 'cont-confirm', 'cont-warn', 'btn-cont-go', 'btn-cont-quit', 'btn-cont-no', 'btn-cont-yes',
     'ab-txt', 'btn-ab-yes',
   ]) {
@@ -248,6 +249,7 @@ export function createUI(root, handlers = {}) {
   }
   const isOpen = id => stack.some(m => m.el.id === id);
   const nameUI = createNameUI(root, { openModal, closeModal, isOpen }); // 필수 모드는 닫기·뒤로 가기·배경 탭 불가
+  const records = createRecordUI(root, { openModal, closeModal }); // v0.1.1 기록 화면(정비 화면 '기록' 탭)
   // 모달 뒤는 조작·포커스 불가. 타이틀·정비 화면이 떠 있으면 전장·하단 패널도 잠금
   function syncInert() {
     const modal = stack.length > 0, cover = !E.title.hidden || camp.isOpen();
@@ -1040,6 +1042,7 @@ export function createUI(root, handlers = {}) {
     onStartRun: lo => H.onStartRun?.(lo),
     onOpenHero: o => H.onOpenHero?.(o),
     onOpenCodex: () => openCodex(),
+    onOpenRecords: m => records.open(m), // m = 정비 화면이 보고 있는 저장 객체(history · lifetime)
     onOpenSettings: () => openSettings(),
     codexNew: () => fresh.size > 0,
     toast: (m, i) => toast(m, i),
@@ -1389,6 +1392,13 @@ export function createUI(root, handlers = {}) {
     for (const b of segBtns) attr(b, 'aria-checked', String(b.dataset.dmg === (s.dmgNumbers || 'full')));
     for (const b of switches) attr(b, 'aria-checked', String(!!s[b.dataset.set]));
     txt(E['set-nick'], meta.profile?.name || '');
+    // v0.1.1 저장 보호: 웹은 영구 저장소 요청 결과(main.js protectStorage), APK는 앱 저장소. 웹에서 못 받았으면 백업 안내를 조금 더 강조(팝업 없음)
+    const on = !meta.native && s.storage === 'on', weak = !meta.native && (s.storage === 'off' || s.storage === 'na');
+    txt(E['set-store'], meta.native ? '앱 저장소' : on ? '켜짐' : '브라우저 기본');
+    E['set-store'].classList.toggle('on', on || !!meta.native);
+    E['set-help'].classList.toggle('warn', weak);
+    txt(E['set-help'], weak ? '이 브라우저는 저장 공간이 부족하면 기록을 지울 수 있어요. 백업 코드를 메모에 꼭 보관해 두세요 — 기기를 바꿔도(안드로이드 ↔ 아이폰) 이어서 할 수 있어요.'
+      : '앱을 지우거나 기기를 바꾸면(안드로이드 ↔ 아이폰) 기록이 사라져요. 백업 코드를 메모에 보관해 두면 어디서든 이어서 할 수 있어요.');
   }
   on(E['btn-nick'], 'click', () => nameUI.ask({ current: meta.profile?.name }, n => {
     H.onRename?.(n);

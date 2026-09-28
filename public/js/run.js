@@ -7,6 +7,7 @@ import { unlockedClasses, addXp, equipItem, autoEquipAll, sellItem, sellItemsByR
 import { allocateTalent, resetTalents, recommendNext } from './talents.js';
 import { runBonus, takePrep, buyTrainBreak, buyGemBreak, togglePrep, openBox, unlockRelic } from './shop.js'; // 4차 경제 싱크
 import { relicPool } from './relics.js'; // 4차 유물
+import { runRecord, addRecord } from './records.js'; // v0.1.1 도전 기록
 
 export { serializeRun, normalizeRun };
 
@@ -69,7 +70,7 @@ export function newRun(meta, loadout, seed) {
   const game = createGame({
     ...common(meta, seed), stage: 1, startCards: START_CARDS + (prep.card ? 1 : 0), bonusForgets: prep.forget ? 1 : 0,
     players: players(meta, { gold: 0 }, { gold: 0 }),
-    run: { spells: Object.fromEntries(lo.startSpells.map(k => [k, 1])), startBest: meta.best, loadout: lo, prep },
+    run: { spells: Object.fromEntries(lo.startSpells.map(k => [k, 1])), startBest: meta.best, loadout: lo, prep, log: { t0: Date.now() } }, // log.id = 새 UUID(sim normalizeRun)
   });
   meta.run = game.run.checkpoint;
   return game;
@@ -86,8 +87,8 @@ export function restoreRun(meta, saved = meta.run, seed) {
 }
 
 // 도전 종료 정산(성벽 붕괴·100층 돌파·포기 모두). meta에 보석·골드(이번 도전에서 번 P1 골드)·최고 기록·도감·뽑아 본 스킬을 반영하고 run 저장을 지운다.
-// 두 번 부르면 두 번째는 null
-export function endRun(game, meta) {
+// 두 번 부르면 두 번째는 null. 도전 기록 한 건 + 평생 통계도 여기서(records.js) — ctx = { app: '0.1.1-web', now? }
+export function endRun(game, meta, ctx = {}) {
   const r = game.run;
   if (r.ended) return null;
   r.ended = true;
@@ -105,7 +106,7 @@ export function endRun(game, meta) {
   meta.seenSpells = SPELL_KEYS.filter(k => meta.seenSpells.includes(k) || game.seenSpells.has(k));
   meta.runs = (meta.runs | 0) + 1;
   meta.run = null;
-  return {
+  const sum = {
     stageReached: game.stage, floorsCleared: cleared, victory: r.victory, abandoned: !r.victory && game.phase !== 'defeat', // 도전 포기
     prevBest, best: meta.best, newBest: cleared > prevBest,
     bossesKilled: r.bosses, time: r.time, rewards,
@@ -114,6 +115,8 @@ export function endRun(game, meta) {
     newClasses: unlockedClasses(meta.best).filter(c => !before.includes(c)),
     name: meta.profile?.name || '', runNo: meta.runs, // 결과 화면 '〈닉네임〉의 N번째 도전'
   };
+  addRecord(meta, runRecord(game, meta, sum, ctx)); // run = null과 같은 저장(setItem 한 번)에 들어간다
+  return sum;
 }
 
 // 오프라인 보상 지급(save.js computeOffline 결과). 오른 영웅 레벨 목록 반환

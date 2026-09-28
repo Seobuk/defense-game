@@ -45,3 +45,15 @@ export function toInt(v, lo, hi) {
   v = Math.floor(Number(v));
   return Number.isFinite(v) ? clamp(v, lo, hi) : lo;
 }
+
+// UUID v4(프로필 id · 도전 기록 id — 나중에 서버에 올릴 때 중복을 막는 키). crypto.randomUUID 없으면 대체 구현
+export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export function newId() {
+  const c = globalThis.crypto;
+  if (typeof c?.randomUUID === 'function') return c.randomUUID();
+  const b = new Uint8Array(16); // 대체 구현(RFC 4122 v4)
+  if (typeof c?.getRandomValues === 'function') c.getRandomValues(b); else for (let i = 0; i < 16; i++) b[i] = Math.random() * 256 | 0;
+  b[6] = (b[6] & 15) | 64; b[8] = (b[8] & 63) | 128;
+  const h = [...b].map(x => x.toString(16).padStart(2, '0')).join('');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}

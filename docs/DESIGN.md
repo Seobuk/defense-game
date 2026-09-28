@@ -1019,3 +1019,29 @@ botShop(meta, rng, spent?, phase 'pre'|'post'|'all')                       // �
 - 백업 코드에 profile 포함(왕복 동일). 프로필 없는·id가 깨진 코드 → 복원은 되고 이 기기의 `id·createdAt·이름`을 이어 쓴다(코드에 올바른 이름이 있으면 그 이름, 둘 다 없으면 다시 묻는다 — `importSave(code, current)`). 저장 초기화도 `id`는 유지하고 이름만 비운 뒤 바로 저장한다.
 - 표시(모두 textContent / 캔버스 fillText): 정비 화면 상단(`.cp-nick`, 말줄임) · 결과 화면 '〈닉네임〉의 N번째 도전'(`endRun` 요약 `name`, `runNo`) · 성벽 위 마법사 이름표(`players[0].name`, 솔로에도 표시) · 설정 줄.
 - 테스트: `test/save.test.js` 끝(검증 규칙 · 추천 이름 · UUID 대체 구현 · 옛 저장 이전 · 저장/백업 왕복 · 프로필 없는 옛 코드).
+
+### v0.1.1 도전 기록·저장 보호 계약 — 서버(추후, Supabase류) 대비 기기 안에 쌓아 두기만. **네트워크 전송 없음**(서버·로그인·업로드 코드 없음)
+- 파일: `public/js/records.js`(DOM 없음 — 정규화·추가·평생 통계·백업 축약) · `recordui.js`(기록 화면) · `css/records.css` · `test/records.test.js`. 저장 키·`SAVE_VERSION`(3)·백업 코드 접두 `WD3`는 그대로(새 필드는 normalize가 채운다 → v0.1.0 앱도 새 코드를 읽는다, 기록만 버림).
+- **도전 중 누적값** `run.log`(sim.js — 체크포인트·이어하기와 함께 저장): `{ id, t0, ps, k, cb, sp, ap }` = 도전 UUID · 시작 ms(모르면 0) · 실제 플레이 초 · 처치 · 최고 콤보 · 최대 배속 · 카드 자동 선택을 켰었나. `id`는 `newRun`(없으면 normalizeRun)이 한 번 만들고 이어하기로 따라간다. 단 백업 코드 복원(`importSave`)은 진행 중인 판에 **새 id**를 준다(갈래 — 같은 코드를 두 기기에 풀거나 끝난 판을 다시 풀어도 기록 id가 겹치지 않게). `k`는 체크포인트 기준(다시 하는 층을 두 번 세지 않음), `ps`·`sp`·`ap`는 main.js가 매 프레임 올리고 `syncData`가 체크포인트에 덮어쓴다. `ps` = 도전 화면에서 흐른 실제 초(배속 곱하기 전) — 메뉴·영웅 화면·모달·백그라운드(rAF 멈춤)는 빼고 카드 고르는 시간은 넣는다.
+- **기록 한 건** `history[]`(오래된 → 최근, **최대 300건**, 넘치면 오래된 것부터) — `endRun(game, meta, { app })`이 run = null과 **같은 setItem 한 번**에 남긴다(같은 id는 한 번만). 축약 키(스키마 `v: 1`):
+
+  | 키 | 뜻 | 키 | 뜻 |
+  |---|---|---|---|
+  | `v` | 기록 스키마 버전(1) | `id` | 도전 UUID — **서버 멱등 키** |
+  | `pid` | 프로필 id(profile.id) | `app` | 앱 버전-플랫폼 `'0.1.1-web'`·`'0.1.1-apk'`(모르면 `'web'`) |
+  | `t0`·`t1` | 시작·끝 ms(모르면 0) | `ps` | 실제 플레이 초 |
+  | `fl`·`cl` | 도달 층·돌파 층 | `res` | `'fall'` 성벽 붕괴 · `'abandon'` 포기 · `'clear100'` 100층 돌파 |
+  | `cls`·`hl` | 클래스·영웅 레벨(끝날 때) | `tm`·`tc` | 마스터한 특성 갈래 키[] · 궁극 특성(capstone) 키 |
+  | `sk` | 최종 스킬 `[{k, lv, m?(변이), p?[재료 둘](융합)}]` | `rl`·`fg` | 유물 키[](고른 순서) · 망각 사용 수 |
+  | `rg` | 도달 지역 키(dungeons REGION_KEYS) | `go`·`ge` | 이번 도전 골드·보석 |
+  | `k`·`bk`·`cb` | 처치 · 보스(네임드) 처치 · 최고 콤보 | `sp`·`ap` | 최대 배속 · 자동 선택 사용 |
+
+  키 값(스킬·유물·특성)은 모양(`/^[A-Za-z][A-Za-z0-9_]{0,31}$/`, `Object.prototype` 멤버 이름 제외)만 검사해 새 버전 키도 보존하고, 화면은 표에 있는 것만 그린다. 한 건 ≈ 400~550B → 300건 ≈ 150KB.
+- **평생 통계** `lifetime`(`v: 1`): `{ playSec, runs, kills, bossKills, byCls: { [cls]: { runs, best(돌파 층) } }, ends[10](도달 층 10층 구간별 종료 횟수 1~10…91~100), firstAt, lastAt }`. 기록이 잘려도 계속 누적. **이전**: 없던 저장은 `runs = 저장의 runs`, 도전이 있으면 `firstAt = profile.createdAt`, `lastAt = lastSeen`, 나머지 0(처치·클래스별은 알 수 없음).
+- **용량**: `save.js flush`가 `QuotaExceededError`면 `history`만 오래된 절반씩 버리고 다시 쓴다(끝까지 안 되면 false — `setItem` 실패는 이전 저장을 건드리지 않고, 메모리의 `history`도 원래대로 되돌린다). 저장소 막힘(SecurityError 등)은 기록을 버리지 않는다.
+- **백업 코드**: 평생 통계 + **최근 20건**만, 기록은 자리 배열(`records.js REC_FIELDS` 순서 — 바꾸지 말고 뒤에만 추가, `pid`가 코드 프로필과 같으면 `''`, `sk = [[k, lv, m|0, p?]]`, `ap = 0|1`)로 줄인다. 복원은 배열·객체 모두 받고 빈 `pid`는 코드의 프로필 id로 채운다. 옛 코드(기록 없음)도 복원(빈 목록 + 시드). 길이: 테스트(얇은 기록) 새 저장 1,435자 → 20건 7,652자(자리 배열 없이 12,799자). 실제 오래 한 저장(가방 30칸, 기록마다 스킬 6·변이·융합·유물 6·특성) 11,363자 → 22,437자(한 건 ≈ 554자) — `CODE_MAX`(40만)보다 훨씬 짧지만 메신저로는 약 2배. 복원은 기기의 기록을 코드 것으로 **바꾼다**(합치지 않음 — 평생 통계와 어긋나지 않게).
+- **기록 화면**: 정비 화면 하단 탭 **'기록'**(도감 옆) → `#m-records`(최고 기록 + 주력 영웅 · 총 플레이/도전/처치/보스 처치 · 종료 층 분포 · 최근 도전 목록: 날짜·층·클래스 초상·주요 스킬 3~4·결과) (목록은 30건씩 — '더 보기'로 이어 붙임, 줄마다 스킬 그림 data URL이 커서) → 줄을 누르면 `#m-record` 상세(층·시간·처치·콤보·골드·보석·스킬(변이·융합 재료)·유물·특성·망각·배속·버전). 기록 값은 백업 코드에서 올 수 있으니 이름은 표로만 찾고 숫자는 정규화된 정수만, 닉네임은 기록에 없다.
+- **저장 보호(웹 PWA만)**: main.js `protectStorage` — `settings.storage`가 비어 있으면(첫 실행) `navigator.storage.persist()`를 요청, 그 뒤엔 `persisted()`로 상태만 다시 읽는다. 단 아직 못 받았고 홈 화면 앱(`display-mode: standalone`·iOS `navigator.standalone`)으로 켰으면 매번 다시 요청(크롬은 설치 후에야 허락, 크로미움·웹킷은 권한 창 없음). `settings.storage`는 이 기기 값 — 백업 복원(main.js `onRestoreSave`)은 코드 값 대신 지금 기기 값을 유지. 결과 `'on' | 'off' | 'na'`(미지원·오류)를 설정에 조용히 저장, 팝업 없음. Capacitor APK는 부르지 않는다. 설정 줄 '기록 보호: 켜짐 / 브라우저 기본 / 앱 저장소(APK)', 웹에서 `off`·`na`면 백업 안내 문구를 붉은 상자로 강조.
+- **서버 매핑 메모(추후)**: `profiles(id = profile.id, name, created_at, …)` · `saves(profile_id, data jsonb(저장 객체 — history 제외), lifetime jsonb, updated_at)` · `runs(id uuid primary key = 기록 id, profile_id = pid, app, started_at = t0, ended_at = t1, play_sec = ps, floor = fl, cleared = cl, result = res, cls, hero_lv = hl, skills jsonb = sk, relics = rl, talents = {tm, tc}, region = rg, gold = go, gems = ge, kills = k, boss_kills = bk, best_combo = cb, speed_max = sp, auto_pick = ap, v)`. 올릴 때 `insert … on conflict (id) do nothing` → 같은 기록을 여러 번 올려도(두 기기에 같은 백업 복원 포함) 한 번만. 평생 통계는 서버에서 runs로 다시 계산할 수 있지만 300건 밖의 옛 도전은 `lifetime`에만 남으니 함께 올린다 — **저장(save)마다 스냅숏(마지막 것이 이김)으로 두고 기기끼리 더하지 않는다**(백업 코드가 평생 통계를 통째로 옮기므로 더하면 두 번 센다).
+- **개인정보 메모**: 지금은 기기 밖으로 나가는 데이터가 없다(백업 코드는 사용자가 직접 옮김). 서버를 붙일 때는 개인정보 처리방침 · 수집 항목(프로필 id·닉네임·플레이 기록) 동의 화면 · 탈퇴/삭제 경로가 필요하다.
+- 테스트 `test/records.test.js`: 추가·잘라내기(300) · 평생 통계 누적 · 붕괴/포기/100층 · 융합 재료·변이·유물 · 이어하기(id·처치·시간) · 이전 저장·옛 체크포인트·옛 코드 · 백업 왕복(20건 + 평생 통계, 길이 출력) · 용량 초과에서 게임 저장 보존 · 저장소 막힘.

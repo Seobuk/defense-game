@@ -10,7 +10,7 @@ import {
   COLLABS, COLLAB_BY_KEY, COLLAB_BRANCH_RANKS, COLLAB_FX, collabOn, collabPow, FRONT_Y, ENTRY_RUSH, inReach,
 } from './config.js';
 import { themeOf, ENEMY_TYPES, BOSSES, ELITE, buildStage, enemyHp, enemyDmg, enemySpeedMul, bossHpMul, DENSITY } from './stages.js';
-import { mulberry32, clamp, toInt } from './util.js';
+import { mulberry32, clamp, toInt, newId, UUID_RE } from './util.js';
 import { autoSkill, autoHero, pickCard } from './bot.js';
 import { initSpells, updateSpells, onSpellHit, onKill as onSpellKill, frostSlowMul, spellRateMul, curseMul, golemAbsorb } from './spells.js';
 import {
@@ -89,6 +89,12 @@ const wallCap = g => wallMax(g.stage, Math.max(...g.players.slice(0, mages(g)).m
 // ── 런(도전) 상태 ──
 // 런 필드(저장·이어하기 대상). spells/rerollLeft 는 game 최상위(g.spells, g.rerollLeft)에 둔다
 const GEM_KEYS = ['floor', 'first', 'boss', 'flawless'];
+// v0.1.1 도전 기록용 누적값(records.js가 도전이 끝날 때 한 건으로 요약). id = 도전 UUID(서버 멱등 키) · t0 = 시작 시각(ms, 모르면 0)
+// ps = 실제 플레이 초(main.js — 배속 전·일시정지 제외) · k = 처치 · cb = 최고 콤보 · sp = 쓴 최대 배속 · ap = 카드 자동 선택을 켰었나
+const normRunLog = l => ({
+  id: typeof l?.id === 'string' && UUID_RE.test(l.id) ? l.id.toLowerCase() : newId(), t0: posNum(l?.t0), ps: posNum(l?.ps),
+  k: toInt(l?.k, 0, 1e9), cb: toInt(l?.cb, 0, 1e7), sp: toInt(l?.sp, 1, 9), ap: !!l?.ap,
+});
 
 // 신뢰할 수 없는 런 저장값 → 올바른 모양(절대 throw 없음). serializeRun()의 역
 export function normalizeRun(raw) {
@@ -132,6 +138,7 @@ export function normalizeRun(raw) {
     startBest: toInt(r.startBest, 0, MAX_STAGE),
     ...normalizeRelicRun(r), // 유물: relics · relicPick · forgetLeft · forgets · relicRevives
     prep: normRunPrep(r.prep), // 출정 준비(shop.js) {card, rare, ward, forget, wardUsed}
+    log: normRunLog(r.log), // 도전 기록 누적값(옛 저장엔 없음 → 새 id, 시작 시각 모름)
     loadout: {
       cls: typeof lo.cls === 'string' && Object.hasOwn(HERO_CLASSES, lo.cls) ? lo.cls : null,
       startSpells: [...new Set(Array.isArray(lo.startSpells) ? lo.startSpells : [])].filter(k => SPELL_KEYS.includes(k)).slice(0, SPELL_SLOTS),
@@ -152,6 +159,7 @@ export function serializeRun(g) {
     time: r.time, startBest: r.startBest,
     ...relicRunSave(g), // 유물
     prep: { ...r.prep }, // 출정 준비
+    log: { ...r.log, cb: Math.max(r.log.cb, g.combo.best) }, // 도전 기록 누적값
     loadout: { cls: r.loadout.cls, startSpells: [...r.loadout.startSpells] },
   };
 }
@@ -229,6 +237,7 @@ export function createGame(opts = {}) {
       over: false, victory: false, ended: false, checkpoint: null,
       forgets: run.forgets, relicRevives: run.relicRevives, relicCards: run.relicCards, // 유물: 쓴 망각 수 · 쓴 불사조 부활 · 쌍둥이 달 카드 카운터
       prep: run.prep, // 출정 준비(shop.js)
+      log: run.log, // 도전 기록 누적값
     },
     // 유물(보스 보상): 고른 유물 · 효과 합산 · 떠 있는 후보 · 후보 풀(run.js가 meta로) · 남은 망각
     relics: run.relics, rfx: relicFx(run.relics), relicPick: null, forgetLeft: 0,
@@ -1114,6 +1123,7 @@ function killEnemy(g, e, o, effects) {
   e.dead = true;
   e.hp = 0;
   g.progress.killed++;
+  g.run.log.k++;
   gainMana(g); // 판타지 스킬: 처치 진행률로 마나 채우기
   onRelicKill(g, e); // 유물 흡혈 수정
   addCombo(g, e);

@@ -25,6 +25,7 @@ const PICK_HOLD_BOSS = 1800, PICK_HOLD_METEOR = 800, PICK_HOLD_ULT = 1400; // �
 const FUSION_KEYS = new Set(SYNERGIES.filter(s => s.kind === 'fusion').map(s => s.key));
 
 const native = updater.isNative();
+let appTag = native ? 'apk' : 'web'; // 도전 기록의 app(버전을 알면 '0.1.1-web')
 // ponytail: UA 버전으로 판별(HTML 글자 paint-order 지원 여부를 직접 재는 방법이 없다). Chrome 123부터 지원
 if (+(/Chrome\/(\d+)/.exec(navigator.userAgent)?.[1] || 999) < 123) document.documentElement.classList.add('no-po');
 const App = window.Capacitor?.Plugins?.App;
@@ -182,7 +183,7 @@ function onAbandonRun() {
 // 정산은 도전이 끝난 '즉시' + 바로 기록: 결과 화면 중에 앱을 꺼도 죽은 층이 이어하기로 살아나지 않게.
 // endRun 뒤엔 game.run.checkpoint 를 data.run 에 다시 쓰지 않는다(syncData 가 run.ended 를 본다)
 function finishRun(g) {
-  const sum = endRun(g, data);
+  const sum = endRun(g, data, { app: appTag }); // 도전 기록 한 건 + 평생 통계(records.js)
   if (!sum) return null;
   mode = 'result';
   if (g !== game) game = null; // 이어하기 창에서 포기: 뒤에 그릴 전장 없음
@@ -281,6 +282,7 @@ function onRestoreSave(code, preview) {
   if (preview === true) return r.ok ? r.data : { error: r.error };
   if (!r.ok) return false;
   store.clear();
+  r.data.settings.storage = data.settings.storage; // 저장 보호 상태는 이 기기 값(코드를 만든 기기 값이 아님)
   data = r.data;
   store.save(data);
   if (!store.flush()) return false;
@@ -294,6 +296,7 @@ function onRestoreSave(code, preview) {
 function syncData() {
   if (!game || game.run.ended || game.run.over) return; // 끝난 도전은 이어하기로 되살리지 않는다
   data.run = game.run.checkpoint;
+  if (data.run?.log) { const l = game.run.log; Object.assign(data.run.log, { ps: l.ps, sp: l.sp, ap: l.ap }); } // 플레이 시간은 층 도중까지(처치 수는 체크포인트 기준 — 다시 하는 층을 두 번 세지 않게)
   data.discovered = [...new Set([...data.discovered, ...game.discovered])];
   data.seenSpells = SPELL_KEYS.filter(k => data.seenSpells.includes(k) || game.seenSpells.has(k));
   if (game.hero) data.hero = game.hero; // 같은 객체(sim이 제자리 변경)
@@ -502,12 +505,22 @@ if (native) {
     pendingUpdate = info;
     updSnooze = false;
   });
-  updater.getCurrentVersion().then(v => ui.setVersion(v ? 'v' + v.versionName : '')).catch(() => {});
+  updater.getCurrentVersion().then(v => { ui.setVersion(v ? 'v' + v.versionName : ''); if (v?.versionName) appTag = v.versionName + '-apk'; }).catch(() => {});
 } else {
   fetch(new URL('../version.json', import.meta.url), { cache: 'no-store' }).then(r => r.json())
-    .then(v => ui.setVersion(`웹 v${v.version}${v.build && v.build !== 'dev' ? ' · ' + String(v.build).slice(0, 7) : ''}`))
+    .then(v => { ui.setVersion(`웹 v${v.version}${v.build && v.build !== 'dev' ? ' · ' + String(v.build).slice(0, 7) : ''}`); if (v.version) appTag = v.version + '-web'; })
     .catch(() => ui.setVersion('웹 버전'));
-  navigator.storage?.persist?.().catch(() => {}); // 브라우저가 저장소를 임의로 비우지 않게(iPhone PWA)
+  protectStorage();
+}
+
+// 웹(PWA) 저장 보호: 브라우저가 저장소를 임의로 비우지 않게 영구 저장소를 요청하고 결과만 조용히 기록(팝업 없음).
+// 브라우저 탭에선 첫 실행에 한 번, 아직 못 받았으면 홈 화면 앱(standalone)으로 켤 때마다 다시(크롬은 설치 후에야 허락). APK에선 부르지 않는다
+async function protectStorage() {
+  const st = navigator.storage;
+  let v = 'na';
+  const ask = !data.settings.storage || matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  try { if (st?.persist && st.persisted) v = (await st.persisted()) || (ask && await st.persist()) ? 'on' : 'off'; } catch { v = 'na'; }
+  if (data.settings.storage !== v) { data.settings.storage = v; persist(); }
 }
 
 // ── 안드로이드 뒤로가기: 시트·모달 닫기 → 도전 중이면 일시정지 메뉴, 정비·타이틀에선 두 번 눌러 종료 ──
@@ -549,6 +562,7 @@ function frame(now) {
   meta.speedCap = speedCap(data.best);
   meta.settings = data.settings;
   meta.profile = data.profile;
+  meta.native = native; // 설정 '기록 보호' 줄(APK = 앱 저장소)
   meta.discovered = game ? game.discovered : data.discovered;
 
   if (!game) { // 타이틀 · 정비 화면 · (전장 없는) 결과 화면
@@ -567,6 +581,12 @@ function frame(now) {
   // 모달(메뉴·영웅 화면·결과 등)이 열리면 일시정지
   const paused = picking || !!game.relicPick || ui.isBusy() || heroUI.isOpen();
   const holding = now < stopUntil;
+  if (mode === 'run' && !game.run.over) { // 도전 기록: 실제 플레이 초(배속 전) — 메뉴·영웅 화면·백그라운드(rAF 멈춤)는 빼고, 카드 고르는 시간은 넣는다
+    const lg = game.run.log;
+    if (!heroUI.isOpen() && !anyModal()) lg.ps += dt;
+    if (!paused) lg.sp = Math.max(lg.sp, game.speed);
+    if (game.players[0].autoPick) lg.ap = true;
+  }
   if (dbgLoot && game.hero?.cls && game.phase === 'play' && !paused) { dropLoot(dbgLoot); dbgLoot = null; }
   if (!paused && !holding) {
     acc += dt * game.speed * simSlow();
