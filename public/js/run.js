@@ -1,6 +1,6 @@
 // 메타(영구) ↔ 런(도전) 연결 — 정비 화면·결과 화면·이어하기가 부르는 함수. DOM 없음
 // meta = save.js normalize() 결과 객체(제자리에서 바꾼다):
-//   { gems, gold, best, metaLv, training, hero, discovered, seenSpells, runs, lastLoadout, settings:{ autoNext, ... }, name, run, ... }
+//   { gems, gold, best, metaLv, training, hero, discovered, seenSpells, runs, lastLoadout, settings:{ autoNext, ... }, profile:{ id, name, createdAt }, run, ... }
 import { META_KEYS, metaMax, metaCost, metaFx, RUN_GEMS, SPELL_KEYS, TRAIN_KEYS, trainMax, trainCost, START_CARDS } from './config.js';
 import { createGame, serializeRun, normalizeRun } from './sim.js';
 import { unlockedClasses, addXp, equipItem, autoEquipAll, sellItem, sellItemsByRarity } from './hero.js';
@@ -51,7 +51,7 @@ export function validLoadout(meta, lo) {
 // 성벽 마법사 = 나 한 명(마법사 수련 meta.training). auto = 자동 진행(settings.autoNext) · autoPick = 카드 자동 선택(settings.autoPick)
 // ponytail: players[1]은 협동 모드용 잠든 자리(sim은 g.coop일 때만 깨운다)
 const players = (meta, p0, p1) => [
-  { name: meta.name, kind: 'human', auto: !!meta.settings?.autoNext, autoPick: !!meta.settings?.autoPick, lv: meta.training, ...p0 },
+  { name: meta.profile?.name || '', kind: 'human', auto: !!meta.settings?.autoNext, autoPick: !!meta.settings?.autoPick, lv: meta.training, ...p0 },
   { name: '동료', kind: 'human', auto: false, lv: meta.training, ...p1 },
 ];
 const common = (meta, seed) => ({
@@ -112,6 +112,7 @@ export function endRun(game, meta) {
     spells: { ...game.spells }, mutations: { ...game.mutations }, loadout: r.loadout, // 변이 — 결과 화면 스킬 줄
     relics: [...game.relics], forgets: r.forgets, // 유물(고른 순서) · 쓴 망각 수 — 결과 화면
     newClasses: unlockedClasses(meta.best).filter(c => !before.includes(c)),
+    name: meta.profile?.name || '', runNo: meta.runs, // 결과 화면 '〈닉네임〉의 N번째 도전'
   };
 }
 

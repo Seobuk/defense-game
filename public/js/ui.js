@@ -23,6 +23,7 @@ import { emblemImg } from './art/emblems.js';
 import { createDungeonUI } from './dungeonui.js'; // 4차 던전(지역) 특성: 배너 · HUD 칩 · 카드/칸 배지
 import { mutOptionsHTML, mutCardLabel, mutBadgeHTML, mutName, mutTipHTML, upgradeHTML, createMutSheet } from './mutui.js'; // 4차 변이: 카드 A/B · 칸 배지 · 강화 수치 줄
 import { mutChoice } from './mutations.js';
+import { createNameUI } from './nameui.js'; // 4차 닉네임 입력 창
 
 const SYN_BY_KEY = Object.fromEntries(SYNERGIES.map(s => [s.key, s]));
 const KIND_TAG = { cannon: '마법', duo: '협동', event: '이벤트' };
@@ -169,7 +170,7 @@ export function createUI(root, handlers = {}) {
     'btn-open-settings', 'upd-progress', 'upd-progress-text', 'upd-progress-fill',
     'm-result', 'res-art', 'res-rb', 'res-h', 'res-floor', 'res-floor-l', 'res-best', 'res-best-txt', 'res-sub', 'res-boss', 'res-time', 'res-hero',
     'res-share', 'res-bar', 'res-legend', 'res-gem-list', 'res-gem-total', 'res-spells-card', 'res-spells', 'res-unlock', 'btn-res-done',
-    'res-gold-card', 'res-gold', 'res-gold-total', 'res-combos-card', 'res-combos',
+    'res-gold-card', 'res-gold', 'res-gold-total', 'res-combos-card', 'res-combos', 'res-who', 'res-nick', 'res-no', 'set-nick', 'btn-nick',
     'cont-por', 'cont-stage', 'cont-who', 'cont-spells', 'cont-gems', 'cont-main', 'cont-confirm', 'cont-warn', 'btn-cont-go', 'btn-cont-quit', 'btn-cont-no', 'btn-cont-yes',
     'ab-txt', 'btn-ab-yes',
   ]) {
@@ -223,7 +224,7 @@ export function createUI(root, handlers = {}) {
   let z = 30;
   for (const m of root.querySelectorAll('.modal')) {
     m.querySelector('.k-modal')?.setAttribute('tabindex', '-1');
-    if (m.id !== 'm-result' && m.id !== 'm-continue') on(m, 'click', e => { if (e.target === m) closeModal(m.id); });
+    if (m.id !== 'm-result' && m.id !== 'm-continue' && m.id !== 'm-name') on(m, 'click', e => { if (e.target === m) closeModal(m.id); });
     for (const b of m.querySelectorAll('[data-close]')) on(b, 'click', () => closeModal(m.id));
   }
   function openModal(id, onClose) {
@@ -246,6 +247,7 @@ export function createUI(root, handlers = {}) {
     m.onClose?.(reason);
   }
   const isOpen = id => stack.some(m => m.el.id === id);
+  const nameUI = createNameUI(root, { openModal, closeModal, isOpen }); // 필수 모드는 닫기·뒤로 가기·배경 탭 불가
   // 모달 뒤는 조작·포커스 불가. 타이틀·정비 화면이 떠 있으면 전장·하단 패널도 잠금
   function syncInert() {
     const modal = stack.length > 0, cover = !E.title.hidden || camp.isOpen();
@@ -1205,6 +1207,9 @@ export function createUI(root, handlers = {}) {
       + (win ? `<span class="res-cup">${icon('trophy')}</span>` : '');
     E['res-rb'].className = 'k-ribbon res-rb ' + (win || nb ? 'gold' : 'gray');
     txt(E['res-h'], win ? '100층 돌파!' : nb ? '신기록 달성!' : '도전 종료');
+    E['res-who'].hidden = !sum.name; // 〈닉네임〉의 N번째 도전(이름은 textContent로만)
+    txt(E['res-nick'], sum.name || '');
+    txt(E['res-no'], `〉의 ${sum.runNo | 0}번째 도전`);
     E['res-floor'].dataset.text = '0';
     countUp(E['res-floor'], sum.floorsCleared | 0, 900, v => { E['res-floor'].dataset.text = v; });
     txt(E['res-floor-l'], '층 돌파');
@@ -1383,7 +1388,13 @@ export function createUI(root, handlers = {}) {
     const s = meta.settings || {};
     for (const b of segBtns) attr(b, 'aria-checked', String(b.dataset.dmg === (s.dmgNumbers || 'full')));
     for (const b of switches) attr(b, 'aria-checked', String(!!s[b.dataset.set]));
+    txt(E['set-nick'], meta.profile?.name || '');
   }
+  on(E['btn-nick'], 'click', () => nameUI.ask({ current: meta.profile?.name }, n => {
+    H.onRename?.(n);
+    renderSettings();
+    toast('이름을 바꿨어요', 'check');
+  }));
   function resetConfirm(open) {
     E['btn-reset'].hidden = open;
     E['reset-confirm'].hidden = !open;
@@ -1684,6 +1695,7 @@ export function createUI(root, handlers = {}) {
       const top = stack[stack.length - 1].el.id;
       if (top === 'm-result') { E['btn-res-done'].click(); return true; }
       if (top === 'm-continue') return true;
+      if (top === 'm-name') return nameUI.handleBack();
       closeModal(top);
       return true;
     }
@@ -1696,6 +1708,7 @@ export function createUI(root, handlers = {}) {
 
   syncInert();
   return {
+    askName: (o, cb) => nameUI.ask(o, cb), // 4차 닉네임: { required, current }, 확인 시 cb(name)
     showTitle, hideTitle, showContinue, showCamp, hideCamp, isCampOpen: () => camp.isOpen(), refreshCamp: () => camp.refresh(),
     showResult, update, onEvents, toast, speedUnlocked, showOfflineReward, isBusy, handleBack, isPickShown: () => pickOpen && !pickClosing && !rel.forgetOpen() && !mutSheet.isOpen(), // 비우기·변이 시트가 열린 동안 자동 선택 카운트다운 멈춤
     isRelicShown: () => rel.isOpen(),

@@ -238,6 +238,7 @@
         <div class="k-ribbon"><h2 id="set-h">설정</h2></div>
         <button class="k-close" data-close aria-label="닫기"><img class="k-ico" src="assets/icons/close.svg" alt=""></button>
         <div class="k-sheet settings">
+          <div class="set-row set-nick-row"><span class="set-l"><img class="k-ico set-ico" src="assets/icons/hero.svg" alt="">닉네임 <b id="set-nick" class="set-nick"></b></span><button id="btn-nick" class="k-btn s secondary">닉네임 변경</button></div>
           <div class="set-row"><span class="set-l"><img class="k-ico set-ico" src="assets/icons/crit.svg" alt="">데미지 숫자</span>
             <div class="seg" role="radiogroup" aria-label="데미지 숫자">
               <button role="radio" data-dmg="full">전체</button><button role="radio" data-dmg="simple">간소</button><button role="radio" data-dmg="off">끄기</button>
@@ -286,6 +287,7 @@
         <div class="res-head">
           <div class="res-art" id="res-art" aria-hidden="true"></div>
           <div class="k-ribbon res-rb" id="res-rb"><h2 id="res-h">도전 종료</h2></div>
+          <p class="res-who" id="res-who" hidden><i>〈</i><b id="res-nick"></b><i id="res-no">〉의 1번째 도전</i></p>
           <div class="res-floor"><b id="res-floor" class="k-num k-grad gold" data-text="0">0</b><span id="res-floor-l">층 돌파</span></div>
           <div class="res-best" id="res-best" hidden><span class="res-best-stamp">신기록!</span><span id="res-best-txt"></span></div>
           <p class="res-sub" id="res-sub"></p>
@@ -343,6 +345,25 @@
           <p id="ab-txt"></p>
           <div class="cont-btns"><button class="k-btn gray" data-close>계속 싸우기</button><button id="btn-ab-yes" class="k-btn danger">포기</button></div>
         </div>
+      </div>
+    </div>
+
+    <!-- 4차 닉네임: 첫 시작(이름 없는 저장) 때 필수 · 설정 '닉네임 변경'에서 재사용(nameui.js) -->
+    <div class="modal nm-modal" id="m-name" hidden role="dialog" aria-modal="true" aria-labelledby="nm-h">
+      <div class="k-modal dark narrow nm-card">
+        <div class="k-ribbon gold nm-rb"><h2 id="nm-h">대마법사의 이름을 지어 주세요</h2></div>
+        <button class="k-close" id="nm-x" data-close aria-label="닫기"><img class="k-ico" src="assets/icons/close.svg" alt=""></button>
+        <form class="k-sheet center nm-form" id="nm-form" novalidate autocomplete="off">
+          <div class="nm-art" aria-hidden="true"><i></i><img id="nm-por" alt="" draggable="false"></div>
+          <p class="nm-lead" id="nm-lead">성벽을 지킬 대마법사예요. 이름은 설정에서 언제든 바꿀 수 있어요.</p>
+          <div class="nm-field">
+            <input id="nm-input" class="nm-input" type="text" inputmode="text" enterkeyhint="done" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+              placeholder="2~10자 · 한글, 영문, 숫자" aria-describedby="nm-err" data-autofocus>
+            <button type="button" class="nm-dice" id="nm-dice" aria-label="이름 추천받기"><img class="k-ico" src="assets/icons/dice.svg" alt=""></button>
+          </div>
+          <div class="nm-meta"><p class="nm-err" id="nm-err" aria-live="polite"></p><span class="nm-count" id="nm-count" aria-hidden="true">0/10</span></div>
+          <button type="submit" class="k-btn l wide success" id="nm-ok">이 이름으로 시작</button>
+        </form>
       </div>
     </div>
 

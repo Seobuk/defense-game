@@ -625,8 +625,10 @@
 .cp-rec { display: flex; align-items: center; gap: 6px; min-width: 0; margin-right: auto; }
 .cp-rec > .k-ico { --ico: 36px; filter: drop-shadow(0 2px 0 rgba(0, 0, 0, .35)); }
 .cp-rec div { display: flex; flex-direction: column; line-height: 1.05; }
-.cp-rec div span { font-size: 11px; color: #cfc4ff; }
-.cp-best { font-size: 22px; }
+.cp-rec div { min-width: 0; }
+/* 4차 닉네임: 긴 이름은 말줄임(360폭) */
+.cp-rec div .cp-nick { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; color: #fff; -webkit-text-stroke: 3px var(--ink); paint-order: stroke fill; }
+.cp-best { font-size: 19px; white-space: nowrap; }
 .cp-runs { font-style: normal; margin-left: 2px; padding: 2px 8px; border-radius: 999px; background: rgba(10, 6, 30, .55); font-size: 11.5px; color: #cfc4ff; white-space: nowrap; }
 .cp-gems { display: flex; align-items: center; gap: 4px; height: 36px; padding: 0 12px 0 5px; border-radius: 999px; background: rgba(10, 6, 30, .6); box-shadow: inset 0 0 0 2px rgba(255, 255, 255, .14); }
 .cp-gems .k-ico { --ico: 28px; }

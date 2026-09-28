@@ -60,7 +60,7 @@ export function normalize(d) {
   const lo = obj(d.lastLoadout);
   const out = {
     v: SAVE_VERSION,
-    name: typeof d.name === 'string' && d.name.trim() ? d.name.trim().slice(0, 16) : '나',
+    profile: profile(d.profile), // 닉네임(옛 최상위 name '나'는 버린다 — 이름이 없으면 시작할 때 한 번 묻는다)
     best,
     gems: Math.floor(num(d.gems)) + (ver === 1 ? best * MIGRATE_GEMS_PER_BEST : 0) + refund,
     gold: ver === 3 ? Math.floor(num(d.gold)) : 0, // 영구 골드(마법사 수련 재화)
@@ -94,6 +94,47 @@ export function normalize(d) {
   if (c && out.hero.talentNotice && obj(d.hero).talentVer !== TALENT_VER)
     for (let n = recommendNext(out.hero, c); n && allocateTalent(out.hero, c, n.key); n = recommendNext(out.hero, c));
   return out;
+}
+
+// ── 프로필(닉네임) ── 나중에 서버 계정과 id로 잇는다(지금은 서버·로그인 없음). id = 프로필 UUID(기기에서 처음 한 번 만들고, 백업 코드로 옮기면 따라간다)
+export const NAME_MIN = 2, NAME_MAX = 10;
+const NAME_RE = /^[가-힣A-Za-z0-9]+$/;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// → { ok, name(앞뒤 공백 자름), error(한국어) }
+export function checkName(v) {
+  const name = typeof v === 'string' ? v.normalize('NFC').trim() : '', n = [...name].length; // NFC: 풀어 쓴(NFD) 한글도 받는다
+  const error = !n ? '이름을 적어 주세요'
+    : /[ㄱ-ㆎᄀ-ᇿ]/.test(name) ? '완성된 글자로 적어 주세요'
+    : !NAME_RE.test(name) ? '한글·영문·숫자만 쓸 수 있어요'
+    : n < NAME_MIN ? `${NAME_MIN}자 이상 적어 주세요`
+    : n > NAME_MAX ? `${NAME_MAX}자까지 쓸 수 있어요` : '';
+  return { ok: !error, name, error };
+}
+export function newId() {
+  const c = globalThis.crypto;
+  if (typeof c?.randomUUID === 'function') return c.randomUUID();
+  const b = new Uint8Array(16); // 대체 구현(RFC 4122 v4)
+  if (typeof c?.getRandomValues === 'function') c.getRandomValues(b); else for (let i = 0; i < 16; i++) b[i] = Math.random() * 256 | 0;
+  b[6] = (b[6] & 15) | 64; b[8] = (b[8] & 63) | 128;
+  const h = [...b].map(x => x.toString(16).padStart(2, '0')).join('');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+function profile(p) {
+  p = obj(p);
+  const nm = checkName(p.name);
+  return {
+    id: typeof p.id === 'string' && UUID_RE.test(p.id) ? p.id.toLowerCase() : newId(),
+    name: nm.ok ? nm.name : '', // '' = 아직 없음 → 타이틀 '시작' 뒤 입력 창(needsName)
+    createdAt: Math.min(Date.now(), Math.floor(num(p.createdAt))) || Date.now(), // 미래·터무니없는 값은 지금으로
+  };
+}
+export const needsName = d => !d?.profile?.name;
+// 🎲 판타지풍 이름(최대 3 + 3 + 1 = 7자)
+const NAME_A = ['푸른', '붉은', '별빛', '달빛', '황혼', '서리', '폭풍', '은빛', '새벽', '잿빛', '천둥', '심연', '금빛', '바람', '밤하늘', '태양'];
+const NAME_B = ['불꽃', '현자', '마도사', '늑대', '까마귀', '수정', '구름', '룬', '불사조', '용', '가시', '방랑자', '예언자', '마녀', '기사', '여우'];
+export function randomName(rand = Math.random) {
+  const pick = a => a[Math.floor(rand() * a.length) % a.length];
+  return pick(NAME_A) + pick(NAME_B) + (rand() < 0.35 ? String(1 + Math.floor(rand() * 9)) : '');
 }
 
 // 영웅(클래스·레벨·장비·가방). 없거나 깨졌으면 새 영웅(이전 버전 저장 마이그레이션 포함)
@@ -200,7 +241,8 @@ export function exportSave(data) {
 }
 
 // → { ok: true, data } | { ok: false, error: 한국어 문구 }. 절대 throw 없음
-export function importSave(code) {
+// current(지금 저장): 프로필이 없던 옛 코드는 이 기기의 id를 이어 쓰고 이름은 비워 둔다(시작할 때 다시 묻는다)
+export function importSave(code, current = null) {
   const bad = error => ({ ok: false, error });
   const s = String(code ?? '').replace(/\s+/g, '');
   if (!s) return bad('백업 코드를 붙여 넣어 주세요.');
@@ -212,7 +254,10 @@ export function importSave(code) {
   let raw;
   try { raw = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(unb64url(m[2]))); } catch { return bad('코드를 읽을 수 없어요. 다시 복사해 주세요.'); }
   if (!raw || typeof raw !== 'object' || Array.isArray(raw) || !('hero' in raw || 'best' in raw)) return bad('대마법사의 용사 키우기 백업 코드가 아니에요.');
-  return { ok: true, data: normalize(raw) };
+  const data = normalize(raw);
+  // 프로필 없는·id가 깨진 코드: 이 기기의 프로필(id·만든 시각·이름)을 잇는다. 코드에 올바른 이름이 있으면 그 이름
+  if (!UUID_RE.test(String(obj(raw.profile).id)) && current?.profile?.id) data.profile = { ...profile(current.profile), ...(data.profile.name ? { name: data.profile.name } : {}) };
+  return { ok: true, data };
 }
 
 // 방치 보상: 보석(소량) + 골드(shop.js offlineGoldPerHour) + 영웅 경험치. 1분 미만 무시, 최대 8시간, 시계가 거꾸로 가면 0

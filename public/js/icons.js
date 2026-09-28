@@ -3,7 +3,7 @@
 // 이모지 대신 이것만 쓴다. 새 아이콘은 SVG 파일을 추가하고 ICONS 에 이름을 넣는다.
 export const ICONS = [
   'coin', 'gem', 'atk', 'rate', 'crit', 'multi', 'wall', 'wall-broken', 'meteor', 'freeze', 'auto', 'speed', 'menu', 'close', 'check',
-  'settings', 'codex', 'shop', 'hero', 'bag', 'lock', 'partner', 'new', 'chest', 'reroll', 'trophy',
+  'settings', 'codex', 'shop', 'hero', 'bag', 'lock', 'partner', 'new', 'chest', 'reroll', 'trophy', 'dice',
   'el-fire', 'el-lightning', 'el-frost', 'el-wind', 'el-holy', 'el-dark', 'el-summon',
 ];
 const BASE = 'assets/icons/';

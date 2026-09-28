@@ -50,13 +50,26 @@ const meta = {};
 const inRun = () => mode === 'run' && !!game;
 const persistOk = ok => { if (ok) persist(true); return !!ok; };
 
+// 4차 닉네임: 이름이 없는 저장(첫 실행 · 옛 저장 · 프로필 없던 백업)은 타이틀 '시작' 뒤 한 번 묻고 나서 넘어간다
+function setName(name) {
+  data.profile.name = name;
+  if (game) game.players[0].name = name; // 성벽 위 이름표
+  persist(true);
+}
+const named = go => () => {
+  audio.unlock();
+  if (!store.needsName(data)) return go();
+  ui.askName({ required: true }, n => { setName(n); go(); });
+};
+
 const ui = createUI(document.getElementById('app'), {
-  onStart: () => { audio.unlock(); showCamp(); },
-  onContinueRun: () => {
+  onStart: named(() => showCamp()),
+  onContinueRun: named(() => {
     startRun(restoreRun(data));
     if (inRun() && data.hero.talentNotice) setTimeout(() => ui.toast('특성 개편! 이번 도전은 추천 빌드로 다시 찍어 두었어요', 'hero'), 600); // save.js normalize
-  },
-  onAbandonRun,
+  }),
+  onRename: setName,
+  onAbandonRun: named(onAbandonRun),
   onResultDone: () => { if (mode === 'result') showCamp(); },
   onCampAct: a => { // 장비 상자는 결과 객체 { item, sold, equipped }를 그대로 돌려준다(shopui.js 개봉 연출)
     const ok = campAct(data, a);
@@ -251,8 +264,11 @@ function showHome() { // 저장이 바뀐 뒤: 도전 중이면 타이틀(이어
 }
 
 function onResetSave() {
+  const { id, createdAt } = data.profile; // 기기 id는 유지(나중에 서버 계정과 잇는 열쇠), 이름은 다시 묻는다
   store.clear();
   data = store.defaults();
+  data.profile = { id, createdAt, name: '' };
+  persist(true); // 비운 저장소에 id를 바로 적는다(숨김 이벤트 없이 꺼져도 id 유지)
   resetState();
   mode = 'title';
   ui.showTitle({ best: 0, run: null, hero: data.hero });
@@ -261,7 +277,7 @@ function onResetSave() {
 
 // 백업 코드 복원: preview → 요약 객체 또는 { error }(ui가 문구를 보여 줌), 아니면 덮어쓰고 true/false
 function onRestoreSave(code, preview) {
-  const r = store.importSave(code);
+  const r = store.importSave(code, data); // 프로필 없던 옛 코드: 이 기기 id를 잇고 이름은 다시 묻는다
   if (preview === true) return r.ok ? r.data : { error: r.error };
   if (!r.ok) return false;
   store.clear();
@@ -270,6 +286,7 @@ function onRestoreSave(code, preview) {
   if (!store.flush()) return false;
   resetState();
   showHome();
+  if (mode === 'camp' && store.needsName(data)) setTimeout(() => ui.askName({ required: true }, setName), 350); // 복원 창이 닫힌 뒤
   return true;
 }
 
@@ -296,14 +313,14 @@ function checkOffline() {
     applyOffline(data, r);
     persist(true);
     if (r.xp > 0 || r.gold > 0) ui.toast(`돌아오셨네요! ${r.gold > 0 ? `골드 +${r.gold} · ` : ''}영웅 경험치 +${r.xp}`, r.gold > 0 ? 'coin' : 'hero'); // 방치 골드(shop.js)
-    if (mode === 'title' && data.run) ui.showContinue(data.run, data.hero);
+    if (mode === 'title' && data.run && !ui.isBusy()) ui.showContinue(data.run, data.hero); // 이름 입력 창 등 다른 창 위로는 안 띄운다
     return;
   }
   ui.showOfflineReward(r, () => {
     applyOffline(data, r);
     audio.play('coin');
     persist(true);
-    if (mode === 'title' && data.run) ui.showContinue(data.run, data.hero);
+    if (mode === 'title' && data.run && !ui.isBusy()) ui.showContinue(data.run, data.hero); // 이름 입력 창 등 다른 창 위로는 안 띄운다
   });
 }
 
@@ -531,6 +548,7 @@ function frame(now) {
   meta.autoNext = data.settings.autoNext;
   meta.speedCap = speedCap(data.best);
   meta.settings = data.settings;
+  meta.profile = data.profile;
   meta.discovered = game ? game.discovered : data.discovered;
 
   if (!game) { // 타이틀 · 정비 화면 · (전장 없는) 결과 화면

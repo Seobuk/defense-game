@@ -2590,13 +2590,14 @@ export function drawMages(view, opts) {
     additive(false);
     orbit(i, n, c.x, MAGE_FEET - 60, orbCol, true);
     // 이름표
-    const tag = !duoOn ? '' : i === (opts.myIndex | 0) ? '나' : p.kind === 'bot' ? 'AI' : p.kind === 'remote' ? String(p.name || '').slice(0, 8) : '';
+    // 이름표: 내 마법사 = 닉네임(4차 — 솔로에도 표시, 없으면 협동 때만 '나')
+    const tag = i === (opts.myIndex | 0) ? String(p.name || '').slice(0, 10) || (duoOn ? '나' : '') : !duoOn ? '' : p.kind === 'bot' ? 'AI' : p.kind === 'remote' ? String(p.name || '').slice(0, 8) : '';
     if (tag) {
-      ctx.font = `900 13px ${FONT}`;
-      const tw = Math.max(26, ctx.measureText(tag).width + 14);
-      ctx.fillStyle = 'rgba(15,8,20,0.8)';
-      rr(c.x - tw / 2, MAGE_FEET + 8, tw, 18, 9); ctx.fill();
-      ctx.lineWidth = 1.5; ctx.strokeStyle = OWN[i].c; ctx.stroke();
+      ctx.font = `900 16px ${FONT}`; // 폰 360폭에서도 읽히게(월드 1px ≈ 0.5 CSS px)
+      const tw = Math.max(30, ctx.measureText(tag).width + 18);
+      ctx.fillStyle = 'rgba(15,8,20,0.82)';
+      rr(c.x - tw / 2, MAGE_FEET + 6, tw, 22, 11); ctx.fill();
+      ctx.lineWidth = 2; ctx.strokeStyle = OWN[i].c; ctx.stroke();
       ctx.textAlign = 'center';
       ctx.fillStyle = OWN[i].c;
       ctx.fillText(tag, c.x, MAGE_FEET + 17.5);

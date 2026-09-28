@@ -1,7 +1,7 @@
 // 저장 검증 · v1/v2 → v3 마이그레이션 · 오프라인 보상 셀프 체크: node test/save.test.js
 import assert from 'node:assert/strict';
 import { offlineGoldPerHour } from '../public/js/shop.js';
-import { normalize, computeOffline, load, defaults, exportSave, importSave, STORAGE_KEY, SAVE_VERSION, MIGRATE_GEMS_PER_BEST, MIGRATE_TRAIN } from '../public/js/save.js';
+import { normalize, computeOffline, load, defaults, exportSave, importSave, STORAGE_KEY, SAVE_VERSION, MIGRATE_GEMS_PER_BEST, MIGRATE_TRAIN, checkName, needsName, randomName, newId } from '../public/js/save.js';
 import { offlineGemsPerHour, offlineXpPerMin, OFFLINE_CAP_HOURS, META_KEYS, TRAIN_KEYS, trainMax, goldPerKill, speedCap, nextSpeed } from '../public/js/config.js';
 import { newRun, restoreRun } from '../public/js/run.js';
 import { serializeRun } from '../public/js/sim.js';
@@ -211,4 +211,58 @@ assert.ok(computeOffline({ ...base, metaLv: { pickaxe: 10 } }, 1_000_000 + 3 * 8
 assert.deepEqual([0, 9, 10, 29, 30, 100].map(speedCap), [1, 1, 2, 2, 3, 3]);
 assert.deepEqual([[1, 0], [1, 10], [2, 10], [2, 30], [3, 30], [3, 10]].map(([c, b]) => nextSpeed(c, b)), [1, 2, 1, 3, 1, 1]);
 assert.deepEqual([5, 15, 40].map(best => normalize({ v: 3, best, settings: { speed: 3 } }).settings.speed), [1, 2, 3], '저장 배속 클램프');
+
+// 닉네임(프로필): 2~10자 한글·영문·숫자, 앞뒤 공백 자름 · 저장/백업 왕복 · 옛 저장은 이름 없음 → 입력 창 1회
+{
+  for (const ok of ['푸른불꽃', '별빛현자7', 'Mage', 'ab', '가나다라마바사아자차', '  용사  ']) assert.ok(checkName(ok).ok, ok);
+  assert.equal(checkName('  용사  ').name, '용사');
+  for (const bad of ['', '   ', '가', 'a', '가나다라마바사아자차카', '용 사', '<b>x</b>', 'ㅎㅎ', '용사!', 'name😀', null, 42]) {
+    const r = checkName(bad);
+    assert.equal(r.ok, false, String(bad));
+    assert.ok(/[가-힣]/.test(r.error), r.error);
+  }
+  for (let i = 0; i < 300; i++) assert.ok(checkName(randomName()).ok, '🎲 추천 이름은 늘 규칙을 지킨다');
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+  assert.match(newId(), UUID);
+  const rc = globalThis.crypto.randomUUID; // 대체 구현(randomUUID 없는 옛 WebView)
+  try { globalThis.crypto.randomUUID = undefined; assert.match(newId(), UUID); assert.notEqual(newId(), newId()); } finally { globalThis.crypto.randomUUID = rc; }
+
+  // 새 저장·옛 저장(프로필 없음, 옛 최상위 name '나') → id·createdAt은 생기고 이름은 비어 있다 → 입력 창
+  const d0 = defaults(), old = normalize({ v: 3, best: 12, name: '나' });
+  for (const d of [d0, old]) { assert.match(d.profile.id, UUID); assert.ok(d.profile.createdAt > 0); assert.equal(d.profile.name, ''); assert.ok(needsName(d)); assert.ok(!('name' in d)); }
+  assert.notEqual(d0.profile.id, old.profile.id);
+  // 이름을 정하면 다시 불러와도 그대로(id·createdAt 유지 → 다시 묻지 않음), 깨진 이름은 비워서 다시 묻는다
+  old.profile.name = '별빛현자7';
+  const again = normalize(JSON.parse(JSON.stringify(old)));
+  assert.deepEqual(again.profile, old.profile);
+  assert.ok(!needsName(again));
+  assert.equal(normalize({ v: 3, profile: { ...old.profile, name: '<img onerror=x>' } }).profile.name, '');
+  assert.equal(normalize({ v: 3, profile: { id: 'x', name: '용사' } }).profile.name, '용사');
+  assert.match(normalize({ v: 3, profile: { id: 'x', name: '용사' } }).profile.id, UUID, '깨진 id는 새로 만든다');
+
+  // 백업 코드 왕복: 프로필(id·이름·만든 시각) 그대로
+  const code = exportSave(again), back = importSave(code, defaults());
+  assert.ok(back.ok);
+  assert.deepEqual(back.data.profile, again.profile);
+  // 프로필 없던 옛 코드: 복원은 되고, 이 기기의 프로필(id·이름)을 이어 쓴다
+  const body = Buffer.from(JSON.stringify({ v: 3, best: 20, gems: 9, name: '나', hero: { cls: 'ranger', level: 9 } })).toString('base64url');
+  let h = 0x811c9dc5; for (const c of body) h = Math.imul(h ^ c.charCodeAt(0), 0x01000193);
+  const oc = `WD3-${body}-${(h >>> 0).toString(16).padStart(8, '0')}`;
+  const r1 = importSave(oc, again);
+  assert.ok(r1.ok);
+  assert.equal(r1.data.best, 20);
+  assert.equal(r1.data.profile.id, again.profile.id);
+  assert.equal(r1.data.profile.createdAt, again.profile.createdAt);
+  assert.equal(r1.data.profile.name, again.profile.name);
+  const enc = o => { const b = Buffer.from(JSON.stringify(o)).toString('base64url'); let k = 0x811c9dc5; for (const c of b) k = Math.imul(k ^ c.charCodeAt(0), 0x01000193); return `WD3-${b}-${(k >>> 0).toString(16).padStart(8, '0')}`; };
+  assert.equal(importSave(enc({ v: 3, best: 5, hero: {}, profile: { id: 'not-a-uuid' } }), again).data.profile.id, again.profile.id, '깨진 id의 코드도 기기 id 유지');
+  const far = importSave(enc({ v: 3, best: 5, hero: {}, profile: { id: again.profile.id, name: '용사', createdAt: 1e300 } }), again).data.profile.createdAt;
+  assert.ok(far <= Date.now(), '미래 createdAt은 지금으로');
+  assert.equal(checkName('한글용사'.normalize('NFD')).name, '한글용사');
+  assert.ok(checkName('한글용사'.normalize('NFD')).ok);
+  assert.equal(checkName('용사ㅎ').error, '완성된 글자로 적어 주세요');
+  assert.ok(importSave(oc).ok && needsName(importSave(oc).data), '지금 저장 없이도 복원');
+  // 도전의 마법사 이름표 = 닉네임
+  assert.equal(newRun(again, { cls: 'knight', startSpells: [] }).players[0].name, '별빛현자7');
+}
 console.log('save.test OK');

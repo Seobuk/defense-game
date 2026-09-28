@@ -35,7 +35,7 @@ export function createCamp(root, H = {}) {
   el.innerHTML = `
     <div class="cp-bg" aria-hidden="true"><i class="cp-glow"></i><i class="cp-stars"></i></div>
     <header class="cp-top">
-      <div class="cp-rec">${icon('trophy')}<div><span>최고 기록</span><b class="k-num gold cp-best">0층</b></div><em class="cp-runs"></em></div>
+      <div class="cp-rec">${icon('trophy')}<div><span class="cp-nick"></span><b class="k-num gold cp-best">0층</b></div><em class="cp-runs"></em></div>
       <div class="cp-gold" aria-label="골드">${icon('coin')}<b class="k-num gold cp-goldn">0</b></div>
       <div class="cp-gems" aria-label="보석">${icon('gem')}<b class="k-num gem-n cp-gemn">0</b></div>
       <button class="k-btn round s neutral cp-set" aria-label="설정">${icon('settings')}</button>
@@ -277,7 +277,7 @@ export function createCamp(root, H = {}) {
   const signature = () => {
     const h = meta.hero;
     return [meta.gems, gold(meta), TRAIN_KEYS.map(k => trainLv(meta, k)).join(), JSON.stringify([meta.trainBreak, meta.gemBreak, meta.prep, meta.relicUnlocked, h.bag.length]), meta.best, meta.runs, h.cls, h.level, Math.floor(h.xp), SLOTS.map(s => h.equip[s]?.id).join(), JSON.stringify(h.talents), h.autoTalent,
-      Object.values(meta.metaLv).join(), meta.seenSpells.join(), JSON.stringify(meta.lastLoadout), (meta.discovered || []).length].join('|');
+      Object.values(meta.metaLv).join(), meta.seenSpells.join(), JSON.stringify(meta.lastLoadout), (meta.discovered || []).length, meta.profile?.name].join('|');
   };
 
   function render(force = false) {
@@ -289,7 +289,8 @@ export function createCamp(root, H = {}) {
     const hero = meta.hero, cls = cur();
     if (!HERO_CLASSES[preview] || cls !== lastCls) preview = cls; // 영웅 화면('영웅 선택')에서 바꾼 클래스도 무대에 바로
     lastCls = cls;
-    txt($('.cp-best'), `${meta.best}층`);
+    txt($('.cp-nick'), meta.profile?.name || '대마법사'); // 4차 닉네임(textContent만)
+    txt($('.cp-best'), `최고 ${meta.best}층`);
     txt($('.cp-runs'), meta.runs ? `도전 ${meta.runs}회` : '첫 도전');
     txt($('.cp-gemn'), fmt(meta.gems));
     txt($('.cp-goldn'), fmt(gold(meta)));
