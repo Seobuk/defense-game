@@ -15,6 +15,7 @@ import { emblem } from './emblems.js';
 import { coins } from './world.js';
 import { stamp, pop } from './hud.js';
 import { numStyle } from './dungeonfx.js'; // 4차 던전: 약점·내성 피해 숫자 색
+import { skinFx, skinMap } from './cosmetics.js'; // v0.1.2 외형 스킨(내 탄·내 스킬 입자 색) — 숫자 색은 안 건드림
 
 // 기본 주문 탄 팔레트 [코어, 메인, 에지, 꼬리 길이, 크기] — p0fire = P1 화염구, p1 = P2 서리 화살
 export const MSTY = {
@@ -509,9 +510,10 @@ export function arrowSpr(col = '#5fe06e') {
 
 // ═════════════ 생성 · 이벤트 연출 · 그리기 ═════════════
 // ── 생성 ──
+let SKM = null; // v0.1.2 외형 스킨: events 가 내 스킬 이벤트를 처리하는 동안만 part/ring 색을 스킨 램프로 바꾼다(끝나면 null)
 export function part(k, x, y, vx, vy, life, size, col, g = 0, drag = 0) {
   const p = take(P);
-  p.k = k; p.x = x; p.y = y; p.vx = vx; p.vy = vy; p.life = p.max = life; p.size = size; p.col = col; p.g = g; p.drag = drag;
+  p.k = k; p.x = x; p.y = y; p.vx = vx; p.vy = vy; p.life = p.max = life; p.size = size; p.col = SKM ? SKM(col) : col; p.g = g; p.drag = drag;
   p.rot = rnd() * TAU; p.vr = (rnd() - 0.5) * 14;
   return p;
 }
@@ -523,7 +525,7 @@ export function burst(k, x, y, n, sp0, sp1, life, size, cols, g = 0, drag = 0, u
 }
 export function ring(x, y, r0, r1, life, col, w) {
   const r = take(RINGS);
-  r.x = x; r.y = y; r.r0 = r0; r.r1 = r1; r.life = r.max = life; r.col = col; r.w = w;
+  r.x = x; r.y = y; r.r0 = r0; r.r1 = r1; r.life = r.max = life; r.col = SKM ? SKM(col) : col; r.w = w;
 }
 
 // ═════════════ 데미지 숫자 (ART §6) ═════════════
@@ -2130,6 +2132,7 @@ export function drawBullets(view) {
   // 기본 주문은 약한 견제지만 초반(탄이 적을 때)엔 마법으로 또렷이 보이게 크게, 탄이 많아지면 스킬보다 작게
   const sp = Math.min(0.3, 24 / n), tk = (n <= 16 ? 1.3 : n <= 40 ? 1.05 : 0.8) * (twin ? 1.12 : 1) * (dense ? 1.1 : 1);
   const top = hudY(96);
+  const SK = skinFx(); // v0.1.2 외형 스킨: 내 탄(owner 0)은 스킨 색·머리·꼬리 입자
   if (BY_.length < n) { BY_ = new Float32Array(n * 2); BA_ = new Float32Array(n * 2); }
   for (let i = 0; i < n; i++) {
     const b = bs[i], y = warpY(b.x, b.y);
@@ -2145,12 +2148,12 @@ export function drawBullets(view) {
     const seed = seedOf(b), frost = isFrost(b), by = BY_[i];
     if (!isMain(b, seed)) { // 보조탄: 옅은 빛만(몸은 아래 몸 층에서 작게)
       ctx.globalAlpha = 0.4 * fade;
-      spr(gl(frost ? '#7fe3ff' : '#ff7a1e'), b.x, by, 22, 22);
+      spr(gl(SK && b.owner !== 1 ? SK.main : frost ? '#7fe3ff' : '#ff7a1e'), b.x, by, 22, 22);
       continue;
     }
     const own = b.owner === 1 ? 0.88 : 1, jr = (0.92 + 0.16 * seed) * own * tk, spd = Math.hypot(b.vx, b.vy) || 1;
     const syn = b.syn, flame = syn === 'flame' || (!frost && frz), pierce = syn === 'pierce', homing = syn === 'homing';
-    const main = frost ? '#7fe3ff' : flame ? '#ff4a1a' : '#ff7a1e', core = frost ? '#e8fbff' : '#ffd23a';
+    const sk = SK && b.owner !== 1, main = sk ? SK.main : frost ? '#7fe3ff' : flame ? '#ff4a1a' : '#ff7a1e', core = sk ? SK.core : frost ? '#e8fbff' : '#ffd23a';
     const puls = 1 + 0.07 * Math.sin(RT * (18 + seed * 8) + seed * 20), hs = 44 * jr * puls * (flame ? 1.2 : 1);
     ctx.globalAlpha = 0.55 * fade;
     spr(gl(main), b.x, by, hs, hs);
@@ -2177,7 +2180,8 @@ export function drawBullets(view) {
     }
     // 꼬리 입자: 불티(위로 솟음) / 결정 가루(떨어짐)
     if (rnd() < sp * (flame ? 0.6 : 0.3)) { // 꼬리 바로 뒤에서 짧게(전장에 점이 흩뿌려지지 않게)
-      if (frost) part(K_SHARD, b.x - b.vx * 0.015, by - b.vy * 0.015, (rnd() - 0.5) * 40, (rnd() - 0.5) * 40, 0.25, 3.5, rnd() < 0.5 ? '#ffffff' : '#bff4ff', 200, 4);
+      if (sk) SK.trail(b.x, by, b.vx, b.vy);
+      else if (frost) part(K_SHARD, b.x - b.vx * 0.015, by - b.vy * 0.015, (rnd() - 0.5) * 40, (rnd() - 0.5) * 40, 0.25, 3.5, rnd() < 0.5 ? '#ffffff' : '#bff4ff', 200, 4);
       else part(K_GLOW, b.x - b.vx * 0.018 + (rnd() - 0.5) * 6, by - b.vy * 0.018 + (rnd() - 0.5) * 6, (rnd() - 0.5) * 30, -30 - rnd() * 40, 0.26, flame ? 12 : 9, rnd() < 0.5 ? '#ff9a2a' : '#ff5a1a', -40, 4);
     }
   }
@@ -2191,7 +2195,11 @@ export function drawBullets(view) {
     const frost = isFrost(b), syn = b.syn, pierce = syn === 'pierce', flame = syn === 'flame' || (!frost && frz);
     const jr = (0.92 + 0.16 * seed) * (b.owner === 1 ? 0.88 : 1) * tk * (main ? 1 : 0.62), a = Math.atan2(b.vy, b.vx);
     ctx.globalAlpha = fade * (main ? 1 : 0.8);
-    if (frost) {
+    if (SK && b.owner !== 1) { // v0.1.2 스킨 탄 머리(화염구와 같은 크기·흔들림)
+      const img = SK.head(((RT * 18 + seed * 7) | 0) & 1), s = 0.72 * jr * (flame ? 1.2 : 1);
+      place(b.x, BY_[i], a, s * (pierce ? 1.6 : 1) * (1 + 0.06 * Math.sin(RT * 30 + seed * 9)), s * (pierce ? 0.8 : 1));
+      ctx.drawImage(img, -img.hw - 5, -img.hh, img.hw * 2, img.hh * 2);
+    } else if (frost) {
       place(b.x, BY_[i], a, jr * (pierce ? 1.45 : 0.95), jr * 0.95);
       ctx.drawImage(fr, -fr.hw - 4, -fr.hh, fr.hw * 2, fr.hh * 2);
     } else {
@@ -2208,7 +2216,7 @@ export function drawBullets(view) {
     additive(true);
     for (let i = 0; i < n; i++) {
       const b = bs[i], seed = seedOf(b);
-      if (!isFrost(b) || !isMain(b, seed) || BA_[i] <= 0) continue;
+      if (!isFrost(b) || !isMain(b, seed) || BA_[i] <= 0 || (SK && b.owner !== 1)) continue;
       const ph = RT * (TAU / 0.35) + seed * TAU, tw = 0.5 + 0.5 * Math.sin(RT * 20 + seed * 12);
       ctx.globalAlpha = BA_[i];
       spr(sk, b.x + Math.cos(ph) * 11, BY_[i] + Math.sin(ph) * 7, 11 * tw, 11 * tw);
@@ -2792,6 +2800,7 @@ export function events(view, evs, opts) {
   fbBooms = 0; frags = 0;
   for (let i = 0; i < evs.length; i++) {
     const ev = evs[i];
+    SKM = skinMap(ev); // v0.1.2 외형 스킨(내 것만)
     switch (ev.type) {
       case 'hit': {
         if (ev.o === 2 || ev.o === 3) { // 영웅·스킬 피해(§6): 시각은 heroAttack/spellFx가 맡고 여기선 숫자·보스 티커만
@@ -2998,6 +3007,7 @@ export function events(view, evs, opts) {
       }
     }
   }
+  SKM = null;
 }
 
 // ═════════════ 갱신 (render.js 가 매 프레임 호출) ═════════════

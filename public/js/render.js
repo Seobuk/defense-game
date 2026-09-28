@@ -13,6 +13,7 @@ import * as fx from './art/fx.js';
 import * as hud from './art/hud.js';
 import * as mutfx from './art/mutfx.js'; // 4차 변이 연출(44 변이)
 import * as dungeon from './art/dungeonfx.js'; // 4차 던전(지역) 특성 연출
+import * as cosmetics from './art/cosmetics.js'; // v0.1.2 외형 스킨 입자(내 스킬·탄)
 
 // UI 정렬용 월드 좌표 (ui.js 가 DOM 위치를 맞춘다): 장비 드롭이 날아가 꽂히는 가방 버튼 / 마나 게이지 반짝임 위치
 export const BAG_POS = C.BAG_POS;
@@ -125,6 +126,7 @@ export function createRenderer(canvas) {
     world.events(view, evs, opts);
     hud.events(view, evs, opts);
     dungeon.events(view, evs, opts); // 던전: 부활·들불·'약점!'
+    cosmetics.events(view, evs); // v0.1.2 외형 스킨: 꽃잎·별·결정 입자
     // 갱신
     fx.update(view, da, dt);
     mutfx.update(view, da);
@@ -184,6 +186,7 @@ export function createRenderer(canvas) {
     units.drawDragon(view);
     mutfx.draw(view); // 변이 물체(태양 구체·뇌운·빙하 창·낫·기사·일식…)
     fx.drawParticles();
+    cosmetics.draw(); // v0.1.2 외형 스킨 입자·전설 문장
     fx.drawSprs();
     fx.drawBolts();
     fx.drawMeteors();

@@ -12,6 +12,7 @@ import { migrateTalents, TALENT_VER, recommendNext, allocateTalent } from './tal
 import { normShop, offlineGoldPerHour, offlineMul } from './shop.js'; // 4차 경제: 돌파·출정 준비 저장 · 방치 골드
 import { lockedRelics } from './relics.js'; // 4차 유물: 보석으로 해금한 유물(meta.relicUnlocked)
 import { normHistory, normLifetime, packRecord, BACKUP_RUNS, HISTORY_MAX } from './records.js'; // v0.1.1 도전 기록 · 평생 통계
+import { normSummon, packSummon } from './summon.js'; // v0.1.2 외형 소환(보유·장착·별조각·소환권·천장·내역)
 
 export const STORAGE_KEY = 'wallDefense.save.v1'; // 키는 그대로, 안의 스키마가 v:3
 export const SAVE_VERSION = 3;
@@ -96,6 +97,7 @@ export function normalize(d) {
   // v0.1.1 도전 기록(records.js): 없던 저장 → 빈 목록, 평생 통계는 runs·프로필·마지막 접속으로 시드
   out.history = normHistory(d.history, HISTORY_MAX, out.profile.id);
   out.lifetime = normLifetime(d.lifetime, { runs: out.runs, createdAt: out.profile.createdAt, lastSeen: out.lastSeen });
+  out.summon = normSummon(d.summon, out); // v0.1.2 외형 소환: 없던 저장 → 지금까지의 보상 단계는 받은 것으로 + 환영 선물 소환권 10장(한 번)
   // 특성 개편 환불 + 진행 중 도전: 그 도전의 클래스는 추천 빌드로 한 번 다시 찍어 전력을 지킨다(정비에서 무료 초기화 가능)
   const c = out.run?.loadout?.cls;
   if (c && out.hero.talentNotice && obj(d.hero).talentVer !== TALENT_VER)
@@ -239,6 +241,7 @@ export function exportSave(data) {
   try {
     const d = normalize(data);
     d.history = d.history.slice(-BACKUP_RUNS).map(r => packRecord(r, d.profile.id)); // 메신저로 보낼 길이로: 평생 통계 + 최근 20건만(자리 배열)
+    d.summon = packSummon(d.summon); // v0.1.2: 소환 내역(최근 100회)은 빼고 보유·장착·천장만
     const body = b64url(new TextEncoder().encode(JSON.stringify(d)));
     return `WD${SAVE_VERSION}-${body}-${fnv(body)}`;
   } catch {

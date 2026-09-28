@@ -17,6 +17,8 @@ import {
   numZone, arrowSpr, warcryUntil, skillCols, skillLv, tier, hu,
 } from './fx.js';
 import { emblem } from './emblems.js';
+// v0.1.2 외형(코스튬·로브·스킨) — 그림만, 전투력 0. docs/DESIGN.md 'v0.1.2 외형 소환 계약'
+import { heroCos, robeCos, paintCostume, paintRobe, cosLegs, robeOrb, skinCol, heroAura, mageAura } from './cosmetics.js';
 
 export const MAGE_FEET = 1004;             // 성벽 위 마법사 발 위치(y)
 const mageTier = lv => (lv ? clamp(Math.floor(((lv.multi | 0) + Math.min(5, (lv.atk | 0) / 12)) / 2), 0, 4) : 0);
@@ -1044,9 +1046,9 @@ function star5(x, cx, cy, r) {
 }
 
 // 망토 (어깨 = 원점, 아래로). 정면을 보므로 안감이 보인다
-export function mageCape(o, tier, res) {
-  const P = MAGE_PAL[o], len = tier >= 2 ? 52 : 38;
-  return bakeO(`mcp|${o}|${tier}${res ? '|r' + res.toFixed(2) : ''}`, 42, 34, -28, x => finish(x, x => {
+export function mageCape(o, tier, res, rb) { // rb: v0.1.2 로브 id(없으면 장착한 것, 0번 마법사만)
+  const R = o === 0 ? robeCos(rb) : null, P = R ? R.pal : MAGE_PAL[o], len = tier >= 2 ? 52 : 38;
+  return bakeO(`mcp|${o}|${tier}${R ? '|' + R.id : ''}${res ? '|r' + res.toFixed(2) : ''}`, 42, 34, -28, x => finish(x, x => paintRobe(x, R, 'cape', tier, () => {
     const path = () => {
       x.beginPath();
       x.moveTo(-12, 0);
@@ -1069,13 +1071,13 @@ export function mageCape(o, tier, res) {
     if (tier >= 4) { x.fillStyle = lite(P.trim, 0.3); for (const [sx, sy] of [[-20, 16], [18, 22], [-6, 30], [8, 10]]) { star5(x, sx, sy, 3); x.fill(); } }
     x.restore();
     path(); x.lineWidth = 3.5; x.strokeStyle = INK2; x.stroke();
-  }, 0, HERO_RIM, 1.3, 2.5), res || S * MS);
+  }), 0, HERO_RIM, 1.3, 2.5), res || S * MS);
 }
 
 // 몸 (발 = 원점). 지팡이 팔이 -x, 빈손이 +x
-export function mageBody(o, tier, res) {
-  const P = MAGE_PAL[o];
-  return bakeO(`mb|${o}|${tier}${res ? '|r' + res.toFixed(2) : ''}`, 46, 66, 58, x => finish(x, x => {
+export function mageBody(o, tier, res, rb) {
+  const R = o === 0 ? robeCos(rb) : null, P = R ? R.pal : MAGE_PAL[o];
+  return bakeO(`mb|${o}|${tier}${R ? '|' + R.id : ''}${res ? '|r' + res.toFixed(2) : ''}`, 46, 66, 58, x => finish(x, x => paintRobe(x, R, 'body', tier, () => {
     x.beginPath(); x.moveTo(-19, -76); x.quadraticCurveTo(-26, -54, -18, -44); x.lineTo(18, -44); x.quadraticCurveTo(26, -54, 19, -76); x.closePath();
     fs(x, cel(x, -26, -80, 26, -44, P.hair), 3, INK2);
     const robe = () => {
@@ -1143,7 +1145,7 @@ export function mageBody(o, tier, res) {
       star5(x, 26, -110, 5.5); fs(x, '#ffe45a', 1.8, INK2);
     }
     if (o === 1) mageP2(x, tier);
-  }, 0, HERO_RIM, 1.3, 2.5), res || S * MS);
+  }), 0, HERO_RIM, 1.3, 2.5), res || S * MS);
 }
 
 // AI 동료 마법사 표식: 흰 털 목도리 + 모자의 서리 결정 (P1 과 한눈에 구분)
@@ -1162,9 +1164,9 @@ function mageP2(x, tier) {
 }
 
 // 지팡이 (손잡이 = 원점, 위쪽이 머리). 손 포함
-export function mageStaff(o, tier, res) {
-  const P = MAGE_PAL[o], ob = STAFF_ORB[tier];
-  return bakeO(`ms|${o}|${tier}${res ? '|r' + res.toFixed(2) : ''}`, 27, 62, 28, x => finish(x, x => {
+export function mageStaff(o, tier, res, rb) {
+  const R = o === 0 ? robeCos(rb) : null, P = R ? R.pal : MAGE_PAL[o], ob = STAFF_ORB[tier];
+  return bakeO(`ms|${o}|${tier}${R ? '|' + R.id : ''}${res ? '|r' + res.toFixed(2) : ''}`, 27, 62, 28, x => finish(x, x => paintRobe(x, R, 'staff', tier, () => {
     if (tier >= 3) for (const s of [-1, 1]) {
       x.beginPath(); x.moveTo(s * 4, ob.y + 6);
       x.quadraticCurveTo(s * 20, ob.y + 2, s * 24, ob.y - 14);
@@ -1195,7 +1197,7 @@ export function mageStaff(o, tier, res) {
     shine(x, -ob.r * 0.35, ob.y - ob.r * 0.42, ob.r * 0.36, ob.r * 0.2, -0.6, 0.9);
     ell(x, 0, 6, 6.5, 4); fs(x, P.robe, 2, INK2);
     circ(x, 0, 0, 5.5); fs(x, SKIN, 2.5, INK2);
-  }, 0, HERO_RIM, 1.1, 0), res || S * MS);
+  }), 0, HERO_RIM, 1.1, 0), res || S * MS);
 }
 
 // ── 영웅 (5 클래스 · 티어 · 장비 희귀도) ──
@@ -1353,8 +1355,10 @@ const HERO_ART = {
   },
 };
 
-export function heroBody(cls, tier, armorR, helmR, res) {
+export function heroBody(cls, tier, armorR, helmR, res, cos) {
   if (!HERO_ART[cls]) cls = 'knight';
+  const cz = heroCos(cls, cos); // v0.1.2 코스튬(cos 없으면 장착한 것): 장비 색 대신 코스튬 색·장식, 장식이 들어가게 상자를 조금 크게
+  if (cz) return bakeO(`hb|${cls}|${tier}|cz:${cz.id}${res ? '|r' + res.toFixed(2) : ''}`, 46, 64, 45, x => finish(x, q => paintCostume(q, cz, tier | 0, () => HERO_ART[cls](q, tier | 0, null, null)), 0, HERO_RIM, 1.4, 2.4), res || S * HS);
   return bakeO(`hb|${cls}|${tier}|${armorR}|${helmR}${res ? '|r' + res.toFixed(2) : ''}`, 36, 62, 45, x => finish(x, q => HERO_ART[cls](q, tier | 0, armorR || null, helmR || null), 0, HERO_RIM, 1.4, 2.4), res || S * HS);
 }
 
@@ -1425,7 +1429,7 @@ export function heroPortraitURL(cls, tier = 0, eq = null, px = 360) {
   if (!HERO_ART[cls]) cls = 'knight';
   tier = clamp(tier | 0, 0, 4);
   const r = k => { const v = eq && eq[k]; return (v && (typeof v === 'string' ? v : v.rarity)) || null; };
-  const key = [cls, tier, r('armor'), r('helm'), r('weapon'), r('cape'), px].join('|');
+  const key = [cls, tier, r('armor'), r('helm'), r('weapon'), r('cape'), px, heroCos(cls)?.id].join('|'); // v0.1.2: 장착 코스튬
   let url = PORTRAITS.get(key);
   if (url) return url;
   const W0 = 104, H0 = 134, k = px / H0; // 로컬(몸) 단위 상자: x -52..52, y -116..18 (발 = 0)
@@ -1438,7 +1442,7 @@ export function heroPortraitURL(cls, tier = 0, eq = null, px = 360) {
   at(0, 0);
   for (const s of [-1, 1]) { // 다리 (drawHero 와 같은 모양)
     rrect(x, s * 5 - 4.5, -17, 9, 16, 4);
-    x.fillStyle = cls === 'cleric' ? '#c8b888' : cls === 'assassin' ? '#1e1a2e' : '#5a3a2a'; x.fill();
+    x.fillStyle = cosLegs(cls) || (cls === 'cleric' ? '#c8b888' : cls === 'assassin' ? '#1e1a2e' : '#5a3a2a'); x.fill();
     x.lineWidth = 2.6; x.strokeStyle = INK2; x.stroke();
   }
   draw(heroBody(cls, tier, r('armor'), r('helm'), k));
@@ -1462,7 +1466,7 @@ export function itemIconURL(slot, rarity, cls, px = 128) {
 }
 // 성벽 마법사(o = 0 나 · 1 AI) 전신 dataURL — 타이틀 키아트용. 지팡이는 몸 옆에 세운 자세
 export function magePortraitURL(o, tier = 2, px = 360) {
-  const key = 'mage|' + o + '|' + tier + '|' + px;
+  const key = 'mage|' + o + '|' + tier + '|' + px + (o === 0 ? '|' + (robeCos()?.id || '') : ''); // v0.1.2: 장착 로브
   let url = PORTRAITS.get(key);
   if (url) return url;
   const W0 = 130, H0 = 150, k = px / H0;
@@ -2085,7 +2089,7 @@ function figure(cls, tier, eq, x, fy, face, o) {
     const q = o.ph + (k > 0 ? 0 : Math.PI);
     const sw = o.moving ? Math.sin(q) * stride : 0, up = o.moving ? Math.max(0, Math.sin(q)) * lift : 0;
     rr(k * 5 + sw - 4.5, -17 - up, 9, 16, 4);
-    ctx.fillStyle = tintC || LEG_COL[cls] || '#5a3a2a'; ctx.fill();
+    ctx.fillStyle = tintC || cosLegs(cls) || LEG_COL[cls] || '#5a3a2a'; ctx.fill();
     ctx.lineWidth = 2.6; ctx.strokeStyle = '#22163a'; ctx.stroke();
   }
   place(x + (o.recoil || 0) * face, fy + bob, lean, sx, sy);
@@ -2230,11 +2234,13 @@ export function drawHero(view) {
   }
   // 궁수: 시위에 건 화살(준비 중 당겨짐)
   HF.rv = { x: fx + (recoil || 0) * face * fscale, y: fy + hop + bob, lean: lean * face, sx: face * fscale * pop * HS, sy: pop * HS * sy, cls };
+  heroAura(0, cls, fx, fy + hop + bob, face * fscale, pop * HS, HF.body); // v0.1.2 전설 코스튬 오라(몸 뒤)
   figure(cls, tier, eq, fx, fy + hop, face * fscale, {
     pop, ph, moving, run, wAng, lean: lean * face, bob, sy, recoil, glowTip, hurt: HF.hurt, halo: CLASS_COL[cls] || '#fff6dc',
     redA: retreat ? 0.12 + 0.12 * Math.sin(RT * 9) : 0,
     gold: h.invulnT > 0 ? 0.25 + 0.15 * Math.sin(RT * 12) : 0,
   });
+  heroAura(1, cls, fx, fy + hop + bob, face * fscale, pop * HS, HF.body); // v0.1.2 전설 코스튬 대기 동작(몸 앞)
   if (cls === 'ranger' && prep > 0.2) {
     const a = wAng, gx = fx + face * (HERO_GRIP.x + recoil) * HS, gy = fy + hop + bob + HERO_GRIP.y * HS;
     place(gx, gy, face > 0 ? a : Math.PI - a, 1.1, 1.1);
@@ -2536,7 +2542,7 @@ export function drawMages(view, opts) {
   for (let i = 0; i < 2; i++) {
     const p = mageOn(view, i) ? view.players[i] : null, c = { x: MF[i].cx }, M = MF[i], P = pose[i], tier = tiers[i];
     if (!p) continue;
-    const baseCol = i === 0 ? (fireP1 ? '#ff6a1f' : MAGE_PAL[0].orb[1]) : MAGE_PAL[1].orb[1];
+    const baseCol = i === 0 ? (fireP1 ? '#ff6a1f' : robeOrb() || MAGE_PAL[0].orb[1]) : MAGE_PAL[1].orb[1]; // v0.1.2 로브 오브 색
     const orbCol = M.cast > 0.15 || M.big > 0.1 ? M.col : baseCol; // 시전 중 오브 = 그 주문 색
     const n = clamp(p.lv ? p.lv.multi | 0 : 0, 0, 5);
     // 오라
@@ -2554,6 +2560,7 @@ export function drawMages(view, opts) {
     additive(false);
     spr(shadow(), c.x, MAGE_FEET, 96, 25);
     orbit(i, n, c.x, MAGE_FEET - 60, orbCol, false);
+    if (i === 0) mageAura(0, c.x, MAGE_FEET, P.side * MS, MS); // v0.1.2 전설 로브 오라(몸 뒤)
     if (tier >= 1) { // 망토 (흔들림)
       place(c.x, MAGE_FEET - 54 * P.sy * MS + 30 * (MF.fall || 0), 0, P.side * P.sx * MS, P.sy * MS);
       ctx.transform(1, 0, 0.07 * Math.sin(RT * 1.6 + i * 2) - 0.14 * P.cst, 1, 0, 0);
@@ -2588,6 +2595,7 @@ export function drawMages(view, opts) {
     }
     ctx.globalAlpha = 1;
     additive(false);
+    if (i === 0) mageAura(1, c.x, MAGE_FEET, P.side * MS, MS); // v0.1.2 전설 로브 동작(몸 앞)
     orbit(i, n, c.x, MAGE_FEET - 60, orbCol, true);
     // 이름표
     // 이름표: 내 마법사 = 닉네임(4차 — 솔로에도 표시, 없으면 협동 때만 '나')
@@ -2629,7 +2637,7 @@ export function events(view, evs, opts) {
       case 'cast': { // 주문 시전: 지팡이를 겨누고(기본 주문) / 머리 위로 치켜들고(쿨타임 주문) + 오브 앞 마법진 + 발밑 룬
         const o = ev.o === 1 ? 1 : 0, M = MF[o], c = { x: M.cx, y: CANNONS[o].y };
         // 기본 주문(basic)은 SPELL_BY_KEY를 보지 않는다 — 카드 '파이어볼'과 기본 '화염구'가 같은 키
-        const col = ev.basic ? (ev.spell === 'frostbolt' ? '#8fe8ff' : '#ff8a2a') : skillCols(ev.spell)[0];
+        const col = ev.basic ? ((o === 0 && skinCol()) || (ev.spell === 'frostbolt' ? '#8fe8ff' : '#ff8a2a')) : skillCols(ev.spell)[0]; // v0.1.2 스킨: 내 기본 주문 시전 색
         M.cast = 1; M.col = col;
         M.aim = Math.atan2((+ev.ty || 0) - c.y, (+ev.tx || c.x) - c.x);
         if (!ev.basic) { // 쿨타임 스킬 = 주인공: 지팡이를 치켜들고 발밑 마법진 + 원소색 기둥 섬광

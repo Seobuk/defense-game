@@ -13,6 +13,7 @@ import { createAudio } from './audio.js';
 import * as store from './save.js';
 import * as updater from './updater.js';
 import * as pwa from './pwa.js';
+import { initSummonUI, summonHandleBack, openWardrobe, syncLoadout } from './summonui.js'; // v0.1.2 소환의 제단 · 옷장(자기 전체 화면 층)
 
 const HITSTOP_CAP = 500;          // ms
 const HITSTOP_SCALE = [1, 0.75, 0.5]; // 배속별 히트스톱 축소
@@ -118,11 +119,19 @@ const heroUI = createHeroUI(document.getElementById('app'), {
   onTalent: key => heroDo({ type: 'talent', key }, { type: 'talent', cls: data.hero.cls, key }),
   onTalentReset: () => !inRun() && persistOk(campAct(data, { type: 'talentReset', cls: data.hero.cls })),
   onToggleAutoTalent: on => persistOk(campAct(data, { type: 'autoTalent', on })),
+  onOpenWardrobe: cls => openWardrobe({ cls }), // v0.1.2 옷장(영웅 화면 '영웅' 탭)
   onClose: () => {},
+});
+// v0.1.2 외형 소환: 바꾸는 건 전부 campAct(summon.js) + 저장, 화면을 닫으면 정비 화면(보석·소환권 점) 다시 그림
+initSummonUI(document.getElementById('app'), {
+  getMeta: () => data,
+  act: a => { const r = campAct(data, a); persistOk(r); return r; },
+  play: k => audio.play(k),
+  onClose: () => ui.refreshCamp(),
 });
 // 클래스 해금은 최고 기록(best) 기준
 const runCtx = () => ({ stage: data.best, gold: game.players[0].gold });
-const campCtx = () => ({ stage: data.best, camp: true, gold: data.gold });
+const campCtx = () => ({ stage: data.best, camp: true, gold: data.gold, cos: JSON.stringify(data.summon?.equip?.costume) }); // v0.1.2 cos: 옷장에서 바꾸면 영웅 화면 초상 다시
 
 // ── 디버그 파라미터 (브라우저 전용): ?spells=fireball:3,tornado ?herolv=N ?loot=rarity|all ?gems=N ?best=N ──
 if (!native) {
@@ -259,6 +268,7 @@ function resetState() {
   pendingResult = null;
   heroUI.close();
   audio.setEnabled(data.settings.sound);
+  syncLoadout(); // v0.1.2 저장이 바뀌면(초기화·백업 복원) 장착 외형도 전장 그림에 다시
 }
 function showHome() { // 저장이 바뀐 뒤: 도전 중이면 타이틀(이어하기), 아니면 정비 화면
   if (data.run) { mode = 'title'; ui.showTitle({ best: data.best, run: data.run, hero: data.hero }); } else showCamp();
@@ -525,6 +535,7 @@ async function protectStorage() {
 
 // ── 안드로이드 뒤로가기: 시트·모달 닫기 → 도전 중이면 일시정지 메뉴, 정비·타이틀에선 두 번 눌러 종료 ──
 App?.addListener('backButton', () => {
+  if (summonHandleBack()) return; // v0.1.2 소환·옷장 층이 영웅 화면 위
   if (heroUI.handleBack()) return;
   if (ui.handleBack()) return;
   if (inRun()) { document.getElementById('btn-menu').click(); return; }
@@ -564,6 +575,7 @@ function frame(now) {
   meta.profile = data.profile;
   meta.native = native; // 설정 '기록 보호' 줄(APK = 앱 저장소)
   meta.discovered = game ? game.discovered : data.discovered;
+  meta.summon = data.summon; // v0.1.2 타이틀 'NEW 외형 소환' 리본(ui.js syncTeaser — giftPending)
 
   if (!game) { // 타이틀 · 정비 화면 · (전장 없는) 결과 화면
     ui.update(null, meta);

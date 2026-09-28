@@ -13,6 +13,7 @@ import { icon } from './icons.js';
 import { fmt } from './util.js';
 import { createShopUI } from './shopui.js'; // 4차 경제: 상점 탭(상자·유물) · 출정 준비 카드
 import { trainBreakCost, trainBreakText, gemBreakOpen, gemBreakCost, gemBreakText, GEM_BREAK } from './shop.js';
+import { openAltar, openWardrobe, maybeGift, summonDot, altarTabIcon, wardrobeIcon } from './summonui.js'; // v0.1.2 외형 소환: '소환' 탭 · 옷장 버튼 · 환영 선물
 
 const META_ICON = {
   greed: 'coin', wisdom: 'hero', choice: 'new', reroll: 'reroll', startSlot: 'codex', revive: 'em:flawless', critBoom: 'em:critBoom', awaken: 'crit', pickaxe: 'em:pickaxe', forget: 'reroll',
@@ -50,6 +51,7 @@ export function createCamp(root, H = {}) {
           <button class="hu-nav prev" aria-label="이전 영웅">‹</button><button class="hu-nav next" aria-label="다음 영웅">›</button>
           <button class="cp-tpts" hidden></button>
           <span class="cp-cur" hidden>${icon('check')}출전</span>
+          <button class="cp-wardrobe" aria-label="옷장 — 외형 바꾸기">${wardrobeIcon()}<span>옷장</span></button>
         </div>
         <div class="cp-id">
           <div class="cp-namerow"><h2 class="cp-name"></h2><span class="hu-role cp-role"></span></div>
@@ -111,6 +113,7 @@ export function createCamp(root, H = {}) {
       <button class="cp-tab" data-go="train" role="tab" aria-selected="false">${icon('atk')}<span>수련</span><i class="cp-dot" hidden></i></button>
       <button class="cp-tab" data-go="talent" role="tab" aria-selected="false">${icon('crit')}<span>특성</span><i class="cp-dot" hidden></i></button>
       <button class="cp-tab" data-go="shop" role="tab" aria-selected="false">${icon('shop')}<span>상점</span><i class="cp-dot" hidden></i></button>
+      <button class="cp-tab" data-go="summon">${altarTabIcon()}<span>소환</span><i class="cp-dot" hidden></i></button>
       <button class="cp-tab" data-go="codex">${icon('codex')}<span>도감</span><i class="cp-dot" hidden></i></button>
       <button class="cp-tab" data-go="records">${icon('trophy')}<span>기록</span></button>
     </nav>
@@ -160,7 +163,7 @@ export function createCamp(root, H = {}) {
   const portrait = (cls, px, lockedLook) => heroPortraitURL(cls, lockedLook ? 0 : heroTier(meta.hero.level), lockedLook ? null : meta.hero.equip, px);
 
   // ── 탭 ──
-  for (const b of $$('.cp-tab')) on(b, 'click', () => (b.dataset.go === 'codex' ? H.onOpenCodex?.() : b.dataset.go === 'records' ? H.onOpenRecords?.(meta) : setPane(b.dataset.go)));
+  for (const b of $$('.cp-tab')) on(b, 'click', () => (b.dataset.go === 'codex' ? H.onOpenCodex?.() : b.dataset.go === 'summon' ? openAltar() : b.dataset.go === 'records' ? H.onOpenRecords?.(meta) : setPane(b.dataset.go)));
   function setPane(p) {
     pane = p;
     for (const b of $$('.cp-tab[role="tab"]')) b.setAttribute('aria-selected', String(b.dataset.go === p));
@@ -187,6 +190,7 @@ export function createCamp(root, H = {}) {
     on(st, 'pointerup', e => { if (sx != null && Math.abs(e.clientX - sx) > 40) step(e.clientX < sx ? 1 : -1); sx = null; }); }
   on($('.cp-tpts'), 'click', () => setPane('talent'));
   on($('.cp-gear-btn'), 'click', () => H.onOpenHero?.({ tab: 'char' }));
+  on($('.cp-wardrobe'), 'click', () => openWardrobe({ cls: preview }));
 
   // ── 시작 스킬 ──
   function validStart() {
@@ -217,6 +221,7 @@ export function createCamp(root, H = {}) {
     notice.hidden = true;
     H.onCampAct?.({ type: 'talentNoticeSeen' });
     if (go) setPane('talent');
+    else setTimeout(maybeGift, 300); // v0.1.2 환영 선물은 특성 안내 뒤에
   }
   on($('.cp-nt-go'), 'click', () => closeNotice(true));
   on($('.cp-nt-ok'), 'click', () => closeNotice(false));
@@ -278,7 +283,7 @@ export function createCamp(root, H = {}) {
   const signature = () => {
     const h = meta.hero;
     return [meta.gems, gold(meta), TRAIN_KEYS.map(k => trainLv(meta, k)).join(), JSON.stringify([meta.trainBreak, meta.gemBreak, meta.prep, meta.relicUnlocked, h.bag.length]), meta.best, meta.runs, h.cls, h.level, Math.floor(h.xp), SLOTS.map(s => h.equip[s]?.id).join(), JSON.stringify(h.talents), h.autoTalent,
-      Object.values(meta.metaLv).join(), meta.seenSpells.join(), JSON.stringify(meta.lastLoadout), (meta.discovered || []).length, meta.profile?.name].join('|');
+      Object.values(meta.metaLv).join(), meta.seenSpells.join(), JSON.stringify(meta.lastLoadout), (meta.discovered || []).length, meta.profile?.name, meta.summon?.tickets, JSON.stringify(meta.summon?.equip)].join('|');
   };
 
   function render(force = false) {
@@ -301,6 +306,7 @@ export function createCamp(root, H = {}) {
     $('.cp-tab[data-go="talent"] .cp-dot').hidden = !(tLeft > 0);
     $('.cp-tab[data-go="shop"] .cp-dot').hidden = !shop.dots(meta).any; // 보석 강화·보석 돌파·유물 해금(상자는 반복 소비라 점 없음)
     $('.cp-tab[data-go="codex"] .cp-dot').hidden = !H.codexNew?.();
+    $('.cp-tab[data-go="summon"] .cp-dot').hidden = !summonDot(meta); // 소환권이 있으면
     el.style.setProperty('--cc', CLS_INFO[pane === 'sortie' ? preview : cls].col);
     if (pane === 'sortie') renderSortie(hero, cls, tLeft);
     if (pane === 'train') renderTrain();
@@ -463,6 +469,7 @@ export function createCamp(root, H = {}) {
     setPane('sortie');
     el.classList.remove('in'); void el.offsetWidth; el.classList.add('in');
     notice.hidden = !meta.hero?.talentNotice;
+    if (notice.hidden) setTimeout(() => { if (!el.hidden && notice.hidden) maybeGift(); }, 450); // v0.1.2 환영 선물 안내(한 번)
     if (!notice.hidden) {
       // 진행 중이던 도전 때문에 추천 빌드로 이미 다시 찍었으면(save.js) '돌려받았어요' 대신 그 사실 + 무료 초기화 안내
       const auto = talentPoints(meta.hero) > 0 && talentLeft(meta.hero, meta.hero.cls) === 0;

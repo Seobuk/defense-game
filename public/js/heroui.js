@@ -98,7 +98,7 @@ const heroSig = (hero, ctx) => {
   s += '|' + hero.bag.length;
   for (const it of hero.bag) s += ',' + it.id;
   s += '|' + JSON.stringify(hero.talents || {}) + (hero.autoTalent ? 1 : 0);
-  return s + '|' + Math.floor(ctx.stage || 0) + '|' + Math.floor(ctx.gold || 0) + '|' + (ctx.camp ? 1 : 0);
+  return s + '|' + Math.floor(ctx.stage || 0) + '|' + Math.floor(ctx.gold || 0) + '|' + (ctx.camp ? 1 : 0) + '|' + (ctx.cos || ''); // v0.1.2 cos = 장착 코스튬(초상이 바뀌게)
 };
 const bars = (n, max = 5) => Array.from({ length: max }, (_, i) => `<i class="${i < n ? 'on' : ''}"></i>`).join('');
 
@@ -164,6 +164,7 @@ export function createHeroUI(root, handlers = {}) {
         </div>
         <section class="hu-panel hu-panel-char" data-panel="char">
           <button class="k-btn s neutral hu-changeclass">${icon('hero')}클래스 변경</button>
+          <button class="k-btn s secondary hu-wardrobe">${icon('new')}옷장 · 외형 바꾸기</button>
           <h3 class="hu-sec-h">장비 보너스</h3>
           <div class="hu-bonuses"></div>
           <h3 class="hu-sec-h">성장 마일스톤</h3>
@@ -395,6 +396,7 @@ export function createHeroUI(root, handlers = {}) {
   }
   on($('.hu-close'), 'click', userClose);
   on($('.hu-changeclass'), 'click', () => showClassPick('change'));
+  on($('.hu-wardrobe'), 'click', () => H.onOpenWardrobe?.(curHero?.cls)); // v0.1.2 옷장(summonui.js 층이 이 화면 위에 뜬다)
   for (const b of tabs) on(b, 'click', () => setTab(b.dataset.tab));
   function setTab(tab) {
     if (activeTab === tab) return;

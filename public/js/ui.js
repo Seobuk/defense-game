@@ -25,6 +25,8 @@ import { mutOptionsHTML, mutCardLabel, mutBadgeHTML, mutName, mutTipHTML, upgrad
 import { mutChoice } from './mutations.js';
 import { createNameUI } from './nameui.js'; // 4차 닉네임 입력 창
 import { createRecordUI } from './recordui.js'; // v0.1.1 도전 기록 화면
+import { renderCosmeticCodex, resultTickets } from './summonui.js'; // v0.1.2 도감 '외형' 탭 · 결과 화면 소환권
+import { giftPending } from './summon.js'; // v0.1.2 타이틀 'NEW 외형 소환' 리본
 
 const SYN_BY_KEY = Object.fromEntries(SYNERGIES.map(s => [s.key, s]));
 const KIND_TAG = { cannon: '마법', duo: '협동', event: '이벤트' };
@@ -1073,6 +1075,7 @@ export function createUI(root, handlers = {}) {
     try { paintTitle(); } catch (e) { console.warn(e); }
     titleRun = run; titleHero = hero;
     txt(E['btn-start'].querySelector('.b-main'), run ? '이어하기' : '시작하기');
+    syncTeaser();
     txt(E['start-sub'], run ? `${run.stage}층 · ${HERO_CLASSES[run.loadout?.cls]?.name || '도전 중'}` : best > 0 ? `최고 기록 ${best}층` : '100층 탑에 도전!');
     hideClear(); E.defeat.hidden = true;
     camp.hide();
@@ -1080,6 +1083,14 @@ export function createUI(root, handlers = {}) {
     syncInert();
     clearTimeout(contTimer);
     if (run) contTimer = setTimeout(() => { if (!E.title.hidden && !stack.length) showContinue(run, hero); }, 700);
+  }
+  // v0.1.2: 환영 선물을 아직 안 봤으면 시작 버튼에 새 기능 예고 리본(css/summon.css) — 부팅 땐 meta가 첫 update에 오므로 update에서도 부른다
+  function syncTeaser() {
+    const on = !!(meta?.summon && giftPending(meta)), b = E['btn-start'];
+    if (b._tz === on) return;
+    b._tz = on;
+    b.querySelector('.sm-teaser')?.remove();
+    if (on) b.insertAdjacentHTML('beforeend', '<span class="sm-teaser" aria-hidden="true">NEW 외형 소환</span>');
   }
   function hideTitle() {
     clearTimeout(contTimer);
@@ -1198,6 +1209,7 @@ export function createUI(root, handlers = {}) {
     rel.hide();
     renderResult(sum, game);
     rel.renderResult(sum);
+    resultTickets(E['m-result'].querySelector('.res-gems'), sum.tickets); // v0.1.2 획득 소환권
     openModal('m-result');
   }
   function renderResult(sum, game) {
@@ -1355,7 +1367,15 @@ export function createUI(root, handlers = {}) {
     attr(E['ctab-hidden'], 'aria-selected', String(t === 'hidden'));
     attr(E['ctab-fusion'], 'aria-selected', String(t === 'fusion'));
     attr(E['ctab-collab'], 'aria-selected', String(t === 'collab'));
+    cosList.hidden = t !== 'cos'; attr(cosTab, 'aria-selected', String(t === 'cos')); // v0.1.2 외형 탭
+    root.querySelector('#m-codex .codex-top').style.display = t === 'cos' ? 'none' : ''; txt(root.querySelector('#codex-h'), t === 'cos' ? '외형 도감' : '조합 도감'); // v0.1.2: 외형 탭은 자기 수집 막대만
+    if (t === 'cos') renderCosmeticCodex(cosList);
   }
+  // v0.1.2 도감 '외형' 탭(summonui.js — 수집률 + 외형 격자, 누르면 상세)
+  E['ctab-collab'].insertAdjacentHTML('afterend', '<button class="k-tab" role="tab" id="ctab-cos" aria-selected="false" data-tab="cos">외형</button>');
+  E['codex-list-collab'].insertAdjacentHTML('afterend', '<div id="codex-list-cos" class="sh-body" role="tabpanel" hidden></div>');
+  const cosTab = root.querySelector('#ctab-cos'), cosList = root.querySelector('#codex-list-cos');
+  on(cosTab, 'click', () => setCodexTab('cos'));
   on(E['ctab-hidden'], 'click', () => setCodexTab('hidden'));
   on(E['ctab-fusion'], 'click', () => setCodexTab('fusion'));
   on(E['ctab-collab'], 'click', () => setCodexTab('collab'));
@@ -1568,6 +1588,7 @@ export function createUI(root, handlers = {}) {
     meta = m || {};
     if (stage.clientWidth !== layW || stage.clientHeight !== layH) layout(); // 관찰자·resize 이벤트를 놓친 크기 변경(가려진 웹뷰 등) 보정
     if (meta.version) setVersion(meta.version);
+    if (!E.title.hidden) syncTeaser(); // v0.1.2
     if (isOpen('m-settings')) renderSettings();
     if (isOpen('m-codex') && discovered().size !== codexCount) renderCodex();
     if (camp.isOpen()) camp.refresh();

@@ -8,6 +8,7 @@ import { allocateTalent, resetTalents, recommendNext } from './talents.js';
 import { runBonus, takePrep, buyTrainBreak, buyGemBreak, togglePrep, openBox, unlockRelic } from './shop.js'; // 4차 경제 싱크
 import { relicPool } from './relics.js'; // 4차 유물
 import { runRecord, addRecord } from './records.js'; // v0.1.1 도전 기록
+import { grantRunTickets, pull, exchange, equipCos, unequipCos, markGiftSeen } from './summon.js'; // v0.1.2 외형 소환(전투력 0)
 
 export { serializeRun, normalizeRun };
 
@@ -115,6 +116,7 @@ export function endRun(game, meta, ctx = {}) {
     newClasses: unlockedClasses(meta.best).filter(c => !before.includes(c)),
     name: meta.profile?.name || '', runNo: meta.runs, // 결과 화면 '〈닉네임〉의 N번째 도전'
   };
+  sum.tickets = grantRunTickets(meta, { cleared, now: ctx.now }); // v0.1.2 소환권: 보스 첫 처치·10층 구간·오늘 첫 도전·도감 단계(멱등) → [{ src, n, label }]
   addRecord(meta, runRecord(game, meta, sum, ctx)); // run = null과 같은 저장(setItem 한 번)에 들어간다
   return sum;
 }
@@ -172,6 +174,12 @@ export function campAct(meta, a) {
     case 'prep': return togglePrep(meta, a.key);
     case 'box': return openBox(meta, a.key);
     case 'relic': return unlockRelic(meta, a.key); // 유물 해금(보석, relics.js)
+    // v0.1.2 외형 소환(summon.js): 소환 {banner, n, pay?} → 결과 객체 | false · 별조각 교환 · 장착/해제 · 환영 선물 안내 닫기
+    case 'summon': { const r = pull(meta, a.banner, a.n, { pay: a.pay, week: a.week }); return r.ok ? r : false; } // week = 화면에 보인 픽업(바뀌었으면 거절)
+    case 'cosExchange': return exchange(meta, a.key);
+    case 'cosEquip': return equipCos(meta, a.key);
+    case 'cosUnequip': return unequipCos(meta, a.slot, a.cls);
+    case 'giftSeen': return markGiftSeen(meta);
   }
   return false;
 }
