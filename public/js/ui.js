@@ -1686,7 +1686,7 @@ export function createUI(root, handlers = {}) {
     return stack.length > 0 || !E.defeat.hidden || !E.clear.hidden || pickOpen || rel.isOpen() || camp.isOpen();
   }
 
-  // 안드로이드 뒤로가기: 처리했으면 true. 카드 선택·결과·이어하기는 삼킨다(선택을 피할 수 없게)
+  // 안드로이드 뒤로가기: 처리했으면 true. 카드 선택·유물 3택은 삼킨다(선택을 피할 수 없게). 이어하기 창은 false(두 번 눌러 종료)
   function handleBack() {
     if (mutSheet.isOpen()) { mutSheet.close(); return true; } // 변이 A/B 시트
     if (rel.handleBack()) return true; // 비우기 시트 닫기 · 유물 3택은 삼킨다
@@ -1694,7 +1694,10 @@ export function createUI(root, handlers = {}) {
     if (stack.length) {
       const top = stack[stack.length - 1].el.id;
       if (top === 'm-result') { E['btn-res-done'].click(); return true; }
-      if (top === 'm-continue') return true;
+      if (top === 'm-continue') { // 포기 확인 중이면 되돌리기, 아니면 앱의 첫 화면 → main.js의 '한 번 더 누르면 종료'로
+        if (!E['cont-confirm'].hidden) { E['btn-cont-no'].click(); return true; }
+        return false;
+      }
       if (top === 'm-name') return nameUI.handleBack();
       closeModal(top);
       return true;

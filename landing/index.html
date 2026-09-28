@@ -1,150 +1,391 @@
 <!DOCTYPE html>
-<html lang="ko">
+<html lang="ko" data-os="desktop">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>대마법사의 용사 키우기</title>
-  <meta name="description" content="마법 성벽 디펜스 로그라이트 게임. 100층까지 주문만으로 막아내세요!">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>대마법사의 용사 키우기 — 마법 성벽 디펜스 로그라이트</title>
+  <meta name="description" content="성벽 위 대마법사가 고른 주문을 퍼붓고, 영웅은 전장을 누빕니다. 스킬 융합·변이·유물로 100층 탑 끝까지. 무료 · 광고 없음 · Android APK와 iPhone 웹앱.">
+  <meta name="theme-color" content="#1d1650">
+  <link rel="canonical" href="https://seobuk.github.io/defense-game/">
+  <meta property="og:type" content="website">
+  <meta property="og:locale" content="ko_KR">
+  <meta property="og:site_name" content="대마법사의 용사 키우기">
+  <meta property="og:title" content="대마법사의 용사 키우기 — 마법 성벽 디펜스 로그라이트">
+  <meta property="og:description" content="고른 주문만 쏟아붓는 대마법사 × 전장을 누비는 영웅. 융합·변이·유물로 100층까지. 무료, 광고 없음.">
+  <meta property="og:url" content="https://seobuk.github.io/defense-game/">
+  <meta property="og:image" content="https://seobuk.github.io/defense-game/assets/og.jpg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" type="image/png" sizes="192x192" href="assets/icon-192.png">
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Gowun+Dodum&family=Jua&display=swap">
   <link rel="stylesheet" href="style.css">
+  <script>
+    // 렌더 전에 기기 판별(깜빡임 없이 기기별 버튼·설치 안내를 고른다) — main.js가 같은 값을 쓴다
+    (function () {
+      var ua = navigator.userAgent, h = document.documentElement;
+      var ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+      h.dataset.os = ios ? 'ios' : /Android/i.test(ua) ? 'android' : 'desktop';
+      if (/KAKAOTALK/i.test(ua)) h.dataset.inapp = 'kakao';
+      else if (/Instagram|FBAN|FBAV|FB_IAB|Line\/|NAVER\(inapp|DaumApps|everytimeApp|; wv\)/i.test(ua)) h.dataset.inapp = 'other';
+    })();
+  </script>
 </head>
 <body>
+  <a class="skip" href="#main">본문으로 건너뛰기</a>
 
   <!-- 1. 히어로 -->
-  <header class="hero">
-    <div class="container">
-      <h1 class="logo">대마법사의<br>용사 키우기</h1>
-      <p class="hook">주문 하나로 100층까지. 무너지면 다시, 더 강하게.</p>
-      
-      <div class="cta-group">
-        <a href="https://github.com/Seobuk/defense-game/releases/latest/download/defense-game.apk" class="k-btn l">
-          Android APK 다운로드
-        </a>
-        <a href="./play/" class="k-btn l secondary">
-          iPhone에서 플레이
-        </a>
+  <header class="hero" id="top">
+    <div class="sky" aria-hidden="true"><i class="stars"></i><i class="moon"></i><i class="glow"></i></div>
+    <div class="container hero-grid">
+      <div class="hero-copy">
+        <h1 class="logo" aria-label="대마법사의 용사 키우기">
+          <i class="rune" aria-hidden="true"></i>
+          <span class="logo-eyebrow" aria-hidden="true"><span data-text="대마법사의">대마법사의</span></span>
+          <span class="logo-main" aria-hidden="true"><span class="lm-a" data-text="용사">용사</span><span class="lm-b" data-text="키우기">키우기</span></span>
+          <i class="spark s1" aria-hidden="true"></i><i class="spark s2" aria-hidden="true"></i><i class="spark s3" aria-hidden="true"></i>
+        </h1>
+        <p class="hook">성벽 위 대마법사는 <b>고른 주문</b>만 퍼붓고,<br>영웅은 전장 한가운데를 누빈다. <b>100층 탑</b> 끝까지!</p>
+        <ul class="chips" aria-label="한눈에 보기">
+          <li>완전 무료</li><li>광고 없음</li><li>오프라인 플레이</li><li>자동 업데이트</li>
+        </ul>
+
+        <div class="inapp-warn" role="note" hidden data-inapp-warn>
+          <b>앱 안의 브라우저로 보고 계세요.</b>
+          <span data-os-only="ios">설치하려면 <b>Safari</b>로 열어야 해요. 오른쪽 아래(또는 위) <b>⋯</b> → <b>다른 브라우저로 열기 / Safari로 열기</b>를 눌러 주세요.</span>
+          <span data-os-only="android desktop">다운로드가 막힐 수 있어요. <b>Chrome</b> 같은 기본 브라우저로 열어 주세요.</span>
+          <span class="iw-actions"><a class="iw-open" data-open-external href="#" hidden>기본 브라우저로 열기</a><button type="button" class="iw-copy" data-copy-link>링크 복사</button></span>
+        </div>
+
+        <div class="cta-group">
+          <a class="k-btn l cta-apk" href="https://github.com/Seobuk/defense-game/releases/latest/download/defense-game.apk" data-apk>
+            <span class="b-main">Android APK 다운로드</span><span class="k-sub" data-rel-line>최신 버전 · Android 7.0 이상</span>
+          </a>
+          <a class="k-btn l secondary cta-play" href="./play/">
+            <span class="b-main">바로 플레이 (웹앱)</span><span class="k-sub">설치 없이 브라우저에서</span>
+          </a>
+        </div>
+        <p class="ios-note" data-os-only="ios">iPhone·iPad는 웹앱으로 즐겨요 — <a href="#install">홈 화면에 추가하는 법</a></p>
+        <p class="release-info" id="release-info" aria-live="polite"><span data-rel="version">최신 버전</span><span data-rel="date"></span><span data-rel="size"></span></p>
       </div>
-      <div class="release-info" id="release-info">최신 버전 확인 중...</div>
+
+      <figure class="hero-phone">
+        <div class="phone">
+          <video class="phone-screen" autoplay muted loop playsinline preload="metadata" poster="assets/gameplay-poster.webp" aria-label="실제 플레이 영상: 영웅이 전장을 누비고 대마법사의 주문이 쏟아지는 장면">
+            <source src="assets/gameplay.mp4" type="video/mp4">
+            <source src="assets/gameplay.webm" type="video/webm">
+          </video>
+        </div>
+        <figcaption>실제 플레이 · 63층 화산 용암지대</figcaption>
+      </figure>
     </div>
+    <div class="rampart" aria-hidden="true"></div>
   </header>
 
-  <!-- 2. 플레이 영상/스크린샷 영역 -->
-  <section class="container" style="border: none; padding-bottom: 20px;">
-    <div class="media-area">
-      <!-- 폰 목업 프레임들 -->
-      <div class="mockup-frame" data-media="gameplay-video"><span class="mockup-placeholder-text">영상</span></div>
-      <div class="mockup-frame" data-media="shot-1"><span class="mockup-placeholder-text">스크린샷 1</span></div>
-      <div class="mockup-frame" data-media="shot-2"><span class="mockup-placeholder-text">스크린샷 2</span></div>
-      <div class="mockup-frame" data-media="shot-3"><span class="mockup-placeholder-text">스크린샷 3</span></div>
-      <div class="mockup-frame" data-media="shot-4"><span class="mockup-placeholder-text">스크린샷 4</span></div>
-      <div class="mockup-frame" data-media="shot-5"><span class="mockup-placeholder-text">스크린샷 5</span></div>
-      <div class="mockup-frame" data-media="shot-6"><span class="mockup-placeholder-text">스크린샷 6</span></div>
-    </div>
-  </section>
+  <main id="main">
+    <!-- 2. 스크린샷 -->
+    <section class="shots" aria-labelledby="shots-h">
+      <div class="container">
+        <p class="eyebrow">실제 게임 화면</p>
+        <h2 class="section-title" id="shots-h">주문 한 장이 판을 바꾼다</h2>
+      </div>
+      <div class="gallery-wrap">
+        <button class="g-nav prev" type="button" aria-label="이전 스크린샷" data-g="-1">‹</button>
+        <ol class="gallery" tabindex="0" aria-label="스크린샷 7장 (가로로 넘겨 보기)">
+          <li><figure><div class="phone sm"><picture><source srcset="assets/shot-title.avif" type="image/avif"><source srcset="assets/shot-title.webp" type="image/webp"><img class="phone-screen" src="assets/shot-title.jpg" width="540" height="1200" loading="lazy" decoding="async" alt="타이틀 화면: 대마법사의 용사 키우기 로고와 100층 탑, 성벽 위 대마법사와 기사"></picture></div><figcaption><b>100층 탑을 향해</b>도전은 늘 1층부터. 무너지면 더 강해져서 다시.</figcaption></figure></li>
+          <li><figure><div class="phone sm"><picture><source srcset="assets/shot-battle.avif" type="image/avif"><source srcset="assets/shot-battle.webp" type="image/webp"><img class="phone-screen" src="assets/shot-battle.jpg" width="540" height="1200" loading="lazy" decoding="async" alt="전투 화면: 기사 영웅이 전장 한가운데서 싸우고 번개와 화염 주문이 쏟아지며 오른쪽에 스킬 6칸이 쌓여 있다"></picture></div><figcaption><b>영웅은 전장으로, 주문은 하늘에서</b>오른쪽 마법서 6칸에 고른 스킬이 쌓여요.</figcaption></figure></li>
+          <li><figure><div class="phone sm"><picture><source srcset="assets/shot-boss.avif" type="image/avif"><source srcset="assets/shot-boss.webp" type="image/webp"><img class="phone-screen" src="assets/shot-boss.jpg" width="540" height="1200" loading="lazy" decoding="async" alt="네임드 보스 마그마 골렘과 싸우는 70층 전투"></picture></div><figcaption><b>10층마다 네임드 보스</b>70층 마그마 골렘, 100층엔 종말의 드래곤.</figcaption></figure></li>
+          <li><figure><div class="phone sm"><picture><source srcset="assets/shot-mutation.avif" type="image/avif"><source srcset="assets/shot-mutation.webp" type="image/webp"><img class="phone-screen" src="assets/shot-mutation.jpg" width="540" height="1200" loading="lazy" decoding="async" alt="카드 선택 화면: 심판 광선 Lv6 변이 카드(십자 심판 / 쓸어내는 광선)와 강화 카드들"></picture></div><figcaption><b>Lv6 스킬은 변이 A/B</b>십자 심판이냐, 쓸어내는 광선이냐.</figcaption></figure></li>
+          <li><figure><div class="phone sm"><picture><source srcset="assets/shot-relic.avif" type="image/avif"><source srcset="assets/shot-relic.webp" type="image/webp"><img class="phone-screen" src="assets/shot-relic.jpg" width="540" height="1200" loading="lazy" decoding="async" alt="유물 선택 화면: 불사조 깃털, 혼돈의 구슬, 빙하의 심장 중 하나를 고른다"></picture></div><figcaption><b>보스를 잡으면 유물 3택 1</b>규칙을 바꾸는 힘, 대신 대가가 따라요.</figcaption></figure></li>
+          <li><figure><div class="phone sm"><picture><source srcset="assets/shot-talent.avif" type="image/avif"><source srcset="assets/shot-talent.webp" type="image/webp"><img class="phone-screen" src="assets/shot-talent.jpg" width="540" height="1200" loading="lazy" decoding="async" alt="정비 화면의 마법사 특성 트리: 화염 갈래 마스터"></picture></div><figcaption><b>영웅 특성 트리</b>갈래를 골라 단을 열고, 궁극 특성은 단 하나.</figcaption></figure></li>
+          <li><figure><div class="phone sm"><picture><source srcset="assets/shot-result.avif" type="image/avif"><source srcset="assets/shot-result.webp" type="image/webp"><img class="phone-screen" src="assets/shot-result.jpg" width="540" height="1200" loading="lazy" decoding="async" alt="도전 종료 결과 화면: 69층 돌파, 보스 처치 6, 획득 골드와 이번 도전의 융합·협공 조합"></picture></div><figcaption><b>도전 종료, 그리고 정비</b>번 골드는 수련과 상점에서 영구 성장으로.</figcaption></figure></li>
+        </ol>
+        <button class="g-nav next" type="button" aria-label="다음 스크린샷" data-g="1">›</button>
+      </div>
+    </section>
 
-  <!-- 3. 특징 섹션 -->
-  <section>
-    <div class="container">
-      <h2 class="section-title">게임 특징</h2>
-      <div class="features-grid">
-        <div class="feature-card">
-          <h3 class="font-display">🔥 로그라이트 도전</h3>
-          <p>죽으면 처음부터. 하지만 수집한 보석으로 영구적인 강화를 얻고 다음 도전에 나설 수 있습니다.</p>
-        </div>
-        <div class="feature-card">
-          <h3 class="font-display">👑 영웅 5클래스 & 특성 트리</h3>
-          <p>기사, 궁수, 마법사, 성직자, 암살자가 전장을 누빕니다. 클래스별 3갈래 특성 트리로 나만의 영웅을 키우세요.</p>
-        </div>
-        <div class="feature-card">
-          <h3 class="font-display">📜 주문만 쓰는 마법사와 주문서</h3>
-          <p>성벽 위의 마법사 두 명이 몰려오는 적에게 주문을 퍼붓습니다. 판타지 스킬 카드로 끝없는 시너지를 조합하세요.</p>
-        </div>
-        <div class="feature-card">
-          <h3 class="font-display">✨ 스킬 융합 & 히든 조합</h3>
-          <p>8종의 원소 융합과 조건이 숨겨진 22종의 히든 스킬 조합. 스킬이 결합되는 신비한 연출을 발견해 보세요.</p>
-        </div>
-        <div class="feature-card">
-          <h3 class="font-display">🏰 100층, 5테마, 네임드 보스</h3>
-          <p>슬라임 초원부터 심연의 마왕성까지. 10층마다 등장하는 거대한 네임드 보스가 당신을 시험합니다.</p>
-        </div>
-        <div class="feature-card">
-          <h3 class="font-display">🔄 자동 업데이트 (무료)</h3>
-          <p>안드로이드 앱 자체 업데이트 및 아이폰 오프라인 웹앱(PWA) 지원. 광고 없고 가입도 필요 없는 완전 무료 플레이!</p>
+    <!-- 3. 특징 -->
+    <section class="features" aria-labelledby="feat-h">
+      <div class="container">
+        <p class="eyebrow">게임 특징</p>
+        <h2 class="section-title" id="feat-h">매 도전이 다른 빌드</h2>
+        <div class="features-grid">
+          <article class="feature-card wide">
+            <img class="f-ico" src="assets/icons/codex.svg" alt="" width="48" height="48">
+            <div><h3>고른 주문만 쏟아붓는 대마법사</h3>
+            <p>기본 주문은 견제일 뿐, 화력은 내가 고른 스킬 카드에서 나와요. 고른 스킬은 전투 화면 오른쪽 <b>마법서 6칸</b>에 쌓이고 Lv1부터 <b>Lv6(MAX)</b>까지 자랍니다. 레벨이 오를수록 연출도 커져서 Lv6은 스킬마다 완전체 이펙트가 터져요.</p>
+            <span class="f-tag">스킬 14종 · 6칸 · Lv6</span></div>
+          </article>
+          <article class="feature-card">
+            <img class="f-ico" src="assets/icons/el-fire.svg" alt="" width="48" height="48">
+            <div><h3>Lv6 + Lv6 = 원소 융합</h3>
+            <p>재료 두 스킬을 모두 Lv6까지 찍으면 <b>융합 스킬 Lv1</b>로 합체하고 칸이 열려요. 파이어볼 + 회오리 → 불꽃 회오리. 조합은 숨겨져 있어요.</p>
+            <span class="f-tag">히든 융합 8종</span></div>
+          </article>
+          <article class="feature-card">
+            <img class="f-ico" src="assets/icons/new.svg" alt="" width="48" height="48">
+            <div><h3>변이 A/B</h3>
+            <p>Lv6이 된 스킬은 작동 방식이 바뀌는 두 갈래 중 하나로 변이해요. 분열 화염구냐, 태양 구체냐.</p>
+            <span class="f-tag">변이 44종</span></div>
+          </article>
+          <article class="feature-card">
+            <img class="f-ico" src="assets/icons/trophy.svg" alt="" width="48" height="48">
+            <div><h3>유물과 망각</h3>
+            <p>네임드 보스를 잡으면 규칙을 비트는 유물 3개 중 1개. 장점엔 늘 대가가 붙어요. 막힌 빌드는 <b>망각</b>으로 스킬을 비워 칸을 엽니다.</p>
+            <span class="f-tag">유물 20종</span></div>
+          </article>
+          <article class="feature-card">
+            <img class="f-ico" src="assets/icons/hero.svg" alt="" width="48" height="48">
+            <div><h3>영웅 5클래스 · 특성 트리</h3>
+            <p>기사·궁수·마법사, 20층에 성직자, 40층에 암살자. 영웅은 스스로 전장을 누비고, 탭하면 그 자리로 달려가요. 클래스마다 3갈래 특성 트리, <b>궁극 특성은 하나만</b>.</p>
+            <span class="f-tag">5클래스 · 궁극 특성 15종</span></div>
+          </article>
+          <article class="feature-card">
+            <img class="f-ico" src="assets/icons/crit.svg" alt="" width="48" height="48">
+            <div><h3>협공 · 합동 필살</h3>
+            <p>영웅 클래스와 보유 스킬이 맞물리면 숨은 협공이 켜져요. 영웅 궁극기 직후 3초 안의 첫 스킬은 <b>합동 필살</b> — 위력 2배에 슬로 모션.</p>
+            <span class="f-tag">히든 협공 15종</span></div>
+          </article>
+          <article class="feature-card">
+            <img class="f-ico" src="assets/icons/el-dark.svg" alt="" width="48" height="48">
+            <div><h3>5지역 · 지역 특성</h3>
+            <p>슬라임 초원의 들불, 고블린 동굴의 어둠, 언데드 묘지의 망자, 화산의 열기, 마왕성의 광기. 지역마다 약점·내성이 달라 카드에 <b>약점!</b> 배지가 붙어요.</p>
+            <span class="f-tag">20층마다 새 지역</span></div>
+          </article>
+          <article class="feature-card">
+            <img class="f-ico" src="assets/icons/wall.svg" alt="" width="48" height="48">
+            <div><h3>100층 · 네임드 보스</h3>
+            <p>10층마다 킹 슬라임, 고블린 전차, 리치 로드, 마그마 골렘, 심연의 마왕… 그리고 100층의 종말의 드래곤.</p>
+            <span class="f-tag">100층 · 보스 10회</span></div>
+          </article>
+          <article class="feature-card">
+            <img class="f-ico" src="assets/icons/shop.svg" alt="" width="48" height="48">
+            <div><h3>정비 · 상점</h3>
+            <p>번 골드와 보석은 마법사 수련, 장비 상자, 보석 강화, 유물 해금, 출정 준비에. 만렙 뒤엔 끝없는 돌파로 재화가 남지 않아요.</p>
+            <span class="f-tag">영구 성장</span></div>
+          </article>
+          <article class="feature-card">
+            <img class="f-ico" src="assets/icons/auto.svg" alt="" width="48" height="48">
+            <div><h3>편하게, 내 속도로</h3>
+            <p>카드는 늘 직접 고르고(원하면 <b>자동 선택</b>), <b>자동 진행</b>이 다음 층·궁극기·비상 스킬을 맡아요. 배속은 10층 2배, 30층 3배 해금.</p>
+            <span class="f-tag">방치 보상 최대 8시간</span></div>
+          </article>
+          <article class="feature-card">
+            <img class="f-ico" src="assets/icons/speed.svg" alt="" width="48" height="48">
+            <div><h3>폴드 · 자동 업데이트</h3>
+            <p>갤럭시 Z 폴드 안쪽·바깥 화면 모두 꽉 차게, 접고 펼쳐도 끊김 없이 재배치. 새 버전은 앱이 알아서 받아 와요.</p>
+            <span class="f-tag">폴더블 · 태블릿 지원</span></div>
+          </article>
         </div>
       </div>
-    </div>
-  </section>
+    </section>
 
-  <!-- 4. 설치 방법 -->
-  <section>
-    <div class="container">
-      <h2 class="section-title">설치 방법</h2>
-      <div class="install-grid">
-        <div class="install-box">
-          <h3 class="font-display">🤖 Android</h3>
-          <div class="install-step"><span class="step-num">1</span> APK 다운로드 버튼 탭</div>
-          <div class="install-step"><span class="step-num">2</span> 다운로드된 파일 열기</div>
-          <div class="install-step"><span class="step-num">3</span> "출처를 알 수 없는 앱 설치" 허용 후 설치</div>
-          <p style="margin-top:12px; font-size:14px; opacity:0.8;">(설치 후에는 앱 내에서 자동으로 업데이트가 진행됩니다.)</p>
-        </div>
-        <div class="install-box">
-          <h3 class="font-display">🍎 iPhone</h3>
-          <div class="install-step"><span class="step-num">1</span> Safari에서 <strong>iPhone에서 플레이</strong> 탭</div>
-          <div class="install-step"><span class="step-num">2</span> 하단의 공유 아이콘 탭</div>
-          <div class="install-step"><span class="step-num">3</span> <strong>"홈 화면에 추가"</strong> 선택</div>
-          <svg class="install-icon" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <rect x="20" y="10" width="24" height="44" rx="4" stroke="currentColor" stroke-width="2"/>
-            <path d="M32 44V26M32 26L26 32M32 26L38 32" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-            <rect x="24" y="50" width="16" height="2" fill="currentColor"/>
-          </svg>
-          <p style="font-size:14px; opacity:0.8; text-align:center;">홈 화면 아이콘으로 실행하면 전체화면 및 오프라인 플레이가 지원됩니다.</p>
-        </div>
-      </div>
-    </div>
-  </section>
+    <!-- 4. 설치 방법 (기기별) -->
+    <section class="install" id="install" aria-labelledby="install-h">
+      <div class="container">
+        <p class="eyebrow">설치 방법</p>
+        <h2 class="section-title" id="install-h">내 기기에 설치하기</h2>
+        <p class="detected" data-detected></p>
 
-  <!-- 6. FAQ -->
-  <section>
-    <div class="container">
-      <h2 class="section-title">자주 묻는 질문 (FAQ)</h2>
-      
-      <div class="faq-item">
-        <div class="faq-q">Q. 무료인가요? 광고가 있나요?</div>
-        <div class="faq-a">완전 무료이며, 광고나 인앱 결제가 전혀 없습니다. 즐겁게 플레이해 주세요!</div>
-      </div>
-      <div class="faq-item">
-        <div class="faq-q">Q. 데이터는 어디에 저장되나요?</div>
-        <div class="faq-a">기기 내부에만 저장됩니다(서버로 전송하지 않음). 설정 메뉴에서 백업 코드를 복사하여 다른 기기로 옮길 수 있습니다.</div>
-      </div>
-      <div class="faq-item">
-        <div class="faq-q">Q. iPhone에서도 즐길 수 있나요?</div>
-        <div class="faq-a">네, 웹앱(PWA) 형태로 제공됩니다. 홈 화면에 추가하면 앱처럼 아이콘으로 즐길 수 있으며 오프라인 플레이도 지원합니다.</div>
-      </div>
-      <div class="faq-item">
-        <div class="faq-q">Q. 협동 모드는 언제 나오나요?</div>
-        <div class="faq-a">현재 협동 모드는 열심히 준비 중입니다. 향후 업데이트를 기대해 주세요!</div>
-      </div>
-      
-    </div>
-  </section>
+        <div class="tabs" role="tablist" aria-label="기기 선택">
+          <button role="tab" type="button" id="tab-ios" aria-controls="panel-ios" data-tab="ios">iPhone · iPad</button>
+          <button role="tab" type="button" id="tab-android" aria-controls="panel-android" data-tab="android">Android</button>
+          <button role="tab" type="button" id="tab-desktop" aria-controls="panel-desktop" data-tab="desktop">PC</button>
+        </div>
 
-  <!-- 5. 신뢰 -->
-  <section class="trust-section">
-    <div class="container">
-      <div class="trust-info">
-        <div data-fingerprint="">APK 서명 지문: (출시 준비 중)</div>
-        <div>오픈소스 라이선스: MIT License</div>
-        <div>소스 코드 보기: <a href="https://github.com/Seobuk/defense-game" target="_blank" rel="noopener noreferrer">GitHub 저장소</a></div>
+        <!-- iPhone -->
+        <div class="panel" role="tabpanel" id="panel-ios" aria-labelledby="tab-ios" tabindex="0">
+          <p class="panel-lead">iPhone·iPad는 <b>웹앱</b>으로 설치해요. 홈 화면 아이콘으로 열면 주소창 없이 전체 화면, 오프라인에서도 돌아가요.</p>
+          <div class="warn-box"><b>카카오톡·인스타그램 안에서 열었다면</b> 먼저 <b>⋯</b> → <b>다른 브라우저로 열기</b>(또는 Safari로 열기)를 눌러 Safari로 옮겨 주세요. 앱 안 브라우저에선 홈 화면에 추가가 안 돼요.</div>
+          <ol class="steps">
+            <li class="step">
+              <div class="mock ios" aria-hidden="true">
+                <div class="m-page"><span class="m-logo">용사 키우기</span><span class="m-btn blue">바로 플레이</span></div>
+                <div class="m-bar"><span class="m-url">seobuk.github.io/defense-game/play</span></div>
+                <div class="m-tool"><i></i><i></i><i class="hl share"></i><i></i><i class="dots"></i></div>
+              </div>
+              <h3><span class="n">1</span>Safari에서 게임 열기</h3>
+              <p><a href="./play/">바로 플레이</a>를 눌러 게임 화면으로 간 뒤, 아래 도구 막대의 <b>공유 <span class="ic-share" aria-label="공유 아이콘"></span></b>를 눌러요. 공유 버튼이 안 보이면 <b>⋯</b> → <b>공유</b>.</p>
+            </li>
+            <li class="step">
+              <div class="mock ios" aria-hidden="true">
+                <div class="m-page dim"></div>
+                <div class="m-sheet">
+                  <span class="m-row">복사</span>
+                  <span class="m-row">읽기 목록에 추가</span>
+                  <span class="m-row hl"><i class="m-plus"></i>홈 화면에 추가</span>
+                  <span class="m-row">책갈피 추가</span>
+                </div>
+              </div>
+              <h3><span class="n">2</span>'홈 화면에 추가'</h3>
+              <p>공유 메뉴를 아래로 내려 <b>홈 화면에 추가</b>를 눌러요. 목록에 없으면 맨 아래 <b>작업 편집</b>에서 켤 수 있어요.</p>
+            </li>
+            <li class="step">
+              <div class="mock ios" aria-hidden="true">
+                <div class="m-add">
+                  <div class="m-add-top"><span>취소</span><b>홈 화면에 추가</b><span class="hl-t">추가</span></div>
+                  <div class="m-add-app"><img src="assets/icon-192.png" alt="" width="40" height="40" loading="lazy"><span>용사 키우기</span></div>
+                  <div class="m-add-sw"><span>웹 앱으로 열기</span><i class="sw on"></i></div>
+                </div>
+                <div class="m-home"><img src="assets/icon-192.png" alt="" width="40" height="40" loading="lazy"><span>용사 키우기</span></div>
+              </div>
+              <h3><span class="n">3</span>'추가' → 홈 화면에서 실행</h3>
+              <p><b>웹 앱으로 열기</b>가 보이면 켜 둔 채로 <b>추가</b>. 이제 홈 화면의 <b>용사 키우기</b> 아이콘으로 열면 돼요.</p>
+            </li>
+          </ol>
+          <p class="panel-alt">Chrome for iOS에서도 <b>공유 → 홈 화면에 추가</b>가 되지만(iOS 16.4 이상), Safari가 가장 확실해요. App Store 앱은 따로 없어요.</p>
+        </div>
+
+        <!-- Android -->
+        <div class="panel" role="tabpanel" id="panel-android" aria-labelledby="tab-android" tabindex="0" hidden>
+          <p class="panel-lead"><b>APK 설치를 추천해요.</b> 앱이 새 버전을 스스로 확인하고, 전투가 끝난 안전한 순간에 업데이트를 제안해요.</p>
+          <ol class="steps">
+            <li class="step">
+              <div class="mock and" aria-hidden="true">
+                <div class="m-page"><span class="m-logo">용사 키우기</span><span class="m-btn gold hl">APK 다운로드</span></div>
+                <div class="m-toast"><i class="m-dl"></i><span>defense-game.apk<br><small>다운로드 완료 · 열기</small></span></div>
+              </div>
+              <h3><span class="n">1</span>APK 받기</h3>
+              <p><a href="https://github.com/Seobuk/defense-game/releases/latest/download/defense-game.apk" data-apk>APK 다운로드</a>를 누르고, 다운로드가 끝나면 알림이나 <b>내 파일 → 다운로드</b>에서 <b>defense-game.apk</b>를 열어요.</p>
+            </li>
+            <li class="step">
+              <div class="mock and" aria-hidden="true">
+                <div class="m-set">
+                  <b class="m-set-h">출처를 알 수 없는 앱 설치</b>
+                  <span class="m-set-app"><i class="m-chrome"></i>Chrome</span>
+                  <span class="m-set-row hl">이 출처 허용<i class="sw on"></i></span>
+                </div>
+              </div>
+              <h3><span class="n">2</span>'출처를 알 수 없는 앱' 허용</h3>
+              <p>처음 한 번 <b>설정</b>으로 안내되면 방금 쓴 앱(Chrome·삼성 인터넷·내 파일)에서 <b>이 출처 허용</b>을 켜고 뒤로 돌아와요.</p>
+            </li>
+            <li class="step">
+              <div class="mock and" aria-hidden="true">
+                <div class="m-inst">
+                  <img src="assets/icon-192.png" alt="" width="48" height="48" loading="lazy">
+                  <b>대마법사의 용사 키우기</b>
+                  <span>이 앱을 설치하시겠습니까?</span>
+                  <span class="m-inst-btns"><span>취소</span><span class="hl-t">설치</span></span>
+                </div>
+              </div>
+              <h3><span class="n">3</span>설치 → 열기</h3>
+              <p><b>설치</b>를 누르면 끝. Play 프로텍트 안내가 뜨면 <b>세부정보 더보기 → 무시하고 설치</b>를 눌러요(아래 서명 지문으로 진짜인지 확인할 수 있어요).</p>
+            </li>
+          </ol>
+          <div class="alt-box">
+            <h3>APK 대신 웹앱으로</h3>
+            <ul>
+              <li><b>Chrome</b>: <a href="./play/">게임 열기</a> → 오른쪽 위 <b>⋮</b> → <b>앱 설치</b>(또는 <b>홈 화면에 추가</b>)</li>
+              <li><b>삼성 인터넷</b>: <a href="./play/">게임 열기</a> → 아래 <b>≡ 메뉴</b> → <b>현재 페이지 추가</b> → <b>홈 화면</b></li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- PC -->
+        <div class="panel" role="tabpanel" id="panel-desktop" aria-labelledby="tab-desktop" tabindex="0" hidden>
+          <div class="pc-grid">
+            <div class="qr-card">
+              <svg class="qr" viewBox="0 0 37 37" role="img" aria-labelledby="qr-t" shape-rendering="crispEdges"><title id="qr-t">휴대폰 카메라로 찍으면 이 페이지(seobuk.github.io/defense-game)가 열리는 QR 코드</title><rect width="37" height="37" fill="#fff"/><path fill="#22163a" d="M4 4h7v1h-7zM12 4h1v1h-1zM15 4h1v1h-1zM20 4h5v1h-5zM26 4h7v1h-7zM4 5h1v1h-1zM10 5h1v1h-1zM12 5h1v1h-1zM14 5h1v1h-1zM16 5h1v1h-1zM20 5h2v1h-2zM24 5h1v1h-1zM26 5h1v1h-1zM32 5h1v1h-1zM4 6h1v1h-1zM6 6h3v1h-3zM10 6h1v1h-1zM13 6h1v1h-1zM15 6h1v1h-1zM17 6h2v1h-2zM22 6h1v1h-1zM24 6h1v1h-1zM26 6h1v1h-1zM28 6h3v1h-3zM32 6h1v1h-1zM4 7h1v1h-1zM6 7h3v1h-3zM10 7h1v1h-1zM12 7h1v1h-1zM14 7h2v1h-2zM17 7h1v1h-1zM21 7h1v1h-1zM23 7h1v1h-1zM26 7h1v1h-1zM28 7h3v1h-3zM32 7h1v1h-1zM4 8h1v1h-1zM6 8h3v1h-3zM10 8h1v1h-1zM14 8h7v1h-7zM23 8h2v1h-2zM26 8h1v1h-1zM28 8h3v1h-3zM32 8h1v1h-1zM4 9h1v1h-1zM10 9h1v1h-1zM18 9h1v1h-1zM21 9h3v1h-3zM26 9h1v1h-1zM32 9h1v1h-1zM4 10h7v1h-7zM12 10h1v1h-1zM14 10h1v1h-1zM16 10h1v1h-1zM18 10h1v1h-1zM20 10h1v1h-1zM22 10h1v1h-1zM24 10h1v1h-1zM26 10h7v1h-7zM12 11h4v1h-4zM21 11h4v1h-4zM4 12h1v1h-1zM6 12h2v1h-2zM9 12h3v1h-3zM13 12h5v1h-5zM20 12h2v1h-2zM23 12h1v1h-1zM26 12h1v1h-1zM29 12h1v1h-1zM31 12h2v1h-2zM6 13h4v1h-4zM13 13h5v1h-5zM20 13h5v1h-5zM26 13h3v1h-3zM32 13h1v1h-1zM4 14h1v1h-1zM7 14h6v1h-6zM15 14h3v1h-3zM20 14h1v1h-1zM22 14h1v1h-1zM25 14h1v1h-1zM27 14h2v1h-2zM30 14h2v1h-2zM6 15h1v1h-1zM8 15h2v1h-2zM12 15h2v1h-2zM15 15h1v1h-1zM19 15h1v1h-1zM22 15h5v1h-5zM32 15h1v1h-1zM4 16h1v1h-1zM7 16h1v1h-1zM10 16h1v1h-1zM12 16h1v1h-1zM14 16h1v1h-1zM16 16h1v1h-1zM18 16h2v1h-2zM21 16h1v1h-1zM24 16h1v1h-1zM29 16h2v1h-2zM5 17h3v1h-3zM9 17h1v1h-1zM13 17h1v1h-1zM15 17h1v1h-1zM18 17h4v1h-4zM23 17h1v1h-1zM26 17h1v1h-1zM30 17h3v1h-3zM4 18h3v1h-3zM10 18h1v1h-1zM13 18h3v1h-3zM17 18h1v1h-1zM22 18h2v1h-2zM27 18h2v1h-2zM30 18h3v1h-3zM7 19h2v1h-2zM11 19h3v1h-3zM15 19h1v1h-1zM18 19h3v1h-3zM22 19h1v1h-1zM26 19h2v1h-2zM31 19h1v1h-1zM4 20h2v1h-2zM10 20h3v1h-3zM14 20h1v1h-1zM16 20h1v1h-1zM18 20h2v1h-2zM22 20h3v1h-3zM27 20h3v1h-3zM31 20h1v1h-1zM7 21h1v1h-1zM11 21h1v1h-1zM13 21h2v1h-2zM16 21h1v1h-1zM18 21h3v1h-3zM24 21h1v1h-1zM27 21h1v1h-1zM29 21h3v1h-3zM4 22h1v1h-1zM6 22h2v1h-2zM10 22h1v1h-1zM16 22h5v1h-5zM26 22h3v1h-3zM30 22h1v1h-1zM11 23h2v1h-2zM15 23h1v1h-1zM17 23h2v1h-2zM20 23h3v1h-3zM26 23h1v1h-1zM30 23h1v1h-1zM5 24h2v1h-2zM8 24h1v1h-1zM10 24h2v1h-2zM16 24h3v1h-3zM20 24h11v1h-11zM12 25h1v1h-1zM16 25h1v1h-1zM20 25h1v1h-1zM22 25h3v1h-3zM28 25h5v1h-5zM4 26h7v1h-7zM12 26h2v1h-2zM16 26h1v1h-1zM18 26h1v1h-1zM20 26h1v1h-1zM22 26h3v1h-3zM26 26h1v1h-1zM28 26h2v1h-2zM31 26h1v1h-1zM4 27h1v1h-1zM10 27h1v1h-1zM12 27h9v1h-9zM24 27h1v1h-1zM28 27h2v1h-2zM4 28h1v1h-1zM6 28h3v1h-3zM10 28h1v1h-1zM13 28h2v1h-2zM16 28h1v1h-1zM19 28h3v1h-3zM24 28h5v1h-5zM30 28h1v1h-1zM4 29h1v1h-1zM6 29h3v1h-3zM10 29h1v1h-1zM12 29h1v1h-1zM19 29h3v1h-3zM23 29h3v1h-3zM27 29h3v1h-3zM32 29h1v1h-1zM4 30h1v1h-1zM6 30h3v1h-3zM10 30h1v1h-1zM12 30h1v1h-1zM14 30h2v1h-2zM20 30h1v1h-1zM22 30h3v1h-3zM27 30h1v1h-1zM30 30h1v1h-1zM32 30h1v1h-1zM4 31h1v1h-1zM10 31h1v1h-1zM15 31h1v1h-1zM20 31h1v1h-1zM24 31h1v1h-1zM27 31h1v1h-1zM29 31h1v1h-1zM31 31h1v1h-1zM4 32h7v1h-7zM12 32h2v1h-2zM15 32h1v1h-1zM19 32h1v1h-1zM22 32h6v1h-6zM29 32h1v1h-1zM31 32h1v1h-1z"/></svg>
+              <p><b>휴대폰 카메라로 찍어 보세요</b><br>이 페이지가 열리고, 기기에 맞는 설치 방법이 바로 나와요.</p>
+            </div>
+            <div class="pc-copy">
+              <p class="panel-lead">게임은 휴대폰 세로 화면에 맞춰 만들었어요. PC에선 브라우저로 바로 해 볼 수 있어요.</p>
+              <ol class="steps compact">
+                <li class="step"><h3><span class="n">1</span>QR 코드를 휴대폰으로 찍기</h3><p>iPhone은 기본 카메라, Android는 카메라나 Google 렌즈로.</p></li>
+                <li class="step"><h3><span class="n">2</span>열린 페이지에서 설치</h3><p>Android는 APK, iPhone은 홈 화면에 추가.</p></li>
+                <li class="step"><h3><span class="n">3</span>또는 PC에서 바로</h3><p><a class="k-btn secondary" href="./play/"><span class="b-main">PC에서 바로 플레이</span></a></p></li>
+              </ol>
+              <p class="panel-alt">주소: <code>seobuk.github.io/defense-game</code> <button type="button" class="mini-btn" data-copy-link>링크 복사</button></p>
+            </div>
+          </div>
+        </div>
+
+        <div class="notes">
+          <h3>알아 두세요</h3>
+          <ul>
+            <li><img src="assets/icons/gem.svg" alt="" width="28" height="28"><span><b>기록은 기기·브라우저마다 따로</b> 저장돼요. 서버에 올리지 않아요.</span></li>
+            <li><img src="assets/icons/codex.svg" alt="" width="28" height="28"><span><b>백업 코드</b>: 게임 <b>설정 → 저장 백업</b>으로 코드를 복사해 두고, 다른 기기에서 <b>저장 복원</b>에 붙여 넣으면 이어서 해요.</span></li>
+            <li><img src="assets/icons/partner.svg" alt="" width="28" height="28"><span><b>웹앱과 APK의 저장은 서로 달라요.</b> 옮기려면 백업 코드를 써 주세요.</span></li>
+            <li><img src="assets/icons/auto.svg" alt="" width="28" height="28"><span><b>업데이트는 자동</b>이에요. APK는 앱이 새 버전을 받아 설치를 제안하고, 웹앱은 타이틀·정비 화면에서 알아서 새로 고쳐요.</span></li>
+          </ul>
+        </div>
       </div>
-    </div>
-  </section>
+    </section>
+
+    <!-- 5. 신뢰 -->
+    <section class="trust" id="trust" aria-labelledby="trust-h">
+      <div class="container">
+        <p class="eyebrow">안심하고 설치하세요</p>
+        <h2 class="section-title" id="trust-h">서명 · 권한 · 소스</h2>
+        <div class="trust-grid">
+          <div class="trust-card fp">
+            <h3>APK 서명 인증서 SHA-256</h3>
+            <code class="fp-code" id="fp">04:<wbr>9D:<wbr>93:<wbr>9E:<wbr>7D:<wbr>5F:<wbr>7D:<wbr>3F:<wbr>D8:<wbr>1B:<wbr>A1:<wbr>BD:<wbr>7E:<wbr>D6:<wbr>46:<wbr>BC:<wbr>F6:<wbr>2E:<wbr>DA:<wbr>55:<wbr>52:<wbr>17:<wbr>4B:<wbr>B8:<wbr>54:<wbr>32:<wbr>35:<wbr>45:<wbr>E0:<wbr>CD:<wbr>F1:<wbr>D3</code>
+            <p class="fp-meta">서명자 <code>CN=Seobuk, O=defense-game, C=KR</code> · 모든 릴리스가 같은 키로 서명돼요.</p>
+            <p class="fp-meta">직접 확인: <code>apksigner verify --print-certs defense-game.apk</code></p>
+            <button type="button" class="mini-btn" data-copy="#fp">지문 복사</button>
+          </div>
+          <div class="trust-card">
+            <h3>요청하는 권한은 딱 둘</h3>
+            <ul class="perm">
+              <li><b>인터넷</b> — 새 버전 확인·다운로드</li>
+              <li><b>앱 설치 요청</b> — 받은 업데이트 설치(누를 때만)</li>
+            </ul>
+            <p class="fp-meta">연락처·위치·저장소 권한은 쓰지 않아요. 계정·로그인·광고 SDK도 없어요.</p>
+          </div>
+          <div class="trust-card">
+            <h3>오픈소스 · MIT</h3>
+            <p>게임 코드는 전부 공개돼 있어요. APK는 GitHub Releases에서만 배포해요.</p>
+            <p class="links">
+              <a href="https://github.com/Seobuk/defense-game" target="_blank" rel="noopener">GitHub 저장소</a>
+              <a href="https://github.com/Seobuk/defense-game/releases" target="_blank" rel="noopener">릴리스 노트</a>
+              <a href="https://github.com/Seobuk/defense-game/blob/main/LICENSE" target="_blank" rel="noopener">MIT 라이선스</a>
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6. FAQ -->
+    <section class="faq" aria-labelledby="faq-h">
+      <div class="container narrow">
+        <p class="eyebrow">자주 묻는 질문</p>
+        <h2 class="section-title" id="faq-h">FAQ</h2>
+        <details class="faq-item"><summary>무료인가요?</summary><p>네, 완전 무료예요. 인앱 결제도 없어요. 골드와 보석은 게임 안에서만 벌어요.</p></details>
+        <details class="faq-item"><summary>광고가 나오나요?</summary><p>없어요. 광고 SDK도, 추적도 없어요.</p></details>
+        <details class="faq-item"><summary>기록은 어디에 저장되나요?</summary><p>지금 쓰는 기기(브라우저) 안에만 저장돼요. 기기를 바꾸거나 웹앱 ↔ APK로 옮길 땐 <b>설정 → 저장 백업</b>의 백업 코드를 새 기기의 <b>저장 복원</b>에 붙여 넣으세요. 브라우저 데이터를 지우면 웹앱 기록도 지워지니 백업 코드를 꼭 챙겨 두세요.</p></details>
+        <details class="faq-item"><summary>아이폰에서도 할 수 있나요?</summary><p>네, 웹앱으로요. Safari에서 게임을 열고 <b>공유 → 홈 화면에 추가</b>하면 앱처럼 전체 화면으로 열리고 오프라인에서도 돌아가요. App Store 앱은 따로 없어요. <a href="#install" data-go-tab="ios">설치 방법 보기</a></p></details>
+        <details class="faq-item"><summary>설치 중에 '위험할 수 있는 앱' 경고가 떠요.</summary><p>Play 스토어 밖에서 받은 APK라서 나오는 일반 안내예요. <a href="#trust">서명 지문</a>과 GitHub 소스로 진짜인지 확인할 수 있어요.</p></details>
+        <details class="faq-item"><summary>업데이트는 어떻게 받나요?</summary><p>저절로 돼요. APK는 앱이 GitHub Releases에서 새 버전을 확인해 전투가 끝난 순간(정비 화면·층 사이)에 설치를 제안하고, 웹앱은 타이틀·정비 화면에서 새로 고쳐 최신이 돼요.</p></details>
+        <details class="faq-item"><summary>협동 모드나 서버 계정은요?</summary><p>준비 중이에요. 친구가 두 번째 마법사로 들어오는 <b>협동 모드</b>와 <b>서버 계정</b>이 예정돼 있어요. 처음 정한 닉네임은 나중에 계정과 이어질 수 있게 기기에 저장해 둬요.</p></details>
+      </div>
+    </section>
+  </main>
 
   <!-- 7. 푸터 -->
   <footer>
     <div class="container">
-      <p>&copy; 2026 Seobuk. 대마법사의 용사 키우기.</p>
+      <div class="f-logo" aria-hidden="true"><img src="assets/icon-192.png" alt="" width="40" height="40" loading="lazy"><b>대마법사의 용사 키우기</b></div>
+      <nav class="f-links" aria-label="바로가기">
+        <a href="./play/">웹앱으로 플레이</a>
+        <a href="https://github.com/Seobuk/defense-game/releases/latest/download/defense-game.apk" data-apk>APK 다운로드</a>
+        <a href="#install">설치 방법</a>
+        <a href="https://github.com/Seobuk/defense-game" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+      <p class="f-fine">© 2026 Seobuk · MIT License · 글꼴: 검은고딕·주아·고운돋움 (SIL OFL)</p>
     </div>
   </footer>
 
-  <script src="main.js"></script>
+  <!-- 모바일 하단 고정 버튼(히어로를 지나면) -->
+  <div class="sticky-cta" data-sticky aria-hidden="true">
+    <a class="k-btn s-apk" href="https://github.com/Seobuk/defense-game/releases/latest/download/defense-game.apk" data-apk tabindex="-1"><span class="b-main">APK 다운로드</span></a>
+    <a class="k-btn secondary" href="./play/" tabindex="-1"><span class="b-main">바로 플레이</span></a>
+    <a class="k-btn s-ios" href="#install" data-go-tab="ios" tabindex="-1"><span class="b-main">홈 화면에 추가</span></a>
+  </div>
+
+  <script src="main.js" defer></script>
 </body>
 </html>

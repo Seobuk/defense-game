@@ -270,7 +270,7 @@ function drawChips(view, vis) {
 // ── 보스 체력바: 초상 배지 + 이름 + % + 10칸 눈금 (ART §4.5). 오른쪽 영웅 버튼 자리는 비운다 ──
 let bossIntro = 0, bossType = '', bossR = 60;
 function drawBossBar(view) {
-  const b = view.phase === 'play' ? view.boss : null; // 클리어·패배 화면에선 보스바를 거둔다
+  const b = view.phase === 'play' && !view.pick ? view.boss : null; // 클리어·패배 화면·카드 선택 중엔 보스바를 거둔다(카드 제목과 겹침)
   if (b && b.maxHp > 0) {
     const ratio = clamp(b.hp / b.maxHp, 0, 1);
     if (b.name !== bossName) bossIntro = 0;
