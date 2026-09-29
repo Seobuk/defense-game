@@ -9,7 +9,7 @@ import {
   mix, lite, dim, cel, bakeO, tintOf, cache, S,
   ctx, T, RT, frameNo, frameDt, topExtra, hudY, lightK,
   shake, flash, FONT, OWN, rnd, easeOut, easeBack, lerp, pool, take,
-  wt, place, spr, put, txt, rr, additive, groundRune,
+  wt, place, spr, put, txt, rr, additive, groundRune, setLightPrio, LIGHT_EXEMPT,
 } from './core.js';
 import {
   gl, part, burst, ring, sprPop, lightBeam, K_GLOW, K_SPARK, K_STAR, K_SMOKE, K_DEBRIS, K_SHARD, MSTY,
@@ -920,28 +920,48 @@ export function bone() {
   return bake('u:bone', 14, 14, x => { LW = 1.4; boneLimb(x, -8, 0, 8, 0, 4.4); x.lineWidth = 1.6; x.strokeStyle = INK2; });
 }
 
-// 망령 (귀여운 유령, 오른쪽을 봄)
+// 망령 (귀여운 유령, 오른쪽을 봄). FX 균형(v0.1.2): 불투명 몸 + 청록 발광 외곽선 + 빛나는 눈 — 어두운 동굴·묘지와 광량 예산에 묻히지 않게
+const ghostBody = col => x => {
+  x.beginPath();
+  x.moveTo(-12, 8);
+  x.bezierCurveTo(-14, -8, -8, -16, 0, -16);
+  x.bezierCurveTo(9, -16, 14, -8, 13, 4);
+  x.quadraticCurveTo(12, 12, 16, 16);
+  x.quadraticCurveTo(9, 15, 7, 11);
+  x.quadraticCurveTo(4, 16, 0, 12);
+  x.quadraticCurveTo(-5, 17, -8, 11);
+  x.quadraticCurveTo(-11, 15, -12, 8);
+  x.closePath();
+  fs(x, lin(x, 0, -16, 0, 16, [[0, '#ffffff'], [0.45, col], [1, mix(col, '#8fe8ff', 0.55)]]), 2.4, '#3a1466');
+  ell(x, 1, -4, 2.7, 3.4); x.fillStyle = '#1a0838'; x.fill(); // 눈구멍 + 청록 눈빛
+  ell(x, 7, -4, 2.7, 3.4); x.fill();
+  x.fillStyle = '#6ff8ff'; ell(x, 1.4, -4.3, 1.6, 2.2); x.fill(); ell(x, 7.4, -4.3, 1.6, 2.2); x.fill();
+  x.fillStyle = '#ffffff'; circ(x, 1, -5.3, 0.75); x.fill(); circ(x, 7, -5.3, 0.75); x.fill();
+  ell(x, 4, 2.2, 1.7, 2.1); x.fillStyle = '#5a2a7a'; x.fill();
+  x.fillStyle = 'rgba(255,120,200,0.45)'; ell(x, -2.4, 0.6, 2.2, 1.2); x.fill(); ell(x, 10.4, 0.6, 2.2, 1.2); x.fill();
+  shine(x, -6, -10, 3, 1.6, -0.7, 0.85);
+};
 export function ghostSpr(col = '#d8c0ff') {
-  return bake('u:gh|' + col, 19, 21, x => finish(x, x => {
-    x.beginPath();
-    x.moveTo(-12, 8);
-    x.bezierCurveTo(-14, -8, -8, -16, 0, -16);
-    x.bezierCurveTo(9, -16, 14, -8, 13, 4);
-    x.quadraticCurveTo(12, 12, 16, 16);
-    x.quadraticCurveTo(9, 15, 7, 11);
-    x.quadraticCurveTo(4, 16, 0, 12);
-    x.quadraticCurveTo(-5, 17, -8, 11);
-    x.quadraticCurveTo(-11, 15, -12, 8);
-    x.closePath();
-    fs(x, lin(x, 0, -16, 0, 16, [[0, '#ffffff'], [0.45, col], [1, dim(col, 0.35)]]), 2.4, '#3a1466');
-    ell(x, 1, -4, 2.2, 3); x.fillStyle = INK2; x.fill();
-    ell(x, 7, -4, 2.2, 3); x.fill();
-    circ(x, 0.5, -5, 0.8); x.fillStyle = '#fff'; x.fill();
-    circ(x, 6.5, -5, 0.8); x.fill();
-    ell(x, 4, 2, 1.8, 2.2); x.fillStyle = '#5a2a7a'; x.fill();
-    x.fillStyle = 'rgba(255,120,200,0.5)'; ell(x, -2, 0, 2.2, 1.2); x.fill(); ell(x, 10, 0, 2.2, 1.2); x.fill();
-    shine(x, -6, -10, 3, 1.6, -0.7, 0.85);
-  }, 1, ['#ffffff', 1, 1], 1.2, 2));
+  return bake('u:gh3|' + col, 26, 28, x => {
+    const k = x.getTransform().a;
+    const raw = document.createElement('canvas');
+    raw.width = x.canvas.width; raw.height = x.canvas.height;
+    const r = raw.getContext('2d');
+    r.setTransform(x.getTransform());
+    r.lineJoin = 'round'; r.lineCap = 'round';
+    finish(r, ghostBody(col), 1, ['#ffffff', 1, 1], 1.2, 2);
+    const g = sil(raw, '#8ffcff'), ink = sil(raw, INK2); // 발광 외곽선: 실루엣을 두 반경으로 번지게(몸 뒤)
+    x.save();
+    x.setTransform(1, 0, 0, 1, 0, 0);
+    // 청록 테 바깥 먹선(3.4): 밝은 초원에서도 대비 가장자리가 남는다(어두운 바닥에선 묻혀 보이지 않음)
+    for (const [R, a, n, im] of [[4.4, 0.2, 16, g], [3.4, 0.75, 14, ink], [2.5, 0.85, 12, g]]) {
+      x.globalAlpha = a;
+      for (let i = 0; i < n; i++) { const an = i * TAU / n; x.drawImage(im, Math.cos(an) * R * k, Math.sin(an) * R * k); }
+    }
+    x.globalAlpha = 1;
+    x.drawImage(raw, 0, 0);
+    x.restore();
+  }, Math.min(S, 2));
 }
 
 // 새끼 드래곤 몸통 (오른쪽을 봄). holy = 수호룡(융합)
@@ -1736,6 +1756,22 @@ export function drawEnemies(view) {
     spr(gl(col), e.x, e.y + bossDY(e), s, s);
   }
   ctx.globalAlpha = 1;
+  // 저주 낙인(FX 균형 v0.1.2): 몸 뒤 연보라 기운 + 발밑에서 도는 저주 룬 + 솟는 저주 불씨 — 어두운 동굴·묘지에서도 '저주받은 무리'가 읽히게.
+  // 몸 뒤에 그려 적 윤곽을 덮지 않는다. 발광은 광량 예산 제외(작은 빛만)
+  if (view.spells && view.spells.curseMark || order.some(isCursed)) {
+    const curse = !!(view.spells && view.spells.curseMark), cg = hu('#b870ff');
+    let motes = 0; // 솟는 불씨는 프레임당 2개까지(공용 파티클 풀을 떼 전체가 차지하지 않게)
+    setLightPrio(LIGHT_EXEMPT);
+    for (const e of order) {
+      if (!(curse || e.cursed) || e.isBoss) continue; // 보스는 오라 + 머리 위 문양으로 충분(보스 오라 α ≤ 0.2 규칙)
+      const vr = visR(e), fa = fadeA(visOf(e), e), ey = e.y + bossDY(e), fy = ey + vr * (FEET[e.type] ?? 0.88);
+      ctx.globalAlpha = (0.34 + 0.08 * Math.sin(T * 3 + e.id)) * fa;
+      spr(cg, e.x, ey, vr * 2.4, vr * 2.4);
+      if (!e.cursed && motes < 2 && rnd() < frameDt * 1.3 && ++motes) part(K_GLOW, e.x + (rnd() - 0.5) * vr, fy - 6, (rnd() - 0.5) * 10, -45 - rnd() * 35, 0.8, 14, rnd() < 0.5 ? '#e0a8ff' : '#b870ff', 0, 1);
+    }
+    setLightPrio(false);
+    ctx.globalAlpha = 1;
+  }
   ctx.globalCompositeOperation = 'source-over';
   for (const e of order) drawBody(e);
   wt();
@@ -2030,20 +2066,26 @@ function drawEnemyMarks(view, order) {
   // 저주 낙인(전체 저주)은 잡몹 머리 위 문양 대신 발밑 보라 빛 웅덩이 — 떼 전체에 아이콘이 떠 어지럽지 않게.
   // 머리 위 문양은 보스와 개별 저주(주황)만
   const sig = e => e.cursed || e.isBoss;
-  const cg = gl('#b04dff');
+  // FX 균형(v0.1.2): 어두운 보라 웅덩이는 동굴·묘지에 묻힌다 → 연보라 발광 + 발밑에서 도는 저주 룬(광량 예산 제외).
+  // 몸 뒤 연보라 기운·솟는 불씨는 drawEnemies. 보스·개별 저주는 머리 위 문양
+  const cg = hu('#c070ff'), rc = runeCircle('#e0a8ff');
+  setLightPrio(LIGHT_EXEMPT);
   additive(true);
   for (const e of order) {
     if (!(curse || e.cursed)) continue;
     const vr = visR(e), fa = fadeA(visOf(e), e);
     if (!sig(e)) {
-      ctx.globalAlpha = (0.42 + 0.12 * Math.sin(T * 3 + e.id)) * fa;
-      spr(cg, e.x, e.y + bossDY(e) + vr * (FEET[e.type] ?? 0.88), vr * 2.4, vr * 0.8);
+      const fy = e.y + bossDY(e) + vr * (FEET[e.type] ?? 0.88);
+      ctx.globalAlpha = (0.55 + 0.15 * Math.sin(T * 3 + e.id)) * fa;
+      spr(cg, e.x, fy, vr * 2.8, vr * 0.95);
+      groundRune(rc, e.x, fy, vr * 1.4 / 31, T * 1.4 + e.id, 0.5 * fa); // 옅게: 떼 전체가 소환진처럼 보이지 않게
       continue;
     }
-    ctx.globalAlpha = 0.45 * fa;
-    spr(gl(e.cursed && !curse ? '#ffb84a' : '#b04dff'), e.x, e.y + bossDY(e) - vr * 1.15 - 16, 40, 40);
+    ctx.globalAlpha = 0.5 * fa;
+    spr(gl(e.cursed && !curse ? '#ffb84a' : '#c070ff'), e.x, e.y + bossDY(e) - vr * 1.15 - 16, 44, 44);
   }
   additive(false);
+  setLightPrio(false);
   ctx.globalAlpha = 1;
   for (const e of order) {
     if (!(curse || e.cursed) || !sig(e)) continue;
@@ -2433,26 +2475,36 @@ export function drawAfter() {
   ctx.globalAlpha = 1;
 }
 
+const isCursed = e => e.cursed;
 export function drawGhosts(view) {
   const gs = view.spellFx && view.spellFx.ghosts;
   if (!gs || !gs.length) return;
-  // 망령 군단 레벨(E): Lv1 작고 옅은 유령 → Lv4 긴 잔상 꼬리 → Lv6 짙은 보라 망령
-  const lt = tier(skillLv(view, 'ghostLegion')), k = 0.75 + 0.4 * lt.f;
+  // 망령 군단 레벨(E): Lv1도 또렷(불투명 몸 + 청록 외곽선) → Lv4 잔상 셋 → Lv6 짙은 보라 망령. 발광은 광량 예산 제외(작은 빛만)
+  const lt = tier(skillLv(view, 'ghostLegion')), k = 1.4 + 0.25 * lt.f, n = gs.length > 12 ? 1 : lt.sec ? 3 : 2; // 붐비면 잔상 1개(LOD)
+  const ha = view.theme | 0 ? 1 : 0.5; // 밝은 초원: 가산 헤일로가 하얗게 뜨지 않게 절반
+  // 막 나온 유령(0.2초)은 반투명·헤일로/잔상 없이 — 시전 순간 성문에 겹친 무더기가 성벽 앞 적을 덮지 않게
+  const fin = q => Math.min(1, (q.life || 0) / 0.2);
   const img = ghostSpr(lt.max ? '#c8a0ff' : '#d8c0ff');
+  setLightPrio(LIGHT_EXEMPT);
   additive(true);
   for (const q of gs) {
-    const t = q.tgt, face = t && t.x < q.x ? -1 : 1;
-    ctx.globalAlpha = 0.55;
-    spr(gl('#b48aff'), q.x - face * 12, q.y + 4, 44 * k, 30 * k);
-    ctx.globalAlpha = 0.3;
-    spr(gl('#9a3dff'), q.x - face * 26, q.y + 6, 30 * k, 20 * k);
-    if (lt.sec) for (let j = 1; j <= 3; j++) { ctx.globalAlpha = 0.28 - j * 0.07; spr(hu('#7a3aff'), q.x - face * (26 + j * 18), q.y + 6 + j * 2, 34 - j * 6, 22 - j * 4); }
+    const t = q.tgt, face = t && t.x < q.x ? -1 : 1, f = fin(q) ** 2 * ha;
+    if (!f) continue;
+    ctx.globalAlpha = 0.5 * f;
+    spr(hu('#6ff6ff'), q.x - face * 6 * k, q.y + 2, 58 * k, 46 * k);
+    for (let j = 1; j <= n; j++) { ctx.globalAlpha = (0.36 - j * 0.08) * f; spr(hu(j % 2 ? '#b48aff' : '#6ff6ff'), q.x - face * (12 + j * 17) * k, q.y + 4 + j * 2, (44 - j * 7) * k, (28 - j * 4) * k); }
   }
   additive(false);
-  ctx.globalAlpha = 0.92;
-  for (const q of gs) {
-    const t = q.tgt, face = t && t.x < q.x ? -1 : 1;
-    place(q.x, q.y + Math.sin(RT * 8 + q.x * 0.05) * 3, Math.sin(RT * 6 + q.y) * 0.12, face * k, k);
+  setLightPrio(false);
+  for (const q of gs) { // 잔상(일반 합성 — 밝은 초원에서도 형태로 읽힌다)
+    const t = q.tgt, face = t && t.x < q.x ? -1 : 1, y = q.y + Math.sin(RT * 8 + q.x * 0.05) * 3, f = fin(q);
+    for (let j = n; j >= 1; j--) {
+      ctx.globalAlpha = 0.34 / j * f;
+      place(q.x - face * j * 13 * k, y + j * 2, Math.sin(RT * 6 + q.y) * 0.12, face * k * (1 - j * 0.1), k * (1 - j * 0.1));
+      ctx.drawImage(img, -img.hw, -img.hh, img.hw * 2, img.hh * 2);
+    }
+    ctx.globalAlpha = 0.35 + 0.65 * f;
+    place(q.x, y, Math.sin(RT * 6 + q.y) * 0.12, face * k, k);
     ctx.drawImage(img, -img.hw, -img.hh, img.hw * 2, img.hh * 2);
   }
   wt();

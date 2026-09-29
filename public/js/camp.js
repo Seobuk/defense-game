@@ -13,6 +13,7 @@ import { icon } from './icons.js';
 import { fmt } from './util.js';
 import { createShopUI } from './shopui.js'; // 4차 경제: 상점 탭(상자·유물) · 출정 준비 카드
 import { trainBreakCost, trainBreakText, gemBreakOpen, gemBreakCost, gemBreakText, GEM_BREAK } from './shop.js';
+import { openGemStore, gemStoreBannerArt } from './gemstoreui.js'; // v0.1.2 보석 충전(결제 미연결)
 import { openAltar, openWardrobe, maybeGift, summonDot, altarTabIcon, wardrobeIcon } from './summonui.js'; // v0.1.2 외형 소환: '소환' 탭 · 옷장 버튼 · 환영 선물
 
 const META_ICON = {
@@ -38,7 +39,7 @@ export function createCamp(root, H = {}) {
     <header class="cp-top">
       <div class="cp-rec">${icon('trophy')}<div><span class="cp-nick"></span><b class="k-num gold cp-best">0층</b></div><em class="cp-runs"></em></div>
       <div class="cp-gold" aria-label="골드">${icon('coin')}<b class="k-num gold cp-goldn">0</b></div>
-      <div class="cp-gems" aria-label="보석">${icon('gem')}<b class="k-num gem-n cp-gemn">0</b></div>
+      <div class="cp-gems" aria-label="보석">${icon('gem')}<b class="k-num gem-n cp-gemn">0</b><button class="cp-gem-plus" aria-label="보석 충전"><i></i><i></i></button></div>
       <button class="k-btn round s neutral cp-set" aria-label="설정">${icon('settings')}</button>
     </header>
     <main class="cp-body">
@@ -152,6 +153,9 @@ export function createCamp(root, H = {}) {
   let meta = null, pane = 'sortie', preview = 'knight', startSpells = [], sig = '', pickSlot = -1, tCls = null, lastCls = null;
 
   const shop = createShopUI(el, $('.cp-pane[data-pane="shop"]'), $('.sh-prep'), H);
+  // v0.1.2 보석 충전(gemstoreui.js — 결제 미연결): 상단 보석 (+) · 상점 탭 맨 위 배너
+  $('.cp-pane[data-pane="shop"]').insertAdjacentHTML('afterbegin', `<button class="gs-bn">${gemStoreBannerArt()}<span class="gs-bn-t"><b>보석 충전</b><span>첫 구매 보석 2배 · 초보자 패키지</span></span><span class="gs-bn-go" aria-hidden="true">›</span></button>`);
+  for (const b of [$('.cp-gem-plus'), $('.gs-bn')]) b.addEventListener('click', () => openGemStore(meta?.gems));
   const tree = createTalentTree($('.cp-thost'), el, {
     onAllocate: key => !!H.onCampAct?.({ type: 'talent', cls: tCls, key }),
     onReset: () => !!H.onCampAct?.({ type: 'talentReset', cls: tCls }),

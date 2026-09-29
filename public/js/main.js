@@ -13,6 +13,7 @@ import { createAudio } from './audio.js';
 import * as store from './save.js';
 import * as updater from './updater.js';
 import * as pwa from './pwa.js';
+import { gemStoreHandleBack } from './gemstoreui.js'; // v0.1.2 보석 충전(결제 미연결)
 import { initSummonUI, summonHandleBack, openWardrobe, syncLoadout } from './summonui.js'; // v0.1.2 소환의 제단 · 옷장(자기 전체 화면 층)
 
 const HITSTOP_CAP = 500;          // ms
@@ -535,6 +536,7 @@ async function protectStorage() {
 
 // ── 안드로이드 뒤로가기: 시트·모달 닫기 → 도전 중이면 일시정지 메뉴, 정비·타이틀에선 두 번 눌러 종료 ──
 App?.addListener('backButton', () => {
+  if (gemStoreHandleBack()) return; // v0.1.2 보석 충전 화면(정비 위)
   if (summonHandleBack()) return; // v0.1.2 소환·옷장 층이 영웅 화면 위
   if (heroUI.handleBack()) return;
   if (ui.handleBack()) return;

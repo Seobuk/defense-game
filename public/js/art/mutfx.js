@@ -6,7 +6,7 @@
 // render.js: events → update → drawGround(서리 결계 위) → draw(새끼 드래곤 뒤, 파티클 앞)
 import { WORLD_W, WALL_Y, FRONT_Y, SPELL_BY_KEY } from '../config.js';
 import { clamp } from '../util.js';
-import { TAU, ctx, RT, T, bake, circ, poly, rad, lin, fs, INK2, wt, place, spr, additive, groundRune, rnd, lerp, easeOut, shake, flash, topExtra, sideX } from './core.js';
+import { TAU, ctx, RT, T, bake, circ, poly, rad, lin, fs, INK2, wt, place, spr, additive, groundRune, rnd, lerp, easeOut, shake, flash, topExtra, sideX, mulberry, frameNo, setLightPrio, LIGHT_EXEMPT } from './core.js';
 import { part, burst, ring, sprPop, hu, soft, flame, runeCircle, starFlash, sparkle, rays, comet, magicCore, iceSpear, curseSigil, slashArc, lightBeam, K_GLOW, K_SPARK, K_STAR, K_SHARD, K_SMOKE, K_DEBRIS } from './fx.js';
 import { MF, babyDragon, babyWing, ghostSpr } from './units.js';
 import { pop } from './hud.js';
@@ -15,21 +15,28 @@ import { MUT_BY_KEY, HEX_H, SPIRITS, spiritAt, MIRRORS } from '../mutations.js';
 // ── 순간 연출 풀(번개·광선·레일·베기·예고) ──
 const FX = [];
 const MAX_FX = 90;
-function add(o) { if (FX.length >= MAX_FX) FX.shift(); o.t = 0; FX.push(o); return o; }
-const zig = (x0, y0, x1, y1, n, amp) => {
+function add(o) { if (FX.length >= MAX_FX) FX.shift(); o.t = 0; o.sd = (rnd() * 1e9) | 0; FX.push(o); return o; }
+const BOLT_CAP = 5; // 동시에 보이는 변이 번개 줄기 상한(FX 균형) — 넘치면 가장 최근 줄기를 굵게
+function addBolt(o) {
+  let live = 0, last = null;
+  for (const q of FX) if (q.k === 'bolt') { live++; last = q; }
+  if (live >= BOLT_CAP && last) { last.w = Math.min(last.w + 0.15, 1.6); last.t = Math.min(last.t, last.life * 0.3); return last; }
+  return add(o);
+}
+const zig = (x0, y0, x1, y1, n, amp, r = rnd) => { // r: 순간 번개는 자기 시드(프레임마다 떨림 — 다른 연출 수와 무관)
   const pts = [x0, y0], dx = x1 - x0, dy = y1 - y0, L = Math.hypot(dx, dy) || 1, nx = -dy / L, ny = dx / L;
-  for (let i = 1; i < n; i++) { const u = i / n, o = (rnd() - 0.5) * 2 * amp * Math.sin(u * Math.PI); pts.push(x0 + dx * u + nx * o, y0 + dy * u + ny * o); }
+  for (let i = 1; i < n; i++) { const u = i / n, o = (r() - 0.5) * 2 * amp * Math.sin(u * Math.PI); pts.push(x0 + dx * u + nx * o, y0 + dy * u + ny * o); }
   pts.push(x1, y1);
   return pts;
 };
 function path(pts) { ctx.beginPath(); ctx.moveTo(pts[0], pts[1]); for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1]); }
-// 번개 한 줄기: 헤일로(넓고 옅게) + 원소 색 + 가는 흰 심(≤3px)
+// 번개 한 줄기: 헤일로(넓고 옅게) + 원소 색 + 가는 흰 심(≤1.6px) — FX 균형: 번개가 화면을 독점하지 않게 가늘게
 function boltLine(pts, col, halo, w, a) {
   additive(true);
   path(pts);
-  ctx.globalAlpha = a * 0.3; ctx.strokeStyle = halo; ctx.lineWidth = w * 8; ctx.stroke();
-  ctx.globalAlpha = a * 0.9; ctx.strokeStyle = col; ctx.lineWidth = w * 2.6; ctx.stroke();
-  ctx.globalAlpha = a; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = Math.min(3, w); ctx.stroke();
+  ctx.globalAlpha = a * 0.26; ctx.strokeStyle = halo; ctx.lineWidth = w * 6; ctx.stroke();
+  ctx.globalAlpha = a * 0.85; ctx.strokeStyle = col; ctx.lineWidth = w * 2; ctx.stroke();
+  ctx.globalAlpha = a * 0.7; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = Math.min(1.6, w * 0.6); ctx.stroke();
   additive(false);
   ctx.globalAlpha = 1;
 }
@@ -70,13 +77,22 @@ function iceBlockSpr() { // 얼음 감옥: 각진 반투명 결정 덩어리. �
     x.beginPath(); x.moveTo(-18, -24); x.lineTo(-2, -30); x.moveTo(-24, -10); x.lineTo(-10, -20); x.moveTo(10, 10); x.lineTo(20, -6); x.lineTo(12, -16); x.stroke();
   });
 }
-function knightMutSpr() { // 망령 기사: 반투명 보라 갑주 + 빛나는 눈 + 긴 검(+x). 원점 = 발
-  return bake('m:knight', 34, 42, x => {
-    const ink = '#1a0c2c', body = 'rgba(70,36,120,0.9)', rim = '#d8b8ff';
-    x.beginPath(); x.moveTo(-14, 30); x.quadraticCurveTo(-18, 0, -10, -8); x.lineTo(10, -8); x.quadraticCurveTo(18, 0, 14, 30); x.quadraticCurveTo(0, 22, -14, 30); fs(x, body, 2.5, ink);
+function knightMutSpr() { // 망령 기사: 불투명 연보라 갑주 + 청록 발광 외곽선 + 빛나는 눈 + 긴 검(+x). 원점 = 발 (FX 균형: 어두운 동굴·묘지에서도 읽히게)
+  return bake('m:knight2', 38, 46, x => {
+    const ink = '#1a0c2c', rim = '#9ffcff';
+    const torso = () => { x.beginPath(); x.moveTo(-14, 30); x.quadraticCurveTo(-18, 0, -10, -8); x.lineTo(10, -8); x.quadraticCurveTo(18, 0, 14, 30); x.quadraticCurveTo(0, 22, -14, 30); };
+    for (const [w, a] of [[9, 0.28], [5.5, 0.7]]) { // 청록 발광 외곽선(몸·투구)
+      x.globalAlpha = a; x.lineWidth = w; x.strokeStyle = rim;
+      torso(); x.stroke(); circ(x, 0, -20, 11); x.stroke();
+    }
+    x.globalAlpha = 1;
+    const body = lin(x, 0, -32, 0, 30, [[0, '#e6d6ff'], [0.35, '#a98af0'], [1, '#5a3aa8']]);
+    torso(); fs(x, body, 2.5, ink);
     circ(x, 0, -20, 11); fs(x, body, 2.5, ink);
     x.beginPath(); x.moveTo(-9, -24); x.lineTo(9, -24); x.lineWidth = 3; x.strokeStyle = ink; x.stroke();
-    x.fillStyle = '#f6d8ff'; circ(x, -4, -20, 2.3); x.fill(); circ(x, 4, -20, 2.3); x.fill();
+    x.fillStyle = '#1a0838'; x.beginPath(); x.ellipse(0, -19, 8, 3.6, 0, 0, TAU); x.fill(); // 투구 틈
+    x.fillStyle = '#8ffcff'; circ(x, -4, -19, 2.4); x.fill(); circ(x, 4, -19, 2.4); x.fill();
+    x.fillStyle = '#ffffff'; circ(x, -4, -19.5, 1); x.fill(); circ(x, 4, -19.5, 1); x.fill();
     x.beginPath(); x.moveTo(0, -31); x.quadraticCurveTo(12, -42, 20, -34); x.quadraticCurveTo(9, -34, 4, -28); fs(x, '#9a3dff', 1.6, ink);
     x.beginPath(); x.moveTo(-22, -6); x.lineTo(-12, -8); x.lineTo(-12, 12); x.quadraticCurveTo(-18, 18, -24, 10); x.closePath(); fs(x, '#3a2a58', 2, ink);
     x.beginPath(); x.moveTo(10, 0); x.lineTo(32, -30); x.lineTo(34, -27); x.lineTo(13, 3); x.closePath(); fs(x, '#ece2ff', 1.8, ink);
@@ -144,22 +160,23 @@ export function events(view, evs) {
         burst(K_GLOW, x, y, 5, 40, 160, 0.5, 18, ['#ffd23a', '#ff6a1f'], -180, 2);
         break;
       case 'focusBolt': // 천벌: 같은 자리에 겹겹이
-        add({ k: 'bolt', life: 0.26, x0: x + (rnd() - 0.5) * 120, y0: -topExtra - 20, x1: x, y1: y, col: '#ffe53a', halo: '#7b5cff', w: 1.6 + 0.25 * (ev.i | 0), n: 10, amp: 60 });
-        part(K_GLOW, x, y, 0, 0, 0.2, 90, '#7b5cff');
-        burst(K_SPARK, x, y, 6, 300, 700, 0.18, 3, ['#ffe53a', '#ffffff'], 0, 6);
-        if (!(ev.i | 0)) { sprPop(runeCircle('#ffe53a'), x, y + 8, 0.4, 2.6, 0.9, Math.PI / 2, 3, 0.36); add({ k: 'pillar', life: 0.9, x, y, col: '#ffe53a', halo: '#7b5cff', w: 70 }); flash(0.06); }
+        // 첫 벼락만 하늘 끝에서 — 이어지는 벼락은 표적 위 짧은 줄기(전체 높이 기둥을 줄인다)
+        addBolt({ k: 'bolt', life: 0.16, x0: x + (rnd() - 0.5) * ((ev.i | 0) ? 60 : 120), y0: (ev.i | 0) ? y - 200 : -topExtra - 20, x1: x, y1: y, col: '#ffe53a', halo: '#7b5cff', w: 1.1 + 0.12 * (ev.i | 0), n: (ev.i | 0) ? 6 : 10, amp: (ev.i | 0) ? 26 : 44 });
+        part(K_GLOW, x, y, 0, 0, 0.14, 64, '#7b5cff');
+        burst(K_SPARK, x, y, 4, 300, 640, 0.14, 2.6, ['#ffe53a', '#ffffff'], 0, 6);
+        if (!(ev.i | 0)) { sprPop(runeCircle('#ffe53a'), x, y + 8, 0.4, 2.2, 0.6, Math.PI / 2, 3, 0.36); add({ k: 'pillar', life: 0.45, x, y, col: '#ffe53a', halo: '#7b5cff', w: 44 }); }
         ring(x, y, 6, 60 + 14 * (ev.i | 0), 0.3, '#ffe53a', 4);
         shake(0.05);
         break;
       case 'thunderCloud': burst(K_SMOKE, x, y - 150, 8, 30, 120, 0.9, 60, 'rgba(60,50,110,0.6)', 0, 2); ring(x, y, 10, 150, 0.5, '#9a8cff', 6); break;
       case 'cloudZap':
-        add({ k: 'bolt', life: 0.16, x0: ev.cx + (rnd() - 0.5) * 80, y0: ev.cy - 135, x1: x, y1: y, col: '#e0d8ff', halo: '#7b5cff', w: 1.1, n: 7, amp: 26 });
-        burst(K_SPARK, x, y, 3, 200, 500, 0.15, 2.4, ['#ffe53a', '#ffffff'], 0, 6);
-        part(K_GLOW, x, y, 0, 0, 0.15, 44, '#9a8cff');
+        addBolt({ k: 'bolt', life: 0.13, x0: ev.cx + (rnd() - 0.5) * 80, y0: ev.cy - 135, x1: x, y1: y, col: '#e0d8ff', halo: '#7b5cff', w: 0.8, n: 7, amp: 26 });
+        burst(K_SPARK, x, y, 2, 200, 460, 0.13, 2.2, ['#ffe53a', '#ffffff'], 0, 6);
+        part(K_GLOW, x, y, 0, 0, 0.12, 34, '#9a8cff');
         break;
       case 'ballLightning': ring(x, y, 4, 60, 0.3, '#7fdcff', 4); burst(K_SPARK, x, y, 6, 200, 500, 0.2, 2.4, ['#bff4ff', '#ffffff'], 0, 6); break;
-      case 'ballZap': for (const q of ev.pts || []) add({ k: 'bolt', life: 0.14, x0: x, y0: y, x1: q[0], y1: q[1], col: '#bff4ff', halo: '#2a78e0', w: 0.9, n: 5, amp: 14 }); break;
-      case 'arcTether': add({ k: 'bolt', life: 0.2, x0: x, y0: y, x1: ev.x1, y1: ev.y1, col: '#e0c8ff', halo: '#9a3dff', w: 1.2, n: 7, amp: 22 }); break;
+      case 'ballZap': for (const q of ev.pts || []) addBolt({ k: 'bolt', life: 0.12, x0: x, y0: y, x1: q[0], y1: q[1], col: '#bff4ff', halo: '#2a78e0', w: 0.7, n: 5, amp: 14 }); break;
+      case 'arcTether': addBolt({ k: 'bolt', life: 0.16, x0: x, y0: y, x1: ev.x1, y1: ev.y1, col: '#e0c8ff', halo: '#9a3dff', w: 0.9, n: 7, amp: 22 }); break;
       case 'glacierSpear': sprPop(runeCircle('#5fb8ff'), x, y, 0.5, 2.6, 0.5, 0, -3); burst(K_SHARD, x, y, 10, 150, 400, 0.6, 7, ['#ffffff', '#bff4ff', '#5fb8ff'], 300, 1); break;
       case 'glacierShatter':
         burst(K_SHARD, x, y, 16, 200, 560, 0.8, 9, ['#ffffff', '#bff4ff', '#2a78e0'], 500, 1, 60);
@@ -203,10 +220,10 @@ export function events(view, evs) {
         shake(0.14);
         break;
       case 'hexZone': add({ k: 'hexIn', life: 0.8, y: +ev.y }); break;
-      case 'soulVolley': burst(K_GLOW, x, y, 10, 60, 200, 0.6, 18, ['#e0c0ff', '#9a3dff'], -60, 2); ring(x, y, 10, 90, 0.4, '#c89aff', 6); break;
-      case 'soulHit': burst(K_GLOW, x, y, 5, 40, 160, 0.4, 16, ['#e0c0ff', '#9a3dff'], -40, 3); part(K_GLOW, x, y, 0, 0, 0.2, 50, '#9a3dff'); break;
+      case 'soulVolley': burst(K_GLOW, x, y, 10, 60, 200, 0.6, 18, ['#e0c0ff', '#8ff6ff'], -60, 2); ring(x, y, 10, 90, 0.4, '#9ff6ff', 6); break;
+      case 'soulHit': burst(K_GLOW, x, y, 5, 40, 160, 0.4, 16, ['#e0c0ff', '#8ff6ff'], -40, 3); part(K_GLOW, x, y, 0, 0, 0.2, 50, '#b48aff'); break;
       case 'reaper': flash(0.05, '#9a3dff'); break;
-      case 'reapKill': sprPop(curseSigil('#8a4dff', '#ffe0ff'), x, y - 16, 0.4, 1, 0.5); burst(K_SMOKE, x, y, 4, 30, 110, 0.7, 30, 'rgba(60,20,90,0.6)', -60, 2); break;
+      case 'reapKill': sprPop(curseSigil('#b47aff', '#e8fcff'), x, y - 16, 0.4, 1.2, 0.5); ring(x, y, 6, 56, 0.35, '#9ff6ff', 4); burst(K_GLOW, x, y - 10, 5, 40, 140, 0.6, 16, ['#e0c8ff', '#8ff6ff'], -120, 2); break;
       case 'diveStart': add({ k: 'dash', life: 0.5, x0: x, y0: y, x1: ev.x1, y1: ev.y1 }); ring(x, y, 10, 70, 0.3, '#ffb040', 5); break;
       case 'diveBoom':
         part(K_GLOW, x, y, 0, 0, 0.4, ev.r * 2.4, '#ff6a1f');
@@ -238,7 +255,7 @@ export function events(view, evs) {
         const p = ev.pts || [];
         if (p.length > 1) add({ k: 'chain', life: 0.4, pts: p.flat(), col: '#e8fbff', halo: '#2a9bff' });
         for (const q of p) { sprPop(sparkle('#bff4ff'), q[0], q[1], 0.3, 1.2, 0.35, 0, 3); burst(K_SHARD, q[0], q[1], 3, 60, 180, 0.5, 6, ['#ffffff', '#9fe8ff'], 300, 1); }
-        if (p[0]) flash(0.05, '#7fe3ff');
+        if (p[0]) flash(0.03, '#7fe3ff');
         break;
       }
       case 'icePrison': for (const q of ev.pts || []) { ring(q[0], q[1], 60, 10, 0.25, '#bff4ff', 5); burst(K_SHARD, q[0], q[1], 4, 60, 160, 0.4, 6, ['#ffffff', '#9fe8ff'], 200, 1); } break;
@@ -264,7 +281,7 @@ export function events(view, evs) {
       case 'plasmaRail': {
         add({ k: 'rail', life: 0.4, x0: ev.x0, y0: ev.y0, x1: ev.x1, y1: ev.y1 });
         burst(K_SPARK, ev.x1, ev.y1, 8, 300, 700, 0.2, 3, ['#f0b0ff', '#ffffff'], 0, 6);
-        flash(0.06, '#c860ff'); shake(0.1);
+        flash(0.03, '#c860ff'); shake(0.1);
         break;
       }
       case 'plasmaMine': for (const q of ev.pts || []) add({ k: 'lob', life: 0.3, x0: mageO().ox, y0: mageO().oy, x1: q[0], y1: q[1] }); break;
@@ -275,12 +292,12 @@ export function events(view, evs) {
         ring(x, y, 8, ev.r * 1.2, 0.35, '#e07aff', 7);
         shake(0.1);
         break;
-      case 'wraithKnights': sprPop(runeCircle('#9a3dff'), x, y + 10, 0.6, 3, 0.8, Math.PI / 2, 2, 0.38); burst(K_SMOKE, x, y, 8, 40, 160, 0.9, 40, 'rgba(60,20,90,0.55)', -40, 1.5); break;
+      case 'wraithKnights': sprPop(runeCircle('#c9a2ff'), x, y + 10, 0.6, 3, 0.8, Math.PI / 2, 2, 0.38); ring(x, y, 10, 150, 0.5, '#8ff6ff', 7); burst(K_SMOKE, x, y, 8, 40, 160, 0.9, 40, 'rgba(150,110,230,0.45)', -40, 1.5); break;
       case 'knightSlash':
-        sprPop(slashArc('#d8b8ff'), x, y - 6, 0.7, 1.5, 0.22, (ev.face < 0 ? Math.PI : 0) + (rnd() - 0.5) * 0.6);
-        burst(K_GLOW, x, y, 3, 60, 180, 0.3, 12, ['#c8a0ff', '#9a3dff'], 0, 4);
+        sprPop(slashArc('#bff8ff'), x, y - 6, 0.7, 1.7, 0.24, (ev.face < 0 ? Math.PI : 0) + (rnd() - 0.5) * 0.6);
+        burst(K_GLOW, x, y, 4, 60, 180, 0.3, 14, ['#8ff6ff', '#c9a2ff'], 0, 4);
         break;
-      case 'spectralCharge': for (const cx of ev.xs || []) sprPop(runeCircle('#c8a0ff'), cx, y + 10, 0.3, 1, 0.5, Math.PI / 2, 2, 0.36); flash(0.04, '#9a3dff'); break;
+      case 'spectralCharge': for (const cx of ev.xs || []) { sprPop(runeCircle('#c9a2ff'), cx, y + 10, 0.3, 1.2, 0.5, Math.PI / 2, 2, 0.36); ring(cx, y, 6, 50, 0.35, '#8ff6ff', 4); } flash(0.04, '#9a3dff'); break;
       case 'dragonAegis': ring(x, WALL_Y - 100, 20, 380, 0.6, '#fff0a8', 8); break;
       case 'aegisBlock': sprPop(starFlash('#ffe07a'), x, y, 0.3, 0.9, 0.2); burst(K_SPARK, x, y, 4, 150, 400, 0.2, 2.6, ['#fff0a8', '#ffffff'], 0, 6); break;
       case 'starfall': add({ k: 'comet', life: 0.45, x, y }); break;
@@ -517,7 +534,7 @@ export function draw(view) {
       case 'sun': drawSun(q); break;
       case 'cloud': drawCloud(q); break;
       case 'ball': drawBall(q); break;
-      case 'tether': if (!q.a.dead && !q.b.dead) boltLine(zig(q.a.x, q.a.y, q.b.x, q.b.y, 8, 16), '#e0c8ff', '#9a3dff', 1.3, 0.9 * fade(q, 0.1, 0.3)); break;
+      case 'tether': if (!q.a.dead && !q.b.dead) boltLine(zig(q.a.x, q.a.y, q.b.x, q.b.y, 8, 16), '#e0c8ff', '#9a3dff', 0.95, 0.85 * fade(q, 0.1, 0.3)); break;
       case 'glacier': drawGlacier(q); break;
       case 'shard': {
         const an = Math.atan2(q.vy, q.vx), sp = iceSpear();
@@ -541,11 +558,13 @@ export function draw(view) {
         break;
       }
       case 'doom': drawDoom(q); break;
-      case 'soul': {
-        const an = Math.atan2(q.vy, q.vx);
-        additive(true); ctx.globalAlpha = 0.9; place(q.x, q.y, an, 1.2, 0.9); ctx.drawImage(comet('#c89aff'), -66, -10, 72, 20); wt();
-        ctx.globalAlpha = 0.9; spr(hu('#9a3dff'), q.x, q.y, 40, 40); additive(false);
-        ctx.globalAlpha = 1; spr(magicCore('#fbeaff', '#c89aff', '#5a1fa8'), q.x, q.y, 14, 14);
+      case 'soul': { // 추적 영혼: 청록·연보라 꼬리 + 발광(광량 예산 제외) + 작은 유령 머리
+        const an = Math.atan2(q.vy, q.vx), gh = ghostSpr('#e0d0ff');
+        setLightPrio(LIGHT_EXEMPT); additive(true);
+        ctx.globalAlpha = 0.9; place(q.x, q.y, an, 1.3, 1); ctx.drawImage(comet('#8ff6ff'), -66, -10, 72, 20); wt();
+        ctx.globalAlpha = 0.7; spr(hu('#b48aff'), q.x, q.y, 44, 44);
+        additive(false); setLightPrio(false);
+        ctx.globalAlpha = 1; place(q.x, q.y, 0, (q.vx < 0 ? -1 : 1) * 0.62, 0.62); ctx.drawImage(gh, -gh.hw, -gh.hh, gh.hw * 2, gh.hh * 2); wt();
         break;
       }
       case 'reap': drawScythe(q); break;
@@ -556,22 +575,27 @@ export function draw(view) {
         ctx.globalAlpha = 1;
         break;
       }
-      case 'link': if (q.t < q.life) { const f = fade(q, 0.2, 0.4); boltLine(zig(q.a.x, q.a.y, q.b.x, q.b.y, 12, 30), '#fff3a0', '#ffb020', 1.6, 0.9 * f); boltLine(zig(q.a.x, q.a.y, q.b.x, q.b.y, 9, 18), '#ffe53a', '#7b5cff', 0.9, 0.6 * f); } break;
+      case 'link': if (q.t < q.life) { const f = fade(q, 0.2, 0.4); boltLine(zig(q.a.x, q.a.y, q.b.x, q.b.y, 12, 30), '#fff3a0', '#ffb020', 1.15, 0.85 * f); boltLine(zig(q.a.x, q.a.y, q.b.x, q.b.y, 9, 18), '#ffe53a', '#7b5cff', 0.7, 0.5 * f); } break;
       case 'eclipse': drawEclipse(q); break;
       case 'dusk': drawDusk(q); break;
-      case 'knight': {
-        const img = knightMutSpr(), f = fade(q, 0.3, 0.5), bob = Math.sin(RT * 5 + q.x) * 3;
-        additive(true); ctx.globalAlpha = 0.45 * f; spr(hu('#9a3dff'), q.x, q.y - 10, 90, 100); additive(false);
-        ctx.globalAlpha = 0.92 * f; place(q.x, q.y + bob, 0, q.face * 1.5, 1.5); ctx.drawImage(img, -img.hw, -img.hh * 1.7, img.hw * 2, img.hh * 2); wt();
+      case 'knight': { // 망령 기사: 불투명 몸 + 청록 외곽선(구운 것) + 발광·잔상(광량 예산 제외)
+        const img = knightMutSpr(), f = fade(q, 0.3, 0.5), bob = Math.sin(RT * 5 + q.x) * 3, s = 2.2;
+        setLightPrio(LIGHT_EXEMPT); additive(true);
+        groundRune(runeCircle('#8ff6ff'), q.x, q.y + 4, 1.5, RT * 2, 0.75 * f);
+        ctx.globalAlpha = 0.45 * f; spr(hu('#7fe8ff'), q.x, q.y - 38, 110, 136);
+        ctx.globalAlpha = 0.3 * f; spr(hu('#b48aff'), q.x - q.face * 30, q.y - 30, 80, 90);
+        additive(false); setLightPrio(false);
+        ctx.globalAlpha = 0.25 * f; place(q.x - q.face * 22, q.y + bob + 2, 0, q.face * s, s); ctx.drawImage(img, -img.hw, -img.hh * 1.7, img.hw * 2, img.hh * 2);
+        ctx.globalAlpha = f; place(q.x, q.y + bob, 0, q.face * s, s); ctx.drawImage(img, -img.hw, -img.hh * 1.7, img.hw * 2, img.hh * 2); wt();
         ctx.globalAlpha = 1;
         break;
       }
-      case 'charge': {
+      case 'charge': { // 유령 돌격: 크게 + 세로 청록 잔상 기둥
         const img = ghostSpr('#c8a0ff');
-        additive(true);
-        for (const x of q.xs) { ctx.globalAlpha = 0.35; spr(hu('#9a3dff'), x, q.y + 90, 34, 200); }
-        additive(false);
-        for (const x of q.xs) { ctx.globalAlpha = 0.9; place(x, q.y + Math.sin(RT * 9 + x) * 4, -Math.PI / 2, 1.3, 1.3); ctx.drawImage(img, -img.hw, -img.hh, img.hw * 2, img.hh * 2); }
+        setLightPrio(LIGHT_EXEMPT); additive(true);
+        for (const x of q.xs) { ctx.globalAlpha = 0.4; spr(hu('#6ff6ff'), x, q.y + 100, 36, 230); ctx.globalAlpha = 0.3; spr(hu('#b48aff'), x, q.y + 40, 60, 110); }
+        additive(false); setLightPrio(false);
+        for (const x of q.xs) { ctx.globalAlpha = 1; place(x, q.y + Math.sin(RT * 9 + x) * 4, -Math.PI / 2, 1.6, 1.6); ctx.drawImage(img, -img.hw, -img.hh, img.hw * 2, img.hh * 2); }
         wt(); ctx.globalAlpha = 1;
         break;
       }
@@ -613,7 +637,7 @@ function drawBall(q) { // 구전: 코어 + 튀는 작은 번개
   const f = fade(q, 0.1, 0.4);
   additive(true); ctx.globalAlpha = 0.7 * f; spr(hu('#2a78e0'), q.x, q.y, 80, 80); additive(false);
   ctx.globalAlpha = f; spr(magicCore('#ffffff', '#7fdcff', '#2a78e0'), q.x, q.y, 26, 26);
-  for (let k = 0; k < 3; k++) { const an = rnd() * TAU, L = 22 + rnd() * 18; boltLine(zig(q.x, q.y, q.x + Math.cos(an) * L, q.y + Math.sin(an) * L, 3, 6), '#bff4ff', '#2a78e0', 0.6, 0.8 * f); }
+  for (let k = 0; k < 2; k++) { const an = rnd() * TAU, L = 22 + rnd() * 18; boltLine(zig(q.x, q.y, q.x + Math.cos(an) * L, q.y + Math.sin(an) * L, 3, 6), '#bff4ff', '#2a78e0', 0.5, 0.75 * f); }
   ctx.globalAlpha = 1;
 }
 function drawGlacier(q) { // 빙하 창: 거대한 결정 창 + 서리 꼬리
@@ -800,7 +824,7 @@ function drawWake(tn) { // 횡단 돌풍: 가로 속도선
 function drawStormTrail(s) { // 떠도는 폭풍: 지나간 자리 번개 자국
   const dir = Math.sign(s.vx) || 1;
   additive(true); ctx.globalAlpha = 0.25; spr(hu('#7b5cff'), s.x - dir * s.r * 0.8, s.y, s.r * 1.6, s.r * 0.6); additive(false);
-  if (rnd() < 0.3) add({ k: 'bolt', life: 0.12, x0: s.x - dir * s.r * 0.6, y0: s.y + (rnd() - 0.5) * 30, x1: s.x - dir * s.r * 1.4, y1: s.y + (rnd() - 0.5) * 40, col: '#ffe53a', halo: '#7b5cff', w: 0.8, n: 4, amp: 12 });
+  if (rnd() < 0.3) addBolt({ k: 'bolt', life: 0.12, x0: s.x - dir * s.r * 0.6, y0: s.y + (rnd() - 0.5) * 30, x1: s.x - dir * s.r * 1.4, y1: s.y + (rnd() - 0.5) * 40, col: '#ffe53a', halo: '#7b5cff', w: 0.8, n: 4, amp: 12 });
   ctx.globalAlpha = 1;
 }
 
@@ -809,8 +833,8 @@ function drawFx() {
   for (const o of FX) {
     const u = o.t / o.life, a = 1 - u;
     switch (o.k) {
-      case 'bolt': boltLine(zig(o.x0, o.y0, o.x1, o.y1, o.n || 6, o.amp || 20), o.col, o.halo, o.w, a); break;
-      case 'chain': { const p = []; for (let i = 0; i + 3 < o.pts.length; i += 2) p.push(...zig(o.pts[i], o.pts[i + 1], o.pts[i + 2], o.pts[i + 3], 4, 14).slice(i ? 2 : 0)); boltLine(p, o.col, o.halo, 1.5, a); break; }
+      case 'bolt': boltLine(zig(o.x0, o.y0, o.x1, o.y1, o.n || 6, o.amp || 20, mulberry(o.sd + frameNo * 7919)), o.col, o.halo, o.w, a ** 1.6); break; // 번쩍 → 빨리 사라짐
+      case 'chain': { const p = []; for (let i = 0; i + 3 < o.pts.length; i += 2) p.push(...zig(o.pts[i], o.pts[i + 1], o.pts[i + 2], o.pts[i + 3], 4, 14).slice(i ? 2 : 0)); boltLine(p, o.col, o.halo, 1.1, a * a); break; }
       case 'arc': { // 들불: 튀어 오르는 불 곡선
         const mx = (o.x0 + o.x1) / 2, my = Math.min(o.y0, o.y1) - o.h, e = easeOut(Math.min(1, u * 1.6));
         additive(true); ctx.globalAlpha = a; ctx.lineWidth = 5; ctx.strokeStyle = o.col;

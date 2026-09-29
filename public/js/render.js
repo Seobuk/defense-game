@@ -26,6 +26,7 @@ export const fontsReady = C.waitFonts; // main.js 부팅에서 첫 렌더 전에
 // 수요는 누르기 전 값으로 세므로 되먹임 진동이 없다. 변환 배율은 setTransform/scale/transform/save/restore 를 따라가며 추적.
 // ponytail: 빛 텍스처 평균 밝기를 한 상수(LIGHT_FILL)로 본다 — 모양별로 다르게 셀 필요가 생기면 텍스처에 c.fill 을 달 것
 const LIGHT_BUDGET = 0.16, LIGHT_FILL = 0.3, LIGHT_MIN = 0.35; // 예산: 스킬 하나 ≈ 0.1, 조용한 전장 ≈ 0.07 → 여러 스킬이 겹칠 때만 누른다
+const EXEMPT_BUDGET = 0.05; // 망령 계열 발광(C.LIGHT_EXEMPT)은 따로 센다: 번개가 많아도 안 눌리지만, 자기들끼리 이 몫을 넘으면 저희만 눌린다
 function lightMeter(ctx) {
   let det = 1, demand = 0, area = 1, k = 1, peak = 0, add = false;
   const st = [];
@@ -41,12 +42,12 @@ function lightMeter(ctx) {
   // 합성 모드는 JS 쪽에 들고 있는다(네이티브 getter 를 그리기마다 읽지 않게)
   const gco = Object.getOwnPropertyDescriptor(P, 'globalCompositeOperation');
   Object.defineProperty(ctx, 'globalCompositeOperation', { get() { return gco.get.call(this); }, set(v) { add = v === 'lighter'; gco.set.call(this, v); } });
-  let pk = 1; // 우선 빛 배율(C.lightPrio): √k
-  const kk = () => (C.lightPrio ? pk : k);
+  let pk = 1, ek = 1, exDemand = 0, exPeak = 0; // 우선 빛 배율(C.lightPrio): √k · C.LIGHT_EXEMPT(망령 계열 발광)는 자기 예산의 ek
+  const kk = () => (C.lightPrio === C.LIGHT_EXEMPT ? ek : C.lightPrio ? pk : k);
   const lit = (x, w, h) => {
     if (!add) return false;
-    const a = x.globalAlpha;
-    demand += Math.abs(w * h) * det * a;
+    const a = x.globalAlpha, q = Math.abs(w * h) * det * a;
+    if (C.lightPrio === C.LIGHT_EXEMPT) exDemand += q; else demand += q;
     x.globalAlpha = a * kk();
     return a;
   };
@@ -61,7 +62,7 @@ function lightMeter(ctx) {
   });
   own('fillRect', function (x, y, w, h) { const a = lit(this, w, h); fR.call(this, x, y, w, h); if (a !== false) this.globalAlpha = a; });
   const dimOnly = f => function () { // 선·경로 채움: 면적은 안 세고 배율만(번개·고리 선은 가늘다)
-    if (add && k < 1) { const a = this.globalAlpha; this.globalAlpha = a * kk(); f.apply(this, arguments); this.globalAlpha = a; }
+    if (add && kk() < 1) { const a = this.globalAlpha; this.globalAlpha = a * kk(); f.apply(this, arguments); this.globalAlpha = a; }
     else f.apply(this, arguments);
   };
   own('fill', dimOnly(fl));
@@ -71,10 +72,12 @@ function lightMeter(ctx) {
       const d = demand * LIGHT_FILL / Math.max(1, area), want = d > LIGHT_BUDGET ? Math.max(LIGHT_MIN, LIGHT_BUDGET / d) : 1;
       k = want < k ? want : k + (want - k) * 0.08;
       pk = Math.sqrt(k);
-      peak = d; demand = 0; area = screenArea;
+      const de = exDemand * LIGHT_FILL / Math.max(1, area), we = de > EXEMPT_BUDGET ? Math.max(0.5, EXEMPT_BUDGET / de) : 1; // 망령 계열은 약하게만(≥ 0.5)
+      ek = we < ek ? we : ek + (we - ek) * 0.08;
+      peak = d; exPeak = de; demand = exDemand = 0; area = screenArea;
       C.setLightK(k);
     },
-    get k() { return k; }, get demand() { return peak; },
+    get k() { return k; }, get demand() { return peak; }, get ek() { return ek; }, get exDemand() { return exPeak; },
   };
 }
 

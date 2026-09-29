@@ -1,0 +1,141 @@
+/* ═══════════ v0.1.2 보석 충전 스토어 (gemstoreui.js) — 결제 미연결. 재질은 kit.css(.k-*), 움직임은 transform/opacity만 ═══════════ */
+
+.gs-scr {
+  position: absolute; inset: 0; z-index: 262; display: flex; flex-direction: column; overflow: hidden; overflow: clip; color: #fff; font-family: var(--font-display);
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  background: radial-gradient(110vmin 70vmin at 50% 0%, #1f6fd0 0%, transparent 62%), radial-gradient(80vmin 60vmin at 100% 70%, #5a1fa8 0%, transparent 70%),
+    linear-gradient(180deg, #16215e 0%, #140f2e 52%, #0c0920 100%);
+  animation: hu-fade .22s var(--ease-out);
+}
+.gs-scr[hidden] { display: none; }
+.gs-bg { position: absolute; inset: 0 0 50%; pointer-events: none; opacity: .7;
+  background-image: radial-gradient(1.4px 1.4px at 12% 18%, #fff 50%, transparent 51%), radial-gradient(1.2px 1.2px at 30% 8%, #d8fbff 50%, transparent 51%),
+    radial-gradient(1.8px 1.8px at 72% 14%, #fff6c8 50%, transparent 51%), radial-gradient(1.2px 1.2px at 88% 30%, #fff 50%, transparent 51%),
+    radial-gradient(1.3px 1.3px at 52% 34%, #d8fbff 50%, transparent 51%), radial-gradient(1.5px 1.5px at 6% 40%, #efd6ff 50%, transparent 51%); }
+.gs-scr .cw { width: min(100%, 720px); margin-inline: auto; }
+
+/* ── 머리줄 ── */
+.gs-head { position: relative; z-index: 2; flex: none; display: flex; align-items: center; gap: 8px; height: 58px; padding: 6px 12px; }
+.gs-back .k-ico { --ico: 20px; }
+.gs-title { flex: 1 1 auto; min-width: 0; margin: 0; font-weight: 400; font-size: 21px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  -webkit-text-stroke: 4px var(--ink); paint-order: stroke fill; text-shadow: 0 2px 0 var(--ink); }
+.gs-pill { flex: none; display: inline-flex; align-items: center; gap: 3px; height: 34px; padding: 0 12px 0 4px; border-radius: 999px; font-size: 18px;
+  background: rgba(10, 6, 30, .62); box-shadow: inset 0 0 0 2px rgba(255, 255, 255, .14); }
+.gs-pill .k-ico { --ico: 26px; }
+
+.gs-body { position: relative; z-index: 1; flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; scrollbar-width: none; }
+.gs-body::-webkit-scrollbar { display: none; }
+.gs-wrap { display: flex; flex-direction: column; gap: 10px; padding: 2px 12px 18px; }
+
+/* ── 첫 구매 2배 띠 ── */
+.gs-promo { position: relative; display: flex; align-items: center; gap: 8px; min-height: 64px; padding: 6px 14px 6px 6px; border: 3px solid var(--ink); border-radius: var(--r-m); overflow: hidden;
+  background: linear-gradient(100deg, #ff4fa3 0%, #b85cff 48%, #3fa9ff 100%);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, .45), inset 0 -3px 0 rgba(0, 0, 0, .18), 0 5px 0 #0c0920, 0 8px 16px rgba(0, 0, 0, .35); }
+.gs-promo::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, .45) 50%, transparent 65%);
+  background-size: 250% 100%; animation: kSweep 3.2s ease-in-out infinite; }
+.gs-promo-art { flex: none; width: 64px; height: 64px; margin: -6px 0; filter: drop-shadow(0 3px 0 rgba(0, 0, 0, .3)); animation: emFloat 3s ease-in-out infinite; }
+.gs-promo div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.gs-promo-h { font-weight: 400; font-size: 20px; line-height: 1.1; -webkit-text-stroke: 4px var(--ink); paint-order: stroke fill; text-shadow: 0 2px 0 var(--ink); }
+.gs-promo-h em { font-style: normal; color: var(--gold-hi); }
+.gs-promo span { font-family: var(--font-body); font-size: 12px; line-height: 1.35; color: #fff; word-break: keep-all; text-shadow: 0 1px 1px rgba(34, 22, 58, .7); }
+
+.gs-h { margin: 6px 2px -2px; font-weight: 400; font-size: 17px; -webkit-text-stroke: 3px var(--ink); paint-order: stroke fill; text-shadow: 0 2px 0 var(--ink); }
+
+/* ── 공용: 그림 + 빛 ── */
+.gs-art-wrap { position: relative; display: grid; place-items: center; }
+.gs-glow { position: absolute; inset: 6%; border-radius: 50%; background: radial-gradient(closest-side, var(--gl, rgba(79, 216, 255, .75)), transparent); }
+.gs-art { position: relative; display: block; width: 100%; height: 100%; filter: drop-shadow(0 3px 0 rgba(0, 0, 0, .3)); }
+[data-t="3"], [data-t="4"] { --gl: rgba(184, 92, 255, .75); }
+[data-t="5"], [data-t="6"], [data-t="starter"] { --gl: rgba(255, 201, 46, .7); }
+[data-t="pass"] { --gl: rgba(255, 228, 90, .55); }
+
+/* ── 추천 패키지(가로 카드) ── */
+.gs-feat { display: grid; gap: 10px; }
+.gs-feat-card { position: relative; display: flex; align-items: center; gap: 10px; min-height: 104px; padding: 10px 12px 10px 8px; text-align: left; color: #fff; font: inherit; cursor: pointer;
+  border: 3px solid var(--ink); border-radius: var(--r-l); -webkit-tap-highlight-color: transparent;
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, .35), inset 0 0 0 2px var(--fc-rim), 0 5px 0 #0c0920, 0 8px 16px rgba(0, 0, 0, .35);
+  transition: transform .18s var(--ease-back); }
+.gs-feat-card.starter { --fc-rim: rgba(255, 201, 46, .55); background: radial-gradient(70% 120% at 12% 50%, rgba(255, 201, 46, .35), transparent 70%), linear-gradient(135deg, #7a2fe0, #3d1180); }
+.gs-feat-card.pass { --fc-rim: rgba(123, 108, 255, .6); background: radial-gradient(70% 120% at 12% 50%, rgba(255, 228, 90, .25), transparent 70%), linear-gradient(135deg, #2f47c8, #1d1745); }
+.gs-feat-card:active, .gs-pack:active { transform: scale(.97); }
+.gs-feat-card .gs-art-wrap { flex: none; width: 82px; height: 82px; }
+.gs-feat-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.gs-feat-name { font-weight: 400; font-size: 18px; line-height: 1.15; -webkit-text-stroke: 3.5px var(--ink); paint-order: stroke fill; text-shadow: 0 2px 0 var(--ink); }
+.gs-feat-desc { font-family: var(--font-body); font-size: 12px; line-height: 1.35; color: #e3dcff; }
+.gs-feat-desc em { font-style: normal; font-weight: 700; color: var(--gold-hi); }
+.gs-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+.gs-chip { display: inline-flex; align-items: center; gap: 2px; height: 24px; padding: 0 8px 0 3px; border-radius: 999px; font-family: var(--font-body); font-size: 12px; white-space: nowrap;
+  background: rgba(10, 6, 30, .55); box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, .16); }
+.gs-chip b { font-family: var(--font-display); font-weight: 400; font-size: 13px; color: var(--gem-hi); margin: 0 1px; }
+.gs-chip .k-ico { --ico: 18px; width: 18px; height: 18px; }
+.gs-ribbon { position: absolute; top: -9px; left: 12px; z-index: 1; padding: 2px 10px; border: 2px solid var(--ink); border-radius: 8px; font-size: 12.5px;
+  background: linear-gradient(180deg, #ff7a7a, #e3263c); -webkit-text-stroke: 2.5px #5a0714; paint-order: stroke fill; box-shadow: 0 2px 0 #8a0f20; }
+.gs-feat-card.pass .gs-ribbon { background: linear-gradient(180deg, #8f7dff, #5a46d6); -webkit-text-stroke-color: #1f124f; box-shadow: 0 2px 0 #33207e; }
+.gs-feat-card .gs-price { flex: none; min-width: 86px; }
+
+/* ── 보석 팩 격자 ── */
+.gs-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 10px; }
+@media (min-width: 600px) { .gs-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } .gs-feat { grid-template-columns: 1fr 1fr; } }
+.gs-pack { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; padding: 12px 8px 10px; color: #fff; font: inherit; cursor: pointer;
+  border: 3px solid var(--ink); border-radius: var(--r-l); -webkit-tap-highlight-color: transparent;
+  background: radial-gradient(90% 60% at 50% 30%, color-mix(in srgb, var(--gl, #4fd8ff) 40%, transparent), transparent 75%), linear-gradient(180deg, #2b2f86 0%, #1d1745 100%);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, .28), inset 0 0 0 2px rgba(123, 108, 255, .35), 0 5px 0 #0c0920, 0 8px 14px rgba(0, 0, 0, .35);
+  transition: transform .18s var(--ease-back); }
+.gs-pack[data-t="6"] { background: radial-gradient(90% 60% at 50% 30%, rgba(255, 201, 46, .45), transparent 75%), linear-gradient(180deg, #5a1fa8 0%, #2b1060 100%);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, .3), inset 0 0 0 2px rgba(255, 201, 46, .6), 0 5px 0 #0c0920, 0 0 18px rgba(255, 176, 32, .35), 0 8px 14px rgba(0, 0, 0, .35); }
+.gs-pack .gs-art-wrap { width: min(96px, 100%); aspect-ratio: 1; }
+.gs-amt { font-size: 26px; line-height: 1.05; }
+.gs-bonus { display: inline-flex; align-items: center; gap: 2px; height: 22px; padding: 0 8px 0 3px; border-radius: 999px; font-family: var(--font-body); font-size: 12px; font-weight: 700; white-space: nowrap;
+  color: #fff3a8; background: rgba(10, 6, 30, .55); box-shadow: inset 0 0 0 1.5px rgba(255, 201, 46, .45); }
+.gs-bonus .k-ico { --ico: 16px; }
+.gs-bonus.none { visibility: hidden; }
+.gs-pack .gs-price { width: 100%; margin-top: 6px; }
+.gs-price { font-size: 16px; pointer-events: none; }
+.gs-x2 { position: absolute; top: -8px; left: -6px; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; width: 46px; height: 46px; border: 2.5px solid var(--ink); border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #ff9ad0, #e3267a 70%); font-size: 17px; line-height: 1; rotate: -12deg;
+  -webkit-text-stroke: 3px #5a0730; paint-order: stroke fill; box-shadow: 0 3px 0 #7a0f45; animation: gsBadge 2.4s ease-in-out infinite; }
+.gs-x2 b { font-weight: 400; font-size: 9.5px; -webkit-text-stroke-width: 2px; }
+.gs-tag { position: absolute; top: 8px; right: 8px; z-index: 1; padding: 1px 7px; border: 2px solid var(--ink); border-radius: 7px; font-size: 11.5px; white-space: nowrap;
+  background: linear-gradient(180deg, #7cf08a, #27ae4a); -webkit-text-stroke: 2.4px #0e4a1e; paint-order: stroke fill; }
+.gs-pack[data-t="6"] .gs-tag { background: linear-gradient(180deg, #ffe45a, #ffb21a); -webkit-text-stroke-color: #7a3a00; }
+@keyframes gsBadge { 0%, 100% { scale: 1; } 50% { scale: 1.08; } }
+
+/* ── 하단 작은 글씨 ── */
+.gs-foot { margin-top: 6px; padding: 10px 12px; border-radius: 12px; background: rgba(10, 6, 30, .45); font-family: var(--font-body); font-size: 11px; line-height: 1.5; color: #a79fd6; text-align: center; }
+.gs-foot p { margin: 0; }
+
+/* ── 결제 준비 중 시트 ── */
+.gs-ov { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; padding: 26px 12px 12px; background: rgba(8, 4, 24, .72); animation: hu-fade .18s; }
+.gs-ov .k-modal { width: min(92vw, 360px); max-height: calc(100dvh - 60px); }
+.gs-pd { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 34px 16px 16px; text-align: center; }
+.gs-pd .gs-art-wrap { width: 112px; height: 112px; margin-bottom: 2px; animation: emFloat 3s ease-in-out infinite; }
+.gs-pd-name { font-family: var(--font-display); font-weight: 400; font-size: 21px; -webkit-text-stroke: 3.5px var(--ink); paint-order: stroke fill; text-shadow: 0 2px 0 var(--ink); }
+.gs-pd-sub { font-size: 12.5px; color: #cfc4ff; }
+.gs-pd-price { font-family: var(--font-display); font-size: 16px; color: var(--gold-hi); }
+.gs-pd-msg { margin: 10px 0 0; padding: 10px 12px; width: 100%; box-sizing: border-box; border-radius: 12px; font-family: var(--font-display); font-size: 17px; color: #fff;
+  background: rgba(10, 6, 30, .5); box-shadow: inset 0 0 0 2px rgba(255, 201, 46, .45); }
+.gs-pd-note { margin: 2px 0 8px; font-size: 12px; color: #a79fd6; }
+
+/* ── 정비 화면 훅: 보석 (+) · 상점 '보석 충전' 배너 ── */
+.cp-gems:has(.cp-gem-plus) { padding-right: 4px; }
+.cp-gem-plus { position: relative; flex: none; display: grid; place-items: center; width: 26px; height: 26px; margin-left: 2px; padding: 0; border: 2px solid var(--ink); border-radius: 50%; cursor: pointer;
+  background: linear-gradient(180deg, #7cf08a 0 52%, #27ae4a 56%); box-shadow: inset 0 1.5px 0 rgba(255, 255, 255, .55), 0 2px 0 #16652a; -webkit-tap-highlight-color: transparent; }
+.cp-gem-plus::before { content: ""; position: absolute; inset: -11px; } /* 누르는 면 44px(테두리 안쪽 22px 기준) */
+.cp-gem-plus i { position: absolute; width: 12px; height: 3.5px; border-radius: 2px; background: #fff; box-shadow: 0 0 0 1.2px #0e4a1e; }
+.cp-gem-plus i + i { rotate: 90deg; box-shadow: none; }
+.cp-gem-plus:active { translate: 0 1px; box-shadow: inset 0 1.5px 0 rgba(255, 255, 255, .55), 0 1px 0 #16652a; }
+.gs-bn { position: relative; display: flex; align-items: center; gap: 8px; width: 100%; min-height: 58px; padding: 4px 12px 4px 4px; text-align: left; color: #fff; font: inherit; cursor: pointer;
+  border: 3px solid var(--ink); border-radius: var(--r-m); overflow: hidden; -webkit-tap-highlight-color: transparent;
+  background: linear-gradient(100deg, #1f86f0 0%, #7a2fe0 60%, #e3267a 100%);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, .45), 0 5px 0 #0c0920, 0 8px 14px rgba(0, 0, 0, .3); transition: transform .18s var(--ease-back); }
+.gs-bn:active { transform: scale(.98); }
+.gs-bn::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, .4) 50%, transparent 65%);
+  background-size: 250% 100%; animation: kSweep 3.6s ease-in-out infinite; }
+.gs-bn-art { flex: none; width: 56px; height: 56px; margin: -6px 0; filter: drop-shadow(0 2px 0 rgba(0, 0, 0, .3)); }
+.gs-bn-t { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.gs-bn-t b { font-weight: 400; font-size: 18px; -webkit-text-stroke: 3.5px var(--ink); paint-order: stroke fill; text-shadow: 0 2px 0 var(--ink); }
+.gs-bn-t span { font-family: var(--font-body); font-size: 12px; color: #fff; text-shadow: 0 1px 1px rgba(34, 22, 58, .8); }
+.gs-bn-go { flex: none; font-size: 26px; line-height: 1; -webkit-text-stroke: 3.5px var(--ink); paint-order: stroke fill; }
+
+@media (max-width: 380px) { .gs-feat-card { gap: 8px; } .gs-feat-card .gs-art-wrap { width: 68px; height: 68px; } .gs-feat-card .gs-price { min-width: 72px; padding-inline: 8px; } }
+@media (prefers-reduced-motion: reduce) { .gs-promo::after, .gs-bn::after, .gs-x2, .gs-promo-art, .gs-pd .gs-art-wrap { animation: none; } }

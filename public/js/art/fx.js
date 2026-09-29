@@ -8,7 +8,7 @@ import {
   TAU, S, bake, bakeO, circ, poly, rad, lin, fs, shine, lite, dim, cel, mulberry, INK2, EL,
   ctx, K, BX, BY, T, RT, topExtra, sideX, fillView, drawView, GOLD_POS, hudY, frameNo,
   shake, flash, punchZoom, colA, flashA, flashCol, MANA_POS, NUM_FONT, OWN, rnd, easeOut, easeBack, lerp, pool, take,
-  wt, ht, place, placeH, spr, put, ell, additive, groundRune, setLightPrio,
+  wt, ht, place, placeH, spr, put, ell, additive, groundRune, setLightPrio, LIGHT_EXEMPT,
 } from './core.js';
 import { MF, mageOn, HF, visOf, stuns, afterImage, MAGE_FEET, bone, visR, bossDY, warpY, babyDragon, babyWing, ghostSpr } from './units.js';
 import { emblem } from './emblems.js';
@@ -38,13 +38,14 @@ export const K_GLOW = 0, K_SPARK = 1, K_STAR = 2, K_CONF = 3, K_SHARD = 4, K_SMO
 const P = pool(400, () => ({ life: 0, max: 1, x: 0, y: 0, vx: 0, vy: 0, g: 0, drag: 0, size: 1, col: '#fff', k: 0, rot: 0, vr: 0 }));
 const RINGS = pool(90, () => ({ life: 0, max: 1, x: 0, y: 0, r0: 0, r1: 0, col: '#fff', w: 2 }));
 const NUMS = pool(24, () => ({ on: false, x: 0, y: 0, vy: 0, t: 0, mt: 0, age: 0, life: 1, txt: '', col: '#fff', top: '#fff', ink: '#000', s: 1, s0: 1, crit: false, val: 0, cls: '', o: 0, tgt: null, w: 0, punch: 0 }));
-const BOLTS = pool(32, () => ({ life: 0, max: 1, pts: null, col: '#8ff', halo: '#3aa8ff', w: 1 }));
+const BOLTS = pool(32, () => ({ life: 0, max: 1, pts: null, col: '#8ff', halo: '#3aa8ff', w: 1, kind: '' }));
 const METEORS = pool(20, () => ({ on: false, x0: 0, y0: 0, x1: 0, y1: 0, t: 0, delay: 0, dur: 0.3, kills: null, r: 110 }));
 const DECALS = pool(24, () => ({ life: 0, max: 1, x: 0, y: 0, r: 0 }));
 const BEAMS = pool(4, () => ({ life: 0, max: 1, x: 0, y0: 0 }));
 const SPRS = pool(150, () => ({ life: 0, max: 1, x: 0, y: 0, s0: 1, s1: 1, ang: 0, spin: 0, vs: 0, sq: 1, img: null }));
 const FIREBALLS = pool(10, () => ({ on: false, t: 0, dur: 0.28, x0: 0, y0: 0, x1: 0, y1: 0, r: 100, plasma: false, kills: [], lv: 3 }));
 const SOULS = pool(48, () => ({ on: false, t: 0, dur: 0.8, x0: 0, y0: 0, cx: 0, cy: 0 }));
+const WISPS = pool(48, () => ({ life: 0, max: 1, x: 0, y: 0, s: 1, face: 1 })); // 흩어지는 망령(유령이 적을 치고 사라진 자리 · 망령이 거둔 처치)
 const HSHOTS = pool(24, () => ({ on: false, t: 0, delay: 0, dur: 0.1, cls: '', x0: 0, y0: 0, x1: 0, y1: 0, crit: false }));
 const ULTS = pool(6, () => ({ on: false, t: 0, dur: 1, cls: '', x: 0, y: 0, r: 0, tg: [], k: 0 }));
 const ARROWS = pool(64, () => ({ on: false, t: 0, delay: 0, x: 0, y: 0 }));
@@ -690,10 +691,19 @@ function petal() {
 }
 function soul(x, y) {
   const s = take(SOULS);
-  s.on = true; s.t = 0; s.dur = 0.7 + rnd() * 0.25; s.x0 = x; s.y0 = y;
+  s.on = true; s.t = 0; s.dur = 1.4 + rnd() * 0.3; s.x0 = x; s.y0 = y;
   s.cx = x + (GOLD_POS.x - x) * 0.15 + (rnd() - 0.5) * 120; s.cy = Math.min(y, 500) - 180 - rnd() * 80;
-  part(K_GLOW, x, y, 0, -30, 0.3, 40, '#b04dff');
+  soulPop(x, y);
+  wisp(x, y - 12, 1, rnd() < 0.5 ? -1 : 1); // 몸을 떠나는 영혼(제자리에서 솟으며 흩어짐) — 날아가는 영혼과 함께 '거뒀다'가 읽힌다
 }
+// 영혼 해방(처치 순간): 청록 고리 + 연보라 빛 + 솟는 불씨 — 망령 계열이 적을 거둔 게 또렷하게
+function soulPop(x, y) {
+  ring(x, y, 6, 64, 0.38, '#9ff6ff', 5);
+  part(K_GLOW, x, y - 6, 0, -40, 0.34, 52, '#c070ff');
+  burst(K_GLOW, x, y - 8, 3, 30, 90, 0.6, 14, ['#e0c8ff', '#8ff6ff'], -140, 2);
+}
+function wisp(x, y, s = 1, face = 1) { const w = take(WISPS); w.x = x; w.y = y; w.s = s; w.face = face; w.life = w.max = 1; }
+const ghostNear = (view, x, y) => { const gs = view.spellFx && view.spellFx.ghosts; if (gs) for (const q of gs) if ((q.x - x) ** 2 + (q.y - y) ** 2 < 90 * 90) return true; return false; };
 // 마나 가득: 바를 따라 흐르는 작은 빛 + 반짝이(큰 흰 원판·고리가 웨이브 바·보석 알약을 덮지 않게)
 export function manaSparkle() {
   burst(K_STAR, MANA_POS.x, MANA_POS.y, 12, 40, 180, 0.7, 12, ['#ffffff', '#e0a0ff', '#ff9ad8'], 160, 1.2, 30);
@@ -735,7 +745,7 @@ function finale(key, x, y, r, dur, gap = 2.2) {
   if (RT - (finAt.get(key) ?? -9) < gap) return null;
   let live = 0;
   for (const f of FIN) if (f.on) live++;
-  if (live >= 2) return null;
+  if (live >= 2 && key !== 'ghostLegion') return null; // 망령의 문은 번개·융합 마무리에 밀리지 않는다(FX 균형 — 망령 계열 존재감)
   finAt.set(key, RT);
   const f = take(FIN);
   f.on = true; f.t = 0; f.dur = dur; f.key = key; f.x = x; f.y = y; f.r = r; f.dir = rnd() < 0.5 ? 1 : -1; f.pts = null; f.k = 0;
@@ -836,37 +846,58 @@ function gDragonWing(far) {
 }
 
 // 낙뢰: 하늘에서 지그재그 볼트 (+ Lv2 가지·헤일로, Lv4 바닥 룬·옆 줄기, Lv6 첫 줄기에 하늘 균열 + 번개 왕관)
+// ── 번개 존재감(FX 균형 — 사용자: "번개 이펙트만 보여"): 짧고 선명하게 ──
+// 동시에 보이는 번개는 종류(kind: 낙뢰·연쇄·융합…)마다 BOLT_CAP 줄(완전체 *Max는 BOLT_FIN), 전부 BOLT_ALL 줄까지(종류의 첫 줄기는 예외). 넘치면 새 줄기를 그리지 않고
+// 같은 종류의 가장 최근 번개를 굵게(여러 번개 = 한 줄기 큰 번개로 읽힘) — 종류별 상한이라 연쇄 번개가 낙뢰에 먹히지 않는다.
+// 하늘 끝부터 내리꽂는 기둥은 PILLAR_GAP초에 한 번, 나머지 낙뢰는 표적 위 짧은 줄기. 번개 화면 섬광은 BFLASH_GAP초에 한 번·옅게.
+const BOLT_CAP = 3, BOLT_FIN = 5, BOLT_ALL = 8, PILLAR_GAP = 0.4, BFLASH_GAP = 0.9;
+let pillarAt = -9, bflashAt = -9;
+function bolt(pts, life, col, halo, w, kind = 'fx') {
+  let all = 0, same = 0, fresh = null;
+  for (const b of BOLTS) {
+    if (b.life <= 0) continue;
+    all++;
+    if (b.kind === kind) { same++; if (!fresh || b.life / b.max > fresh.life / fresh.max) fresh = b; }
+  }
+  // 완전체 피날레(*Max)는 한 번에 터지는 갈래 수(플라즈마 5·초전도 4)를 지킨다. 종류의 첫 줄기는 전체 상한과 무관하게 그린다
+  const fin = kind.endsWith('Max');
+  if (same >= (fin ? BOLT_FIN : BOLT_CAP) || (same && !fin && all >= BOLT_ALL)) {
+    if (fresh) { fresh.w = Math.max(fresh.w, Math.min(fresh.w + 0.15, 1.8)); fresh.life = Math.min(fresh.max, fresh.life + life * 0.25); } // 합쳐진 번개는 가늘어지지 않는다
+    return null;
+  }
+  const b = take(BOLTS);
+  b.pts = pts; b.life = b.max = life; b.col = col; b.halo = halo; b.w = w; b.kind = kind; b.sd = (rnd() * 1e9) | 0;
+  return b;
+}
+function boltFlash(a, col) { if (RT - bflashAt < BFLASH_GAP) return; bflashAt = RT; flash(a, col); }
 function strike(x, y, sup, first, t = tier(3)) {
   const col = sup ? '#dff8ff' : '#ffe53a', halo = t.two ? (sup ? '#2a78e0' : '#7b5cff') : (sup ? '#7fe3ff' : '#c8a020');
-  const x0 = x + (rnd() - 0.5) * 140, mx = (x + x0) / 2 + (rnd() - 0.5) * 70, my = y * 0.5;
-  const b = take(BOLTS);
-  b.pts = [[x0, -40], [mx, my], [x, y]]; b.life = b.max = 0.22 + 0.1 * t.f; b.col = col; b.halo = halo; b.w = 0.8 + 0.9 * t.f;
-  if (t.two) {
-    const b2 = take(BOLTS);
-    b2.pts = [[mx, my], [mx + (rnd() - 0.5) * 160, my + 90 + rnd() * 80]]; b2.life = b2.max = 0.18; b2.col = col; b2.halo = halo; b2.w = 0.7;
-  }
-  part(K_GLOW, x, y, 0, 0, 0.1, 36 + 14 * t.f, '#ffffff'); // 흰 섬광은 작게 — 맞은 적이 빛에 묻히지 않게
-  part(K_GLOW, x, y, 0, 0, 0.26, 95 * t.s, sup ? '#2a78e0' : '#7b5cff'); // 헤일로는 보라/파랑(밝은 바닥에 더해도 하얗게 안 뜬다)
-  burst(K_SPARK, x, y, cnt(8, t), 300, 720, 0.18, 3, [col, '#ffffff'], 0, 6);
-  sprPop(starFlash(sup ? '#7fe3ff' : '#ffe53a'), x, y, 0.3, 0.55 + 0.3 * t.f, 0.18);
-  ring(x, y, 8, 72 * t.s, 0.32, col, 5);
-  if (t.sec) { // 보조: 바닥 룬 + 옆으로 튀는 짧은 줄기 두 개 + 그을음
-    sprPop(runeCircle(sup ? '#7fe3ff' : '#ffd23a'), x, y + 6, 0.4, 1.5, 0.4, Math.PI / 2, 2, 0.36);
-    for (const s of [-1, 1]) { const b3 = take(BOLTS); b3.pts = [[x, y], [x + s * (40 + rnd() * 30), y + 18 + rnd() * 16]]; b3.life = b3.max = 0.16; b3.col = col; b3.halo = halo; b3.w = 0.6; }
+  const tall = first && RT - pillarAt >= PILLAR_GAP; // 하늘 끝 기둥은 가끔만 — 나머지는 표적 위 짧은 줄기
+  if (tall) pillarAt = RT;
+  const y0 = tall ? -40 : y - 150 - rnd() * 70, x0 = x + (rnd() - 0.5) * (tall ? 140 : 70), mx = (x + x0) / 2 + (rnd() - 0.5) * (tall ? 70 : 36), my = (y0 + y) / 2;
+  const kd = sup ? 'sc' : 'ls';
+  bolt([[x0, y0], [mx, my], [x, y]], 0.13 + 0.05 * t.f, col, halo, 0.7 + 0.5 * t.f, kd);
+  if (t.two && tall) bolt([[mx, my], [mx + (rnd() - 0.5) * 140, my + 70 + rnd() * 60]], 0.11, col, halo, 0.55, kd);
+  part(K_GLOW, x, y, 0, 0, 0.07, 26 + 10 * t.f, '#ffffff'); // 흰 섬광은 작고 짧게 — 맞은 적이 빛에 묻히지 않게
+  part(K_GLOW, x, y, 0, 0, 0.16, 64 * t.s, sup ? '#2a78e0' : '#7b5cff'); // 헤일로는 보라/파랑(밝은 바닥에 더해도 하얗게 안 뜬다)
+  burst(K_SPARK, x, y, cnt(5, t), 300, 640, 0.14, 2.6, [col, '#ffffff'], 0, 6);
+  if (first) sprPop(starFlash(sup ? '#7fe3ff' : '#ffe53a'), x, y, 0.3, 0.4 + 0.2 * t.f, 0.12);
+  ring(x, y, 8, 50 * t.s, 0.22, col, 4);
+  if (t.sec) { // 보조: 바닥 룬 + 그을음
+    if (first) sprPop(runeCircle(sup ? '#7fe3ff' : '#ffd23a'), x, y + 6, 0.4, 1.1, 0.3, Math.PI / 2, 2, 0.36);
     const d = take(DECALS); d.x = x; d.y = y + 8; d.r = 24; d.life = d.max = 2.5;
   }
-  if (sup) burst(K_SHARD, x, y, cnt(7, t), 150, 380, 0.6, 7, ['#ffffff', '#bff4ff', '#7fe3ff'], 600, 1, 80);
-  if (first && t.max && !sup && finale('lightningStrike', x, y, 0, 0.5, 1.8)) { // 완전체: 하늘이 갈라지는 가로 번개 + 세 갈래 낙뢰
+  if (sup) burst(K_SHARD, x, y, cnt(5, t), 150, 380, 0.5, 6, ['#ffffff', '#bff4ff', '#7fe3ff'], 600, 1, 80);
+  if (first && t.max && !sup && finale('lightningStrike', x, y, 0, 0.4, 1.8)) { // 완전체: 하늘이 갈라지는 가로 번개 + 두 갈래 낙뢰(짧게)
     const top = Math.max(hudY(200), 60);
-    const bb = take(BOLTS); bb.pts = [[x - 330, top + 10], [x - 120, top - 14], [x, top + 6], [x + 150, top - 10], [x + 340, top + 12]];
-    bb.life = bb.max = 0.45; bb.col = col; bb.halo = '#7b5cff'; bb.w = 1.3;
-    for (const s of [-1, 0, 1]) { const bf = take(BOLTS); bf.pts = [[x + s * 150, top], [x + s * 90 + (rnd() - 0.5) * 60, (top + y) / 2], [x + s * 40, y]]; bf.life = bf.max = 0.35; bf.col = col; bf.halo = '#7b5cff'; bf.w = 1.1; }
-    part(K_GLOW, x, top, 0, 0, 0.4, 260, '#7b5cff');
-    sprPop(runeCircle('#ffe53a'), x, y + 6, 0.5, 3.4, 0.7, Math.PI / 2, 2.5, 0.36);
-    ring(x, y, 12, 190, 0.45, '#ffe53a', 9);
+    bolt([[x - 300, top + 10], [x - 110, top - 14], [x, top + 6], [x + 140, top - 10], [x + 310, top + 12]], 0.3, col, '#7b5cff', 1, 'lsMax');
+    for (const s2 of [-1, 1]) bolt([[x + s2 * 140, top], [x + s2 * 80 + (rnd() - 0.5) * 60, (top + y) / 2], [x + s2 * 30, y]], 0.24, col, '#7b5cff', 0.85, 'lsMax');
+    part(K_GLOW, x, top, 0, 0, 0.3, 150, '#7b5cff');
+    sprPop(runeCircle('#ffe53a'), x, y + 6, 0.5, 2.6, 0.5, Math.PI / 2, 2.5, 0.36);
+    ring(x, y, 12, 150, 0.35, '#ffe53a', 7);
   }
-  if (first) flash(0.06 + 0.06 * t.f);
-  shk(0.06, t);
+  if (first) boltFlash(0.03 + 0.03 * t.f);
+  shk(0.05, t);
 }
 function judgmentFx(x, w, twi, t = tier(3)) {
   const b = take(LBEAMS);
@@ -928,8 +959,12 @@ function spellFx(view, ev, n) {
     }
     case 'superconduct': { // 초전도: 얼음 번개 여러 줄기 + 서리 섬광
       const pts = Array.isArray(ev.pts) ? ev.pts : [[x, y]];
-      pts.slice(0, 8).forEach((q, i) => strike(q[0], warpY(q[0], q[1]), true, i === 0, t));
-      flash(0.06 + 0.06 * t.f, '#7fe3ff');
+      pts.slice(0, 8).forEach((q, i) => { // 줄기는 넷까지 — 나머지는 얼음 착탄만(여러 번개 = 한 번의 큰 번개)
+        const qy = warpY(q[0], q[1]);
+        if (i < 4) strike(q[0], qy, true, i === 0, t);
+        else { part(K_GLOW, q[0], qy, 0, 0, 0.14, 44, '#7fe3ff'); burst(K_SHARD, q[0], qy, 3, 120, 300, 0.45, 6, ['#ffffff', '#bff4ff'], 500, 1, 60); }
+      });
+      boltFlash(0.03 + 0.03 * t.f, '#7fe3ff');
       if (t.sec) for (const q of pts.slice(0, 4)) burst(K_SHARD, q[0], warpY(q[0], q[1]) - 6, 5, 60, 160, 0.9, 9, ['#e8fbff', '#9fe8ff'], -120, 3, 120);
       if (t.max) { const f = finale('superconduct', x, hudY(250), 0, 1.2); if (f) f.pts = pts.slice(0, 8).map(q => [q[0], warpY(q[0], q[1])]); }
       break;
@@ -952,8 +987,8 @@ function spellFx(view, ev, n) {
       sprPop(runeCircle('#b8a0ff'), x, y, 0.6, r / 28 * t.s, 0.6, Math.PI / 2, 2, 0.42);
       ring(x, y, r * 1.5 * t.s, 12, 0.5, '#b8a0ff', 7);
       if (t.sec) ring(x, y, r * 1.1, 8, 0.4, '#ffe53a', 5);
-      flash(0.05 + 0.04 * t.f, '#b8a0ff');
-      if (t.max) finale('stormEye', x, y, r, 3.6, 3);
+      boltFlash(0.025 + 0.02 * t.f, '#b8a0ff');
+      if (t.max) finale('stormEye', x, y, r, 1.6, 6); // 완전체 구름 벽: 짧게·가끔(FX 균형 — 폭풍이 화면을 덮지 않게)
       break;
     }
     case 'twilight': { // 황혼: 금빛 코어 + 보라 헤일로 광선
@@ -968,11 +1003,12 @@ function spellFx(view, ev, n) {
     case 'plasma': // 플라즈마 구체: 날아가는 구체는 FIREBALLS(events), 착탄은 fireballBoom
       if (t.max) finale('plasma', x, y, +ev.r || 120, 1.1);
       break;
-    case 'ghostLegion': // 망령 군단: 성벽 앞 망령의 문
-      sprPop(runeCircle('#9a3dff'), x, y + 10, 0.6, 2 + t.f * 1.5, 0.8, Math.PI / 2, 2, 0.38);
-      burst(K_SMOKE, x, y, cnt(8, t), 40, 160, 0.9, 40, 'rgba(60,20,90,0.55)', -40, 1.5);
-      ring(x, y, 10, 160 * t.s, 0.5, '#c8a0ff', 8);
-      if (t.sec) sprPop(runeCircle('#d8b0ff'), x, y + 10, 0.5, 1.6, 0.8, Math.PI / 2, -2, 0.38);
+    case 'ghostLegion': // 망령 군단: 성벽 앞 망령의 문(연보라 룬 + 청록 고리 — 어두운 바닥에서도 보이게)
+      sprPop(runeCircle('#c9a2ff'), x, y + 10, 0.6, 2 + t.f * 1.5, 0.8, Math.PI / 2, 2, 0.38);
+      burst(K_SMOKE, x, y, cnt(8, t), 40, 160, 0.9, 40, 'rgba(150,110,230,0.4)', -40, 1.5);
+      ring(x, y, 10, 160 * t.s, 0.5, '#8ff6ff', 8);
+      if (t.sec) sprPop(runeCircle('#9ff6ff'), x, y + 10, 0.5, 1.6, 0.8, Math.PI / 2, -2, 0.38);
+      for (let k = 0, n = 2 + Math.round(t.f); k < n; k++) wisp(x + (k - (n - 1) / 2) * 34, y - 16 - rnd() * 16, 1 + 0.2 * t.f, k % 2 ? -1 : 1); // 문에서 솟는 망령
       if (t.max && finale('ghostLegion', x, y + 10, 0, 2.2, 3.2)) shake(0.18);
       break;
     case 'guardianDragon': // 수호룡: 금빛 드래곤이 한 줄을 가로질러 강하 + 성벽 치유 파동
@@ -994,8 +1030,8 @@ function spellFx(view, ev, n) {
 function fireballBoom(fb) {
   const { x1: x, y1: y, r } = fb, t = tier(fb.lv || 3);
   const C = fb.plasma ? ['#f0b0ff', '#c860ff', '#6a3aff', '#e090ff'] : ['#fff2a0', '#ff8a1e', '#ff4a1a', '#ffe45a'];
-  part(K_GLOW, x, y, 0, 0, 0.12, Math.min(60, r * (0.35 + 0.2 * t.f)), '#ffffff');
-  part(K_GLOW, x, y, 0, 0, 0.38, r * (1.6 + 0.8 * t.f), C[1]);
+  part(K_GLOW, x, y, 0, 0, 0.12, Math.min(fb.plasma ? 34 : 60, r * (fb.plasma ? 0.2 + 0.1 * t.f : 0.35 + 0.2 * t.f)), '#ffffff'); // 플라즈마 흰 심은 작게(밝은 초원에서 안의 적 윤곽이 남게)
+  part(K_GLOW, x, y, 0, 0, fb.plasma ? 0.3 : 0.38, r * (fb.plasma ? 1.2 + 0.5 * t.f : 1.6 + 0.8 * t.f), C[1]); // 플라즈마(번개 계열)는 작고 짧게 — FX 균형
   burst(K_GLOW, x, y, cnt(16, t), 70, 340, 0.6, 26, t.two ? [C[0], C[1], C[2]] : C[1], -140, 3);
   burst(K_SPARK, x, y, cnt(9, t), 400, 900, 0.2, 3.2, [C[3], '#ffffff'], 0, 6);
   if (t.two) { // 연기 + 버섯구름 기둥
@@ -1005,7 +1041,7 @@ function fireballBoom(fb) {
   }
   ring(x, y, 10, r, 0.35, C[3], 9);
   if (t.two) ring(x, y, 6, r * 0.7, 0.3, C[0], 4);
-  sprPop(starFlash(C[1]), x, y, 0.5, r / 45 * t.s, 0.24);
+  sprPop(starFlash(C[1]), x, y, 0.5, r / (fb.plasma ? 60 : 45) * t.s, fb.plasma ? 0.18 : 0.24);
   if (t.two) sprPop(runeCircle(C[1]), x, y, 0.4, r / 30, 0.4, Math.PI / 2, 2, 0.4);
   if (t.sec) { // 보조: 2차 작은 폭발 셋 + 불꽃 잔상 고리
     for (let k = 0; k < 3; k++) { const a = k * TAU / 3 + rnd(), d = r * 0.55; part(K_GLOW, x + Math.cos(a) * d, y + Math.sin(a) * d * 0.6, 0, 0, 0.3, r * 0.7, C[2]); ring(x + Math.cos(a) * d, y + Math.sin(a) * d * 0.6, 4, r * 0.4, 0.3, C[3], 5); }
@@ -1161,10 +1197,9 @@ function castLaunch(ev) {
     mote(ox, oy, tx, ty, col2, 0.32, -90, 1.3);
   } else switch (ev.spell) {
     case 'lightningStrike': { // 지팡이에서 하늘로 번개를 쏘아 올린다 → 낙뢰가 떨어짐
-      const b = take(BOLTS), top = Math.min(oy - 360, 80);
-      b.pts = [[ox, oy], [ox + (rnd() - 0.5) * 60, (oy + top) / 2], [ox + (rnd() - 0.5) * 120, top]];
-      b.life = b.max = 0.2; b.col = '#ffe53a'; b.halo = '#7b5cff'; b.w = 0.8;
-      part(K_GLOW, ox, oy, 0, 0, 0.2, 70, '#ffe53a');
+      const top = Math.max(oy - 220, 80);
+      bolt([[ox, oy], [ox + (rnd() - 0.5) * 40, (oy + top) / 2], [ox + (rnd() - 0.5) * 70, top]], 0.12, '#ffe53a', '#7b5cff', 0.55, 'ls');
+      part(K_GLOW, ox, oy, 0, 0, 0.14, 44, '#ffe53a');
       break;
     }
     case 'tornado': mote(ox, oy, tx, ty - 20, '#6ff0c0', 0.3, 40); break;
@@ -1206,29 +1241,26 @@ function updateFinales(da) {
         break;
       case 'superconduct': // 얼음 왕관이 뜬 뒤 결정마다 표적으로 얼음 번개
         if (u0 < 0.15 && u >= 0.15 && f.pts) f.pts.forEach((p, i) => {
-          const cx = crownX(f) + (i - (f.pts.length - 1) / 2) * 34, b = take(BOLTS);
-          b.pts = [[cx, f.y + 20], [(cx + p[0]) / 2 + (rnd() - 0.5) * 60, (f.y + p[1]) / 2], [p[0], p[1]]];
-          b.life = b.max = 0.4; b.col = '#dff8ff'; b.halo = '#2a78e0'; b.w = 0.9;
+          const cx = crownX(f) + (i - (f.pts.length - 1) / 2) * 34;
+          bolt([[cx, f.y + 20], [(cx + p[0]) / 2 + (rnd() - 0.5) * 60, (f.y + p[1]) / 2], [p[0], p[1]]], 0.26, '#dff8ff', '#2a78e0', 0.8, 'scMax');
           burst(K_SHARD, p[0], p[1], 6, 120, 360, 0.7, 8, ['#ffffff', '#bff4ff', '#2a78e0'], 500, 1, 90);
           sprPop(sparkle('#e8fbff'), p[0], p[1], 0.4, 2.2, 0.4, rnd() * TAU, 3);
         });
         break;
       case 'stormEye': // 구름 벽에서 쉴 새 없이 벼락
-        if (rnd() < da * 12) {
-          const a = rnd() * TAU, b = take(BOLTS), cy = f.y - f.r * 1.7;
-          b.pts = [[f.x + Math.cos(a) * f.r * 1.8, cy + Math.sin(a) * f.r * 0.45], [f.x + (rnd() - 0.5) * f.r * 1.4, f.y + (rnd() - 0.5) * f.r * 0.5]];
-          b.life = b.max = 0.16; b.col = '#ece4ff'; b.halo = '#7b5cff'; b.w = 0.9;
+        if (rnd() < da * 6) {
+          const a = rnd() * TAU, cy = f.y - f.r * 1.7;
+          bolt([[f.x + Math.cos(a) * f.r * 1.8, cy + Math.sin(a) * f.r * 0.45], [f.x + (rnd() - 0.5) * f.r * 1.4, f.y + (rnd() - 0.5) * f.r * 0.5]], 0.12, '#ece4ff', '#7b5cff', 0.75, 'se');
         }
         break;
       case 'plasma': // 조여들던 전기 고리가 터지며 번개 8갈래가 화면 끝까지
         if (u0 < 0.62 && u >= 0.62) {
-          for (let k = 0; k < 8; k++) {
-            const a = k * TAU / 8 + rnd() * 0.3, b = take(BOLTS);
-            b.pts = [[f.x, f.y], [f.x + Math.cos(a) * 220 + (rnd() - 0.5) * 60, f.y + Math.sin(a) * 220], [f.x + Math.cos(a) * 760, f.y + Math.sin(a) * 760]];
-            b.life = b.max = 0.3; b.col = '#ffc8ff'; b.halo = '#9a3dff'; b.w = 1.1;
+          for (let k = 0; k < 5; k++) { // 번개 다섯 갈래(화면 끝까지 대신 반경 두 배쯤)
+            const a = k * TAU / 5 + rnd() * 0.4;
+            bolt([[f.x, f.y], [f.x + Math.cos(a) * 170 + (rnd() - 0.5) * 50, f.y + Math.sin(a) * 170], [f.x + Math.cos(a) * 400, f.y + Math.sin(a) * 400]], 0.22, '#ffc8ff', '#9a3dff', 0.9, 'plMax');
           }
           ring(f.x, f.y, 10, f.r * 2.2, 0.5, '#e07aff', 10);
-          flash(0.12, '#c040ff');
+          flash(0.06, '#c040ff');
           shake(0.22);
         }
         break;
@@ -1315,22 +1347,22 @@ function drawFinales0(back) {
       case 'stormEye': { // 하늘을 덮는 폭풍 구름 벽(도는 먹구름 고리) + 가운데 금빛 눈 + 땅까지 이어진 깔때기
         const cy = f.y - f.r * 1.7, cl = soft('rgba(44,30,92,0.85)');
         additive(true);
-        ctx.globalAlpha = 0.25 * a; spr(hu('#7b5cff'), f.x, (cy + f.y) / 2, f.r * 1.3, f.y - cy + f.r);
+        ctx.globalAlpha = 0.2 * a; spr(hu('#7b5cff'), f.x, (cy + f.y) / 2, f.r * 1.1, f.y - cy + f.r);
         additive(false);
-        for (let k = 0; k < 12; k++) { // 먹구름 고리(뒤쪽 반은 옅게)
-          const an = T * 0.9 + k * TAU / 12, rx = f.r * 2 * e, s2 = f.r * (0.9 + 0.25 * Math.sin(k * 2.3));
-          ctx.globalAlpha = a * (Math.sin(an) > 0 ? 0.85 : 0.55);
+        for (let k = 0; k < 10; k++) { // 먹구름 고리(뒤쪽 반은 옅게) — 화면 폭을 다 덮지 않게 반경·크기를 줄였다
+          const an = T * 0.9 + k * TAU / 10, rx = f.r * 1.35 * e, s2 = f.r * (0.62 + 0.18 * Math.sin(k * 2.3));
+          ctx.globalAlpha = a * (Math.sin(an) > 0 ? 0.55 : 0.3);
           spr(cl, f.x + Math.cos(an) * rx, cy + Math.sin(an) * rx * 0.28, s2 * 1.5, s2 * 0.8);
         }
         additive(true);
         ctx.lineWidth = 4;
         for (let k = 0; k < 3; k++) {
-          const rr = f.r * (1.1 + k * 0.5) * e, a0 = T * (1.6 - k * 0.35) + k * 2;
-          ctx.globalAlpha = 0.6 * a; ctx.strokeStyle = k % 2 ? '#7b5cff' : '#c8b8ff';
+          const rr = f.r * (0.8 + k * 0.35) * e, a0 = T * (1.6 - k * 0.35) + k * 2;
+          ctx.globalAlpha = 0.5 * a; ctx.strokeStyle = k % 2 ? '#7b5cff' : '#c8b8ff';
           ctx.beginPath(); ctx.ellipse(f.x, cy, rr, rr * 0.3, 0, a0, a0 + 4.2); ctx.stroke();
         }
-        ctx.globalAlpha = a * (0.75 + 0.25 * Math.sin(T * 12)); spr(hu('#ffe53a'), f.x, cy, 110, 46);
-        spr(gl('#ffe53a'), f.x, cy, 30, 18);
+        ctx.globalAlpha = a * (0.6 + 0.2 * Math.sin(T * 12)); spr(hu('#ffe53a'), f.x, cy, 90, 38);
+        spr(gl('#ffe53a'), f.x, cy, 24, 14);
         additive(false);
         break;
       }
@@ -1507,10 +1539,10 @@ const CPROC = {
     burst(K_SPARK, x, y - 30, 8, 200, 500, 0.2, 3, ['#ffffff', '#bfe0ff'], 0, 6);
   },
   frostBastion(x, y) { ring(x, y + 10, 10, 110, 0.5, '#bff4ff', 8); burst(K_SHARD, x, y, 8, 120, 360, 0.6, 6, ['#ffffff', '#bff4ff', '#7fe3ff'], 500, 1, 60); sprPop(runeCircle('#7fe3ff'), x, y + 14, 0.5, 1.6, 0.5, Math.PI / 2, 1.5, 0.36); },
-  thunderArrow(x, y) { // 뇌전 화살: 화살 끝에서 번개가 튄다
-    sprPop(starFlash('#ffe53a'), x, y, 0.3, 1.1, 0.2);
-    ring(x, y, 6, 60, 0.25, '#ffe53a', 5);
-    burst(K_SPARK, x, y, 7, 300, 700, 0.16, 2.8, ['#ffe53a', '#ffffff', '#b8a0ff'], 0, 6);
+  thunderArrow(x, y) { // 뇌전 화살: 화살 끝에서 번개가 튄다(작고 짧게 — 번개가 화면을 독점하지 않게)
+    sprPop(starFlash('#ffe53a'), x, y, 0.3, 0.7, 0.14);
+    ring(x, y, 6, 42, 0.2, '#ffe53a', 4);
+    burst(K_SPARK, x, y, 4, 300, 620, 0.13, 2.4, ['#ffe53a', '#ffffff', '#b8a0ff'], 0, 6);
   },
   frostShot(x, y) { sprPop(sparkle('#e8fbff'), x, y, 0.5, 1.6, 0.3, rnd() * TAU, 4); burst(K_SHARD, x, y, 6, 120, 340, 0.5, 5, ['#ffffff', '#7fe3ff'], 400, 2); },
   galeArrow(x, y) { for (let k = 0; k < 5; k++) part(K_SPARK, x, y - 20 + k * 10, -260 - rnd() * 200, (rnd() - 0.5) * 60, 0.22, 3, '#6ff0c0', 0, 3); ring(x, y, 6, 50, 0.25, '#b8ffe8', 4); },
@@ -1519,7 +1551,7 @@ const CPROC = {
     ring(x, y, 4, 80, 0.35, '#ff8ae8', 6);
     sprPop(starFlash('#ff6fd2'), x, y, 0.4, 1.5, 0.25, 0.4);
   },
-  stormCall(x, y) { ring(x, y, 10, 140, 0.4, '#b8a0ff', 8); flash(0.1, '#b8a0ff'); },
+  stormCall(x, y) { ring(x, y, 10, 140, 0.4, '#b8a0ff', 8); boltFlash(0.04, '#b8a0ff'); },
   frostEcho(x, y) { ring(x, y, 6, 70, 0.35, '#bff4ff', 6); sprPop(sparkle('#e8fbff'), x, y - 10, 0.4, 1.3, 0.3, rnd() * TAU, 3); },
   holyAssault(x, y) { // 성광 협공: 광선이 영웅을 치유 — 영웅 위로 금빛 기둥 + 초록 치유 입자
     lightBeam(x, 70, y - 420, y + 12, 0.5, '#ffffff', '#ffe07a');
@@ -1699,18 +1731,18 @@ function drawStorms(view) {
   if (!ss || !ss.length) return;
   for (const st of ss) {
     const a = Math.min(1, st.t * 3) * clamp((st.life - st.t) / 0.5, 0, 1), r = st.r, y = warpY(st.x, st.y);
-    ctx.globalAlpha = 0.5 * a;
-    spr(soft('rgba(50,40,110,0.75)'), st.x, y, r * 2.6, r * 1.1);
+    ctx.globalAlpha = 0.22 * a;
+    spr(soft('rgba(50,40,110,0.75)'), st.x, y, r * 2, r * 0.82);
     additive(true);
-    groundRune(runeCircle('#ffe53a'), st.x, y, r / 44, T * 1.6, 0.55 * a);
-    ctx.lineWidth = 4;
+    groundRune(runeCircle('#ffe53a'), st.x, y, r / 48, T * 1.6, 0.42 * a);
+    ctx.lineWidth = 3;
     for (let k = 0; k < 4; k++) { // 안쪽으로 감기는 바람 호
-      const a0 = -T * (3 + k * 0.6) + k * 1.6, rr2 = r * (1 - k * 0.18);
-      ctx.globalAlpha = 0.55 * a; ctx.strokeStyle = k % 2 ? '#b8a0ff' : '#e8f0ff';
+      const a0 = -T * (3 + k * 0.6) + k * 1.6, rr2 = r * (0.9 - k * 0.16);
+      ctx.globalAlpha = 0.45 * a; ctx.strokeStyle = k % 2 ? '#b8a0ff' : '#e8f0ff';
       ctx.beginPath(); ctx.ellipse(st.x, y, rr2, rr2 * 0.42, 0, a0, a0 + 1.9); ctx.stroke();
     }
-    ctx.globalAlpha = 0.35 * a * (0.7 + 0.3 * Math.sin(T * 20));
-    spr(gl('#b8a0ff'), st.x, y - r * 0.2, r * 1.6, r * 1.2);
+    ctx.globalAlpha = 0.26 * a * (0.7 + 0.3 * Math.sin(T * 20));
+    spr(hu('#b8a0ff'), st.x, y - r * 0.2, r * 1.4, r * 1.05);
     additive(false);
     if (rnd() < 0.5) { const an = rnd() * TAU; part(K_SPARK, st.x + Math.cos(an) * r, y + Math.sin(an) * r * 0.42, -Math.cos(an) * 220, -Math.sin(an) * 90, 0.35, 2.6, '#e8f0ff', 0, 2); }
   }
@@ -1729,8 +1761,7 @@ function heroProcFx(view, ev) {
       break;
     }
     case 'judgeBolt': { // 심판의 번개: 하늘에서 금빛 번개 + 바닥 룬
-      const b = take(BOLTS);
-      b.pts = [[x + (rnd() - 0.5) * 80, y - 520], [x + (rnd() - 0.5) * 50, y - 240], [x, y]]; b.life = b.max = 0.26; b.col = '#fff6c0'; b.halo = '#e0a72e'; b.w = 1.3;
+      bolt([[x + (rnd() - 0.5) * 80, y - 520], [x + (rnd() - 0.5) * 50, y - 240], [x, y]], 0.24, '#fff6c0', '#e0a72e', 1.2, 'hero');
       sprPop(runeCircle('#ffd23a'), x, y + 6, 0.5, r / 30, 0.4, Math.PI / 2, 2, 0.38);
       ring(x, y, 10, r, 0.3, '#fff0a8', 6);
       part(K_GLOW, x, y, 0, 0, 0.2, r * 1.4, '#ffe07a');
@@ -2450,18 +2481,52 @@ export function drawFireballs() {
   }
   ctx.globalAlpha = 1;
 }
+let atX = 0, atY = 0; // soulAt 결과(프레임마다 배열을 만들지 않게)
+function soulAt(s, e) { const a = 1 - e; atX = a * a * s.x0 + 2 * a * e * s.cx + e * e * GOLD_POS.x; atY = a * a * s.y0 + 2 * a * e * s.cy + e * e * GOLD_POS.y; }
 export function drawSouls() {
+  // 영혼 수확: 청록·연보라 꼬리(광량 예산 제외) + 작은 유령 머리(일반 합성 — 어느 바닥에서도 형태로 읽힘)
+  let any = false;
+  setLightPrio(LIGHT_EXEMPT);
   additive(true);
   for (const s of SOULS) {
     if (!s.on) continue;
+    any = true;
     const u = s.t / s.dur, e = u * u * (3 - 2 * u);
-    for (let k = 3; k >= 0; k--) {
-      const q = Math.max(0, e - k * 0.05), a = 1 - q;
-      const x = a * a * s.x0 + 2 * a * q * s.cx + q * q * GOLD_POS.x, y = a * a * s.y0 + 2 * a * q * s.cy + q * q * GOLD_POS.y;
-      ctx.globalAlpha = 1 - k * 0.22;
-      spr(gl(k ? '#9a3dff' : '#f2c8ff'), x, y, 28 - k * 5, 28 - k * 5);
+    for (let k = 4; k >= 0; k--) {
+      soulAt(s, Math.max(0, e - k * 0.045));
+      ctx.globalAlpha = 0.95 - k * 0.17;
+      spr(hu(k % 2 ? '#b48aff' : '#6ff6ff'), atX, atY, 64 - k * 7, 64 - k * 7);
     }
   }
+  for (const w of WISPS) {
+    if (w.life <= 0) continue;
+    any = true;
+    const u = w.life / w.max;
+    ctx.globalAlpha = 0.6 * u; spr(hu('#6ff6ff'), w.x, w.y - (1 - u) * 60, 60 * w.s, 60 * w.s);
+  }
+  additive(false);
+  setLightPrio(false);
+  if (any) {
+    const gh = ghostSpr('#e0d0ff');
+    for (const s of SOULS) {
+      if (!s.on) continue;
+      const u = s.t / s.dur, e = u * u * (3 - 2 * u), sc = 0.8 + 0.3 * Math.sin(Math.min(1, u * 2) * Math.PI / 2);
+      soulAt(s, Math.max(0, e - 0.03)); const px = atX;
+      soulAt(s, e); const x = atX, y = atY;
+      ctx.globalAlpha = Math.min(1, (1 - u) * 5);
+      place(x, y, 0, (x < px ? -1 : 1) * sc, sc);
+      ctx.drawImage(gh, -gh.hw, -gh.hh, gh.hw * 2, gh.hh * 2);
+    }
+    for (const w of WISPS) { // 흩어지는 망령: 솟으며 커지고 옅어진다
+      if (w.life <= 0) continue;
+      const u = w.life / w.max, sc = w.s * (1 + 0.35 * (1 - u));
+      ctx.globalAlpha = u * 0.85;
+      place(w.x, w.y - (1 - u) * 60, Math.sin(u * 9) * 0.15, w.face * sc, sc * (1 + 0.2 * (1 - u)));
+      ctx.drawImage(gh, -gh.hw, -gh.hh, gh.hw * 2, gh.hh * 2);
+    }
+    wt();
+  }
+  additive(true);
   if (PICKORB.on) { // 고른 카드의 원소 광구 → 내 마법사
     const u = easeOut(PICKORB.t / 0.5), M = MF[0], a = 1 - u;
     const x = a * a * 360 + 2 * a * u * 360 + u * u * M.ox, y = a * a * 560 + 2 * a * u * 700 + u * u * M.oy;
@@ -2600,6 +2665,7 @@ export function drawParticles() {
   ctx.globalCompositeOperation = 'source-over';
 }
 
+const BOLT_W = [9, 3.4, 1.1], BOLT_A = [0.28, 0.8, 0.7];
 export function drawBolts() {
   let any = false;
   for (const b of BOLTS) if (b.life > 0) { any = true; break; }
@@ -2607,23 +2673,24 @@ export function drawBolts() {
   ctx.globalCompositeOperation = 'lighter';
   for (const b of BOLTS) {
     if (b.life <= 0) continue;
-    const a = b.life / b.max;
+    const a = (b.life / b.max) ** 1.6; // 번쩍 → 빨리 사라짐(짧고 선명하게)
     ctx.beginPath();
-    const pts = b.pts;
+    const pts = b.pts, jr = mulberry(b.sd + frameNo * 7919); // 지그재그는 번개마다 자기 시드(프레임마다 떨림) — 다른 번개 수와 무관
     ctx.moveTo(pts[0][0], pts[0][1]);
     for (let k = 1; k < pts.length; k++) {
       const [x0, y0] = pts[k - 1], [x1, y1] = pts[k];
       const dx = x1 - x0, dy = y1 - y0, len = Math.hypot(dx, dy) || 1, nx = -dy / len, ny = dx / len;
       const seg = 6;
       for (let s = 1; s < seg; s++) {
-        const u = s / seg, j = (rnd() - 0.5) * Math.min(28, len * 0.25);
+        const u = s / seg, j = (jr() - 0.5) * Math.min(28, len * 0.25);
         ctx.lineTo(x0 + dx * u + nx * j, y0 + dy * u + ny * j);
       }
       ctx.lineTo(x1, y1);
     }
-    for (const [c, w, al] of [[b.halo, 13, 0.35], [b.col, 5.5, 0.8], ['#ffffff', 2.2, 1]]) {
-      ctx.globalAlpha = a * al;
-      ctx.strokeStyle = c;
+    for (let li = 0; li < 3; li++) { // 헤일로 · 원소색 · 가는 흰 심(얇게 — 흰 번개 기둥 금지)
+      const w = BOLT_W[li];
+      ctx.globalAlpha = a * BOLT_A[li];
+      ctx.strokeStyle = li === 0 ? b.halo : li === 1 ? b.col : '#ffffff';
       ctx.lineWidth = w * b.w;
       ctx.stroke();
     }
@@ -2870,6 +2937,7 @@ export function events(view, evs, opts) {
       }
       case 'kill': {
         if (soulOn && souls++ < 5) soul(ev.x, ev.y);
+        else if (!soulOn && souls < 4 && ghostNear(view, ev.x, ev.y)) { souls++; soulPop(ev.x, ev.y); wisp(ev.x, ev.y - 10, 1.1, rnd() < 0.5 ? -1 : 1); } // 망령이 거둔 처치
         // 운석·파이어볼로 죽은 적은 떨어질 때 터뜨림
         if (meteorFrame && !ev.isBoss) { meteorKills.push(ev); break; }
         const fb = !ev.isBoss && fbFrame.length ? fbFrame.find(f => (f.x1 - ev.x) ** 2 + (f.y1 - ev.y) ** 2 <= (f.r + 40) ** 2) : null;
@@ -2979,12 +3047,11 @@ export function events(view, evs, opts) {
         break;
       case 'chain': {
         if (!Array.isArray(ev.pts) || ev.pts.length < 2) break;
-        const b = take(BOLTS);
         const plasma = ev.o === 0 && fus.includes('plasma');
-        b.pts = ev.pts; b.life = b.max = 0.22; b.w = 0.6 + 0.12 * skillLv(view, 'chainLightning');
-        b.col = plasma ? '#ffb0ff' : ev.o === 1 ? '#8ff8ff' : '#ffe53a';
-        b.halo = plasma ? '#c040ff' : ev.o === 1 ? '#2a78e0' : '#7b5cff';
-        for (const pt of ev.pts) part(K_GLOW, pt[0], pt[1], 0, 0, 0.2, 44, b.col);
+        const col = plasma ? '#ffb0ff' : ev.o === 1 ? '#8ff8ff' : '#ffe53a';
+        // 연쇄 번개는 적 사이 짧은 줄기라 화면을 덮지 않는다 — 굵기·수명은 원래 수준(알아볼 수 있게), 흰 심만 얇게
+        bolt(ev.pts, 0.22, col, plasma ? '#c040ff' : ev.o === 1 ? '#2a78e0' : '#7b5cff', 1.1 + 0.1 * skillLv(view, 'chainLightning'), 'ch');
+        for (const pt of ev.pts) part(K_GLOW, pt[0], pt[1], 0, 0, 0.2, 46, col);
         break;
       }
       case 'shatter':
@@ -3025,6 +3092,7 @@ export function update(view, da, dt) {
   }
   for (const r of RINGS) if (r.life > 0) r.life -= da;
   for (const b of BOLTS) if (b.life > 0) b.life -= da;
+  for (const w of WISPS) if (w.life > 0) w.life -= da;
   for (const d of DECALS) if (d.life > 0) d.life -= da;
   for (const b of BEAMS) if (b.life > 0) b.life -= da;
   numRef = Math.max(1, numRef * (1 - 0.35 * dt)); // 상대 크기 기준은 천천히 식는다
@@ -3209,13 +3277,14 @@ function updateMagic(view, da, dt) {
   // 망령: 새로 생기면 링, 사라지면(부딪힘) 보라 폭발
   const now = new Map();
   for (const q of fx.ghosts) {
-    if (!ghostPrev.has(q)) ring(q.x, q.y, 4, 34, 0.3, '#d8b0ff', 3);
-    now.set(q, [q.x, q.y]);
+    if (!ghostPrev.has(q)) ring(q.x, q.y, 4, 40, 0.3, '#8ff6ff', 3);
+    now.set(q, [q.x, q.y, q.tgt && q.tgt.x < q.x ? -1 : 1]);
   }
   for (const [q, p] of ghostPrev) {
     if (now.has(q)) continue;
-    burst(K_GLOW, p[0], p[1], 6, 60, 200, 0.4, 18, ['#d8b0ff', '#9a3dff'], 0, 3);
-    sprPop(starFlash('#c080ff'), p[0], p[1], 0.3, 1, 0.22);
+    burst(K_GLOW, p[0], p[1], 6, 60, 200, 0.4, 18, ['#e0c8ff', '#8ff6ff'], 0, 3);
+    sprPop(starFlash('#9ff6ff'), p[0], p[1], 0.3, 1, 0.22);
+    wisp(p[0], p[1], 1.5, p[2]); // 친 자리에서 망령이 흩어지며 솟는다(짧게 사는 유령이 또렷하게 남도록)
   }
   ghostPrev = now;
   // 불꽃 회오리 불씨 / 폭풍의 눈 번개
@@ -3223,9 +3292,8 @@ function updateMagic(view, da, dt) {
   for (const tn of fx.tornadoes) {
     if (fus.includes('blazeTornado') && rnd() < 0.6) part(K_GLOW, tn.x + (rnd() - 0.5) * tn.r, tn.y - rnd() * tn.r * 2, (rnd() - 0.5) * 80, -100 - rnd() * 100, 0.6, 12, rnd() < 0.5 ? '#ffe45a' : '#ff6a1f', 0, 1);
     if (fus.includes('stormEye') && rnd() < dt * 7) {
-      const b = take(BOLTS), top = tn.y - tn.r * 2.6;
-      b.pts = [[tn.x + (rnd() - 0.5) * tn.r, top], [tn.x + (rnd() - 0.5) * tn.r * 1.6, tn.y + tn.r * 0.3]];
-      b.life = b.max = 0.14; b.col = '#ffe53a'; b.halo = '#7b5cff'; b.w = 0.7;
+      const top = tn.y - tn.r * 2.6;
+      bolt([[tn.x + (rnd() - 0.5) * tn.r, top], [tn.x + (rnd() - 0.5) * tn.r * 1.6, tn.y + tn.r * 0.3]], 0.1, '#ffe53a', '#7b5cff', 0.6, 'se');
     }
   }
 }
