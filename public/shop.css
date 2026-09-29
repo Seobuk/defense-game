@@ -21,8 +21,8 @@
 .sh-box[data-k="fine"] { --t1: #d2ecff; --t2: #3fa9ff; --glow: rgba(63, 169, 255, .55); }
 .sh-box[data-k="legend"] { --t1: #fff0b8; --t2: #c46bff; --glow: rgba(255, 176, 32, .6); box-shadow: inset 0 1px 0 var(--night-300), 0 0 0 2px rgba(255, 201, 46, .45), 0 0 16px rgba(196, 107, 255, .35), 0 4px 0 rgba(0, 0, 0, .3); }
 .sh-box[data-k="legend"]::before { /* 전설 상자: 느린 금빛 스윕 */
-  content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: inherit;
-  background: linear-gradient(105deg, transparent 38%, rgba(255, 240, 184, .22) 48%, transparent 58%) -150% 0 / 250% 100% no-repeat; animation: kSweep 3.2s var(--ease-out) infinite;
+  content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 250%; pointer-events: none; transform: translateX(-150%); /* 스윕 = kit.css kSweep(transform) */
+  background: linear-gradient(105deg, transparent 38%, rgba(255, 240, 184, .22) 48%, transparent 58%); animation: kSweep 3.2s var(--ease-out) infinite;
 }
 .sh-box-art { position: relative; width: 72px; height: 72px; display: grid; place-items: center; }
 .sh-box-art::before { content: ""; position: absolute; inset: 2px; border-radius: 50%; background: radial-gradient(circle, var(--glow), transparent 68%); }

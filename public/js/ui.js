@@ -27,6 +27,7 @@ import { createNameUI } from './nameui.js'; // 4차 닉네임 입력 창
 import { createRecordUI } from './recordui.js'; // v0.1.1 도전 기록 화면
 import { renderCosmeticCodex, resultTickets } from './summonui.js'; // v0.1.2 도감 '외형' 탭 · 결과 화면 소환권
 import { giftPending } from './summon.js'; // v0.1.2 타이틀 'NEW 외형 소환' 리본
+import { GFX_NAME, GFX_HELP } from './gfx.js'; // 설정 '그래픽'
 
 const SYN_BY_KEY = Object.fromEntries(SYNERGIES.map(s => [s.key, s]));
 const KIND_TAG = { cannon: '마법', duo: '협동', event: '이벤트' };
@@ -388,7 +389,7 @@ export function createUI(root, handlers = {}) {
 
   // ── 레이아웃: 넓은 화면(옆 여백 ≥ WIDE_SIDE)은 옆 열을 전장 밖으로, 좁으면 전장 가장자리에 겹친다 ──
   // 접기·펼치기·회전은 ResizeObserver 가 바로 받는다(상태는 그대로, 배치만 바뀜)
-  let layoutGen = 0, layW = 0, layH = 0;
+  let layoutGen = 0, layW = 0, layH = 0, layAt = 0;
   function layout() {
     const w = stage.clientWidth, h = stage.clientHeight;
     if (!(w > 0 && h > 0)) return;
@@ -1406,10 +1407,15 @@ export function createUI(root, handlers = {}) {
     H.onSettings?.(next);
   };
   for (const b of segBtns) on(b, 'click', () => setSettings({ dmgNumbers: b.dataset.dmg }));
+  const gfxBtns = [...root.querySelectorAll('#m-settings [data-gfx]')], gfxHelp = root.querySelector('#set-gfx-help');
+  for (const b of gfxBtns) on(b, 'click', () => setSettings({ gfx: b.dataset.gfx }));
   for (const b of switches) on(b, 'click', () => setSettings({ [b.dataset.set]: !meta.settings?.[b.dataset.set] }));
   function renderSettings() {
     const s = meta.settings || {};
     for (const b of segBtns) attr(b, 'aria-checked', String(b.dataset.dmg === (s.dmgNumbers || 'full')));
+    const gs = s.gfx || 'auto', lv = meta.gfxLevel || 'high';
+    for (const b of gfxBtns) attr(b, 'aria-checked', String(b.dataset.gfx === gs));
+    txt(gfxHelp, gs === 'auto' ? `지금 ${GFX_NAME[lv]}(${GFX_HELP[lv]}) · 폰이 뜨거워지면 스스로 낮춰요` : GFX_HELP[lv]);
     for (const b of switches) attr(b, 'aria-checked', String(!!s[b.dataset.set]));
     txt(E['set-nick'], meta.profile?.name || '');
     // v0.1.1 저장 보호: 웹은 영구 저장소 요청 결과(main.js protectStorage), APK는 앱 저장소. 웹에서 못 받았으면 백업 안내를 조금 더 강조(팝업 없음)
@@ -1586,7 +1592,8 @@ export function createUI(root, handlers = {}) {
   // ── 매 프레임 ──
   function update(v, m = {}) {
     meta = m || {};
-    if (stage.clientWidth !== layW || stage.clientHeight !== layH) layout(); // 관찰자·resize 이벤트를 놓친 크기 변경(가려진 웹뷰 등) 보정
+    const lt = performance.now(); // 관찰자·resize 이벤트를 놓친 크기 변경(가려진 웹뷰 등) 보정 — 크기 읽기는 레이아웃을 강제하므로 1초에 한 번만
+    if (lt > layAt) { layAt = lt + 1000; if (stage.clientWidth !== layW || stage.clientHeight !== layH) layout(); }
     if (meta.version) setVersion(meta.version);
     if (!E.title.hidden) syncTeaser(); // v0.1.2
     if (isOpen('m-settings')) renderSettings();

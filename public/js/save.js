@@ -13,6 +13,7 @@ import { normShop, offlineGoldPerHour, offlineMul } from './shop.js'; // 4차 �
 import { lockedRelics } from './relics.js'; // 4차 유물: 보석으로 해금한 유물(meta.relicUnlocked)
 import { normHistory, normLifetime, packRecord, BACKUP_RUNS, HISTORY_MAX } from './records.js'; // v0.1.1 도전 기록 · 평생 통계
 import { normSummon, packSummon } from './summon.js'; // v0.1.2 외형 소환(보유·장착·별조각·소환권·천장·내역)
+import { GFX, GFX_KEYS } from './gfx.js'; // 그래픽 품질(발열)
 
 export const STORAGE_KEY = 'wallDefense.save.v1'; // 키는 그대로, 안의 스키마가 v:3
 export const SAVE_VERSION = 3;
@@ -80,6 +81,9 @@ export function normalize(d) {
       autoPick: bool(s.autoPick, false), // 카드 화면의 '자동 선택'(자동 진행과 별개, 기본 OFF) — sim players[0].autoPick
       // 웹 영구 저장소 요청 결과(main.js, 한 번만 요청): 'on' 허용 · 'off' 거부 · 'na' 미지원 · '' 아직(APK는 부르지 않음)
       storage: ['on', 'off', 'na'].includes(s.storage) ? s.storage : '',
+      // 그래픽 품질(gfx.js): 'auto'(기본 — 옛 저장도) · 'high' · 'mid' · 'low'. gfxAuto = 자동이 배운 단계(''= 아직, 높음부터)
+      gfx: GFX_KEYS.includes(s.gfx) ? s.gfx : 'auto',
+      gfxAuto: GFX[s.gfxAuto] ? s.gfxAuto : '',
     },
     hero: hero(d.hero),
     discovered: keys(d.discovered, SYN_KEYS),

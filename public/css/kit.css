@@ -95,8 +95,8 @@
 /* 추천/준비됨: 광택 스윕 + 호흡 */
 .k-btn.is-ready { animation: kBreath 1.6s ease-in-out infinite; overflow: hidden; }
 .k-btn.is-ready::after {
-  content: ""; position: absolute; inset: -2px; border-radius: inherit; pointer-events: none;
-  background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, .55) 48%, transparent 60%) -150% 0 / 250% 100% no-repeat;
+  content: ""; position: absolute; top: -2px; bottom: -2px; left: -2px; width: 250%; pointer-events: none; transform: translateX(-150%); /* 멈춘 자리 = 스윕 끝(절전: 한 번 돈 뒤) */
+  background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, .55) 48%, transparent 60%);
   animation: kSweep 2.2s var(--ease-out) infinite;
 }
 
@@ -277,7 +277,27 @@
 /* ── 움직임 ── */
 @keyframes kShake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-6px); } 40% { transform: translateX(5px); } 60% { transform: translateX(-3px); } 80% { transform: translateX(2px); } }
 @keyframes kBreath { 0%, 100% { scale: 1; } 50% { scale: 1.04; } }
-@keyframes kSweep { 0% { background-position: -150% 0; } 60%, 100% { background-position: 250% 0; } }
+/* 광택 스윕: 250% 폭 가상 요소(overflow: hidden 부모 안)를 transform 으로 민다 — GPU 합성만, 다시 칠하지 않음(폰 발열).
+   옛 background-position -150% → 250%(배경 250% 폭)와 같은 궤적: 이미지 왼쪽 끝 +2.25W → −3.75W = 가상 요소 폭의 90% → −150% */
+@keyframes kSweep { 0% { transform: translateX(90%); } 60%, 100% { transform: translateX(-150%); } }
+/* 테두리 빛 맥박: box-shadow 를 매 프레임 다시 칠하는 대신, 빛을 입힌 가상 요소의 opacity 만 바꾼다 */
+@keyframes kGlowFade { 50% { opacity: 1; } }
+
+/* ── 발열·배터리 (설정 '그래픽' — main.js 가 html[data-gfx] 와 html.cv-camp / html.cv-stage 를 붙인다) ──
+   전체 화면 층(영웅·소환·옷장·보석 충전·결과·정비)에 가려 안 보이는 화면의 반복 애니메이션은 멈춘다 */
+html.cv-camp .camp *, html.cv-camp .camp *::before, html.cv-camp .camp *::after,
+html.cv-stage #stage-wrap *, html.cv-stage #stage-wrap *::before, html.cv-stage #stage-wrap *::after,
+html.cv-stage #panel *, html.cv-stage #panel *::before, html.cv-stage #panel *::after,
+.sm-under *, .sm-under *::before, .sm-under *::after { animation-play-state: paused !important; }
+/* 손대지 않고 멈춰 있는 화면(모든 단계): main.js 가 무한 반복 애니메이션이 도는 요소에 data-calm 을 붙인다 → 그 자리에 멈춤(입력하면 다시).
+   반복 횟수를 줄이는 대신 멈추는 까닭: 끝난 애니메이션은 기본 모습으로 튀어 돌아간다(타이틀 반짝이가 성벽 위 흰 점 줄로, 선물 표가 사라짐) */
+[data-calm], [data-calm]::before, [data-calm]::after { animation-play-state: paused !important; }
+/* 보통·절전: 전투 HUD(전장 위 DOM)의 꾸밈 반복은 한 번만 — 캔버스가 매 프레임 그려지는 동안엔 GPU 합성 애니메이션도 요소마다 스타일 계산을 부른다.
+   전장 밖 화면(타이틀·정비·모달)은 data-calm 이 멈춘다(절전은 3초, 그 밖엔 10초 뒤) · 절전은 화면 전체 backdrop-filter 없음 */
+html:is([data-gfx="mid"], [data-gfx="low"]) :is(#stage-wrap, #panel) *,
+html:is([data-gfx="mid"], [data-gfx="low"]) :is(#stage-wrap, #panel) *::before,
+html:is([data-gfx="mid"], [data-gfx="low"]) :is(#stage-wrap, #panel) *::after { animation-iteration-count: 1 !important; }
+html[data-gfx="low"] #defeat.ov.dim { -webkit-backdrop-filter: none; backdrop-filter: none; }
 @keyframes kModalIn { from { opacity: 0; transform: translateY(24px) scale(.8); } }
 @keyframes kModalOut { to { opacity: 0; transform: translateY(12px) scale(.92); } }
 @keyframes kTabPop { 0% { scale: .9; } 70% { scale: 1.06; } 100% { scale: 1; } }

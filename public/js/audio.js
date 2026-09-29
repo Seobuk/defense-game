@@ -14,6 +14,24 @@ export function createAudio() {
   let ctx = null, master = null, warm = null, echo = null, noiseBuf = null;
   let enabled = true, upStep = 0, upT = 0;
   const lastT = {};
+  // 조용할 땐 오디오 장치를 재운다(안드로이드는 켜진 AudioContext 가 오디오 하드웨어를 계속 깨워 둔다):
+  // 소리 끄기 · 5초 동안 소리 없음 · 앱이 뒤로 → suspend, 다음 소리가 오면 resume(그 소리는 수십 ms 늦게 난다)
+  const IDLE_MS = 5000;
+  let napping = false, lastPlay = 0, idleT = 0;
+  function nap() {
+    if (!ctx || ctx.state !== 'running') return;
+    napping = true;
+    ctx.suspend().catch(() => {});
+  }
+  function checkIdle() {
+    idleT = 0;
+    const left = IDLE_MS - (performance.now() - lastPlay);
+    if (left > 50) idleT = setTimeout(checkIdle, left); else nap();
+  }
+  function stir() { // 소리를 냈거나 깨웠다: 조용해지면 다시 재우도록 타이머
+    lastPlay = performance.now();
+    if (!idleT) idleT = setTimeout(checkIdle, IDLE_MS);
+  }
 
   // 첫 사용자 제스처에서 호출 (자동재생 정책)
   function unlock() {
@@ -44,10 +62,12 @@ export function createAudio() {
         const d = noiseBuf.getChannelData(0);
         for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
         document.addEventListener('visibilitychange', () => {
+          if (!document.hidden && !enabled) return; // 소리 꺼짐: 자는 채로
           (document.hidden ? ctx.suspend() : ctx.resume()).catch(() => {});
+          if (!document.hidden) { napping = false; stir(); }
         });
       }
-      if (ctx.state === 'suspended' && !document.hidden) ctx.resume().catch(() => {});
+      if (ctx.state === 'suspended' && !document.hidden && enabled) { napping = false; ctx.resume().catch(() => {}); stir(); }
     } catch {
       ctx = null;
     }
@@ -244,19 +264,25 @@ export function createAudio() {
   };
 
   function play(name, arg) {
-    if (!enabled || !ctx || ctx.state !== 'running') return;
+    if (!enabled || !ctx || (ctx.state !== 'running' && !napping)) return;
     const fn = SFX[name];
     if (!fn) return;
     const now = performance.now();
     if (now - (lastT[name] ?? -1e9) < (THROTTLE[name] ?? 0)) return;
     lastT[name] = now;
+    if (napping) { // 멈춘 시계는 resume 때 이어 흐른다 — 예약한 음이 그대로 난다
+      if (document.hidden) return;
+      napping = false; ctx.resume().catch(() => {});
+    }
+    stir();
     try { fn(arg); } catch { /* 소리 오류는 게임에 영향 없음 */ }
   }
 
   function setEnabled(on) {
     enabled = !!on;
     if (master) master.gain.setTargetAtTime(enabled ? MASTER : 0, ctx.currentTime, 0.02);
+    if (!enabled) setTimeout(() => { if (!enabled) nap(); }, 150); // 소리 끔: 줄어드는 음량 뒤에 장치를 재운다
   }
 
-  return { play, setEnabled, unlock };
+  return { play, setEnabled, unlock, nap };
 }

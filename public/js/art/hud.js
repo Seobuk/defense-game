@@ -140,6 +140,9 @@ function drawFloor() {
   ctx.globalAlpha = 1;
 }
 
+// 실시간(RT) 연출이 아직 움직이는가 — main.js 는 멈춘 전투(카드·메뉴)에서도 이게 끝날 때까지 그린 뒤 캔버스를 멈춘다
+export const live = () => FLOOR.t <= 1.6 || !!moment || (quietA > 0 && quietA < 1) || STAMPS.some(s => s.life > 0) || POPS.some(p => p.life > 0);
+
 export function drawHud(view) {
   ht();
   ctx.textBaseline = 'middle';

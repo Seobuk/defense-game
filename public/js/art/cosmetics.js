@@ -1076,17 +1076,30 @@ export function renderPreview(cv, id, t = 0, o = {}) {
   return true;
 }
 // 움직이는 미리보기: 캔버스가 문서에서 빠지면 스스로 멈춤. 반환 = stop()
+// 발열: 30fps 로만 그리고, 화면 밖(옆으로 넘긴 배너)·다른 층에 가린 동안은 안 그린다(0.5초마다 가운데 점을 누가 덮는지 확인)
+// 다음 프레임은 타이머로 띄워 잡는다(rAF 를 매 화면 프레임 걸어 두면 그리지 않는 프레임에도 페이지 전체가 60Hz 로 깨어 있다)
 export function playPreview(cv, id, o = {}) {
-  let on = true, t0 = 0, raf = 0;
+  let on = true, t0 = 0, raf = 0, tm = 0, seenAt = -1e9, shown = true;
   const step = ts => {
+    raf = 0;
     if (!on || !cv.isConnected) { on = false; return; }
     if (!t0) t0 = ts;
-    renderPreview(cv, id, (ts - t0) / 1000, o);
-    raf = requestAnimationFrame(step);
+    if (ts - seenAt > 500) { seenAt = ts; shown = onTop(cv); }
+    if (shown) renderPreview(cv, id, (ts - t0) / 1000, o);
+    tm = setTimeout(() => { tm = 0; if (on) raf = requestAnimationFrame(step); }, shown ? 24 : 500); // ≈ 30fps · 안 보이면 0.5초마다 확인만
   };
   raf = requestAnimationFrame(step);
   renderPreview(cv, id, 0, o);
-  return () => { on = false; cancelAnimationFrame(raf); };
+  return () => { on = false; cancelAnimationFrame(raf); clearTimeout(tm); };
+}
+function onTop(cv) {
+  const r = cv.getBoundingClientRect();
+  if (!(r.width > 0)) return false;
+  const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); // 화면 밖(옆으로 넘긴 배너)이면 null
+  // 가운데 점이 같은 층(소환 화면·상세 창·연출) 것이면 보이는 중 — 그 층의 리본 같은 장식이 덮는 건 괜찮고, 위에 다른 층(옷장)이 오면 가림
+  // ponytail: 넓은 화면에서 스크롤 칸 밖으로 잘린 배너는 가운데가 화면 안이라 계속 그린다 — 필요하면 스크롤 칸 사각형도 볼 것
+  const box = cv.closest('.sm-scr, .sm-ov, .sm-fx') || document.body;
+  return !!top && box.contains(top);
 }
 // 정지 초상 dataURL(카드·목록). 정사각 px, 캐시
 const URLS = new Map();

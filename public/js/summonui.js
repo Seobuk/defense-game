@@ -77,8 +77,13 @@ export function initSummonUI(root, c) {
 }
 const meta = () => ctx.getMeta();
 const play = k => { try { ctx.play?.(k); } catch { /* 소리 실패 무시 */ } };
-function push(el, close) { R.host.inert = false; layers.push({ el, close }); } // 영웅 화면이 형제 요소를 inert로 잠가도 이 층은 연다
-function pop(el) { const i = layers.findIndex(l => l.el === el); if (i >= 0) layers.splice(i, 1); }
+function push(el, close) { R.host.inert = false; layers.push({ el, close }); under(); } // 영웅 화면이 형제 요소를 inert로 잠가도 이 층은 연다
+function pop(el) { const i = layers.findIndex(l => l.el === el); if (i >= 0) layers.splice(i, 1); under(); }
+// 뒤에 더 연 전체 화면(.sm-scr — 제단 위 옷장)에 가린 전체 화면은 반복 애니메이션 멈춤(kit.css .sm-under). 창(.sm-ov)은 반투명이라 그대로
+function under() {
+  const scr = layers.filter(l => l.el.classList.contains('sm-scr'));
+  scr.forEach((l, i) => l.el.classList.toggle('sm-under', i < scr.length - 1));
+}
 
 export function summonHandleBack() {
   if (!R) return false;

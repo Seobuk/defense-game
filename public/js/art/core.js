@@ -181,6 +181,9 @@ export let lightPrio = false;
 export function setLightPrio(v) { lightPrio = v; }
 // 망령 계열(망령·영혼·저주) 발광: 어두운 보라가 예산 감쇠에 묻히지 않게 예산에서 뺀다(작은 빛만 — 큰 글로우에 쓰지 말 것)
 export const LIGHT_EXEMPT = 2;
+// 연출 예산(설정 '그래픽' — gfx.js fx): 1 = 전부(높음). 입자 묶음(burst) 수 · 프레임당 새 입자 상한 · 배경 잔입자에 곱한다
+export let fxQ = 1;
+export function setFxQ(q) { fxQ = q > 0 ? Math.min(1, q) : 1; }
 
 // ═════════════ 공용 상수 · 이징 · 풀 ═════════════
 // UI 정렬용 월드 좌표: 장비 드롭이 날아가 꽂히는 영웅(가방) 버튼 / 마나 게이지가 가득 찰 때 반짝이는 위치

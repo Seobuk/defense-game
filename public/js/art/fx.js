@@ -6,9 +6,9 @@ import { fmt, clamp } from '../util.js';
 import { BOSSES } from '../stages.js';
 import {
   TAU, S, bake, bakeO, circ, poly, rad, lin, fs, shine, lite, dim, cel, mulberry, INK2, EL,
-  ctx, K, BX, BY, T, RT, topExtra, sideX, fillView, drawView, GOLD_POS, hudY, frameNo,
+  ctx, K, BX, BY, T, RT, topExtra, sideX, scale, fillView, drawView, GOLD_POS, hudY, frameNo,
   shake, flash, punchZoom, colA, flashA, flashCol, MANA_POS, NUM_FONT, OWN, rnd, easeOut, easeBack, lerp, pool, take,
-  wt, ht, place, placeH, spr, put, ell, additive, groundRune, setLightPrio, LIGHT_EXEMPT,
+  wt, ht, place, placeH, spr, put, ell, additive, groundRune, setLightPrio, LIGHT_EXEMPT, fxQ,
 } from './core.js';
 import { MF, mageOn, HF, visOf, stuns, afterImage, MAGE_FEET, bone, visR, bossDY, warpY, babyDragon, babyWing, ghostSpr } from './units.js';
 import { emblem } from './emblems.js';
@@ -69,7 +69,7 @@ export const gl = col => { let c = glows.get(col); if (!c) glows.set(col, c = gl
 // 흰 심 없는 색 빛(E 백색 과부하): 큰 빛·광선 헤일로는 이걸로 — 멋은 채도로, 흰색은 작은 심에만
 const hues = new Map();
 export const hu = col => { let c = hues.get(col); if (!c && !/^#[0-9a-f]{6}$/i.test(col)) return gl(col); if (!c) hues.set(col, c = bake('f:hue|' + col, 16, 16, x => { circ(x, 0, 0, 16); x.fillStyle = rad(x, 0, 0, 0, 16, [[0, col], [0.45, col + '8c'], [1, col + '00']]); x.fill(); }, Math.min(S, 1.5))); return c; };
-export function resetGlows() { glows.clear(); ringCache.clear(); hues.clear(); }
+export function resetGlows() { glows.clear(); ringCache.clear(); hues.clear(); atlases.clear(); }
 
 // 수직 빛기둥 (부활·레벨업·심판·성직자 타격) — 다른 모듈용 생성 함수
 export function lightBeam(x, w, y0, y1, life, core, halo) {
@@ -512,13 +512,18 @@ export function arrowSpr(col = '#5fe06e') {
 // ═════════════ 생성 · 이벤트 연출 · 그리기 ═════════════
 // ── 생성 ──
 let SKM = null; // v0.1.2 외형 스킨: events 가 내 스킬 이벤트를 처리하는 동안만 part/ring 색을 스킨 램프로 바꾼다(끝나면 null)
+// 프레임당 새 입자 상한(events 가 매 프레임 채운다): 3배속에서 한 프레임에 스텝 여러 개의 이벤트가 몰려도 입자 비용이 배로 늘지 않게.
+// 넘친 입자는 풀 밖 빈 객체에 쓰고 버린다(호출부는 그대로)
+const PART_FRAME = 90, P_SPARE = { life: 0, max: 1, x: 0, y: 0, vx: 0, vy: 0, g: 0, drag: 0, size: 1, col: '#fff', k: 0, rot: 0, vr: 0 };
+let partLeft = PART_FRAME;
 export function part(k, x, y, vx, vy, life, size, col, g = 0, drag = 0) {
-  const p = take(P);
+  const p = --partLeft < 0 ? P_SPARE : take(P);
   p.k = k; p.x = x; p.y = y; p.vx = vx; p.vy = vy; p.life = p.max = life; p.size = size; p.col = SKM ? SKM(col) : col; p.g = g; p.drag = drag;
   p.rot = rnd() * TAU; p.vr = (rnd() - 0.5) * 14;
   return p;
 }
 export function burst(k, x, y, n, sp0, sp1, life, size, cols, g = 0, drag = 0, up = 0) {
+  if (fxQ < 1 && n > 1) n = Math.max(1, Math.round(n * fxQ)); // 그래픽 보통·절전: 묶음 입자 수를 줄인다(모양은 그대로)
   for (let i = 0; i < n; i++) {
     const a = rnd() * TAU, sp = sp0 + rnd() * (sp1 - sp0);
     part(k, x, y, Math.cos(a) * sp, Math.sin(a) * sp - up, life * (0.7 + rnd() * 0.6), size * (0.6 + rnd() * 0.8), typeof cols === 'string' ? cols : cols[(rnd() * cols.length) | 0], g, drag);
@@ -541,7 +546,7 @@ const NX0 = 44, NX1 = WORLD_W - 44;      // 좌우 안전선
 let bossBand = false;                    // 보스바가 떠 있으면 숫자 안전선이 더 아래
 const numTop = () => (bossBand ? 204 : 162) - topExtra;
 const numH = n => NUM_PX * n.s0 * 1.1; // 테두리·팝 확대까지 포함한 칸 높이
-function numW(n) { ctx.font = `${NUM_PX}px ${NUM_FONT}`; return ctx.measureText(n.txt).width * n.s0 + 14; }
+function numW(n) { let w = 0; for (const ch of n.txt) w += adv(ch); return w * n.s0 + 14; }
 // 금지 구역: 키별 사각형(중심 x,y · 폭 · 높이) + 남은 시간. 헤드라인을 그리는 쪽이 매 프레임 갱신한다
 const ZONES = new Map();
 export function numZone(key, x, y, w, h, life = 0.1) {
@@ -638,28 +643,73 @@ export function dmgNum(x, y, dmg, o, cls, col, ink, s, crit, life, suffix, tgt =
   if (!placeNum(n, x, y)) { n.on = false; return; }
   numBudget--;
 }
-// 숫자 한 개를 오프스크린에 굽는다: 테두리(0.2em) + 바닥 그림자 + 딱 끊긴 2단 그라데이션(§5.3)
-function bakeNum(n, R) {
-  const fs = NUM_PX * n.s0, pad = fs * 0.3;
-  const cw = Math.ceil((n.w + pad * 2) * R), ch = Math.ceil((fs * 1.2 + pad * 2) * R);
-  const c = n.cv || (n.cv = document.createElement('canvas'));
-  if (c.width < cw || c.height < ch || c.width > cw * 2) { c.width = cw; c.height = ch; }
-  const x = c.getContext('2d');
-  x.setTransform(1, 0, 0, 1, 0, 0);
-  x.clearRect(0, 0, c.width, c.height);
-  x.setTransform(R, 0, 0, R, c.width / 2, c.height / 2);
+// ── 숫자 글자 아틀라스: 글자(0-9 . K M B … − ! +)를 색·크기 단계마다 한 번만 굽고, 숫자는 그 조각을 이어 붙여 그린다 ──
+// 숫자마다 캔버스를 굽던 방식은 굴러가는 합계가 바뀔 때마다 캔버스를 GPU로 다시 올려(전투 그리기의 ~40%) 폰을 달궜다.
+// 모양은 같다: 글자마다 아래 층(바닥 그림자 + 테두리 0.2em)과 위 층(딱 끊긴 2단 그라데이션, §5.3)을 따로 구워 두고,
+// 한 숫자의 아래 층을 전부 그린 뒤 위 층을 그린다(= 문자열 통째로 stroke → fill 과 같은 겹침). 자간은 글자 폭 합(숫자 글꼴은 커닝 없음)
+const NUM_STEP = 1.25;                    // 크기 단계(굽는 크기 ÷ 그리는 크기 = 0.89~1.12 — 흐려지지 않게)
+const mctx = document.createElement('canvas').getContext('2d'); // 문서 밖 캔버스: 글꼴 설정이 문서 스타일 계산을 강제하지 않는다
+const advs = new Map(), atlases = new Map();
+function adv(ch) { // NUM_PX 크기 글자 폭
+  let a = advs.get(ch);
+  if (a === undefined) { mctx.font = `${NUM_PX}px ${NUM_FONT}`; advs.set(ch, a = mctx.measureText(ch).width); }
+  return a;
+}
+// 글꼴이 늦게 도착하면(첫 실행) 대체 글꼴로 잰 폭·구운 글자를 버린다
+document.fonts?.addEventListener?.('loadingdone', () => { advs.clear(); atlases.clear(); });
+function atlasOf(n, R) {
+  const b = Math.round(Math.log(n.s0) / Math.log(NUM_STEP)), key = n.col + n.top + n.ink + b + '|' + R;
+  let A = atlases.get(key);
+  if (!A) {
+    if (atlases.size >= 64) atlases.clear(); // ponytail: 색·크기 조합은 수십 개 — 넘치면 통째로 새로
+    const fs = NUM_PX * NUM_STEP ** b, pad = fs * 0.3;
+    A = { fs, pad, R, k: fs / NUM_PX, col: n.col, top: n.top, ink: n.ink, rowH: Math.ceil((fs * 1.2 + pad * 2) * R), x: 0, g: new Map(), cv: document.createElement('canvas') };
+    A.cv.width = Math.ceil((fs + pad * 2) * R * 8); A.cv.height = A.rowH * 2;
+    atlases.set(key, A);
+  }
+  return A;
+}
+function numGlyph(A, ch) {
+  let g = A.g.get(ch);
+  if (g) return g;
+  const fs = A.fs, a = adv(ch) * A.k, sw = Math.ceil((a + A.pad * 2) * A.R);
+  if (A.x + sw > A.cv.width) { // 자리가 없으면 두 배 폭 캔버스로 옮긴다
+    const c = document.createElement('canvas');
+    c.width = Math.max(A.cv.width * 2, A.x + sw); c.height = A.cv.height;
+    c.getContext('2d').drawImage(A.cv, 0, 0);
+    A.cv = c;
+  }
+  const x = A.cv.getContext('2d'), ox = A.x / A.R + A.pad, cy = A.rowH / A.R / 2;
+  x.setTransform(A.R, 0, 0, A.R, 0, 0);
   x.font = `${fs}px ${NUM_FONT}`;
-  x.textAlign = 'center'; x.textBaseline = 'middle'; x.lineJoin = 'round';
+  x.textAlign = 'left'; x.textBaseline = 'middle'; x.lineJoin = 'round';
   x.lineWidth = fs * 0.2;
-  x.strokeStyle = n.ink; x.fillStyle = n.ink;
-  x.strokeText(n.txt, 0, fs * 0.085); x.fillText(n.txt, 0, fs * 0.085);
-  x.strokeText(n.txt, 0, 0);
-  const g = x.createLinearGradient(0, -fs * 0.42, 0, fs * 0.42);
-  g.addColorStop(0, n.top); g.addColorStop(0.5, n.top); g.addColorStop(0.53, n.col); g.addColorStop(1, n.col);
-  x.fillStyle = g;
-  x.fillText(n.txt, 0, 0);
-  n.cw = c.width / R; n.ch = c.height / R;
-  n.key = n.txt + n.col + n.ink + n.s0 + '|' + R;
+  x.strokeStyle = A.ink; x.fillStyle = A.ink; // 아래 층: 바닥 그림자 + 테두리
+  x.strokeText(ch, ox, cy + fs * 0.085); x.fillText(ch, ox, cy + fs * 0.085);
+  x.strokeText(ch, ox, cy);
+  const oy = cy + A.rowH / A.R, gr = x.createLinearGradient(0, oy - fs * 0.42, 0, oy + fs * 0.42); // 위 층: 2단 그라데이션
+  gr.addColorStop(0, A.top); gr.addColorStop(0.5, A.top); gr.addColorStop(0.53, A.col); gr.addColorStop(1, A.col);
+  x.fillStyle = gr;
+  x.fillText(ch, ox, oy);
+  g = { sx: A.x, sw, a };
+  A.x += sw;
+  A.g.set(ch, g);
+  return g;
+}
+// 현재 변환(숫자 가운데 = 원점, 월드 단위)에 숫자 하나: 아래 층 전부 → 위 층 전부
+function drawNumGlyphs(n, R) {
+  const A = atlasOf(n, R), sc = n.s0 / A.k;
+  let w = 0;
+  for (const ch of n.txt) w += numGlyph(A, ch).a;
+  const h = A.rowH / A.R * sc, y = -h / 2;
+  for (let row = 0; row < 2; row++) {
+    let cx = -w * sc / 2;
+    for (const ch of n.txt) {
+      const g = A.g.get(ch);
+      ctx.drawImage(A.cv, g.sx, row * A.rowH, g.sw, A.rowH, cx - A.pad * sc, y, g.sw / A.R * sc, h);
+      cx += g.a * sc;
+    }
+  }
 }
 export function nearest(view, x, y, maxD) {
   let best = null, bd = maxD * maxD;
@@ -2720,7 +2770,7 @@ export function drawMeteors() {
 }
 
 export function drawNums() {
-  const R = Math.max(0.5, K * 1.3); // 구운 글자 해상도(팝 1.25배에도 선명하게)
+  const R = Math.max(0.5, scale * 1.3); // 구운 글자 해상도(팝 1.25배에도 선명하게). 히트스톱 줌(K)은 빼고 — 줌마다 아틀라스를 새로 굽지 않게
   for (const n of NUMS) {
     if (!n.on) continue;
     const t = n.t;
@@ -2729,11 +2779,10 @@ export function drawNums() {
     k *= 1 + n.punch * 0.15;
     const a = t > n.life - 0.2 ? Math.max(0, (n.life - t) / 0.2) : 1;
     if (a <= 0) continue;
-    if (n.key !== n.txt + n.col + n.ink + n.s0 + '|' + R) bakeNum(n, R);
     ctx.globalAlpha = a;
     const wobble = n.crit && t < 0.15 ? Math.sin(t * 90) * 3 * (1 - t / 0.15) : 0; // 치명 좌우 흔들림 1회(§6)
     ctx.setTransform(K * k, 0, 0, K * k, BX + K * (n.x + wobble), BY + K * n.y);
-    ctx.drawImage(n.cv, 0, 0, n.cw * R, n.ch * R, -n.cw / 2, -n.ch / 2, n.cw, n.ch);
+    drawNumGlyphs(n, R);
   }
   ctx.globalAlpha = 1;
   wt(); // 공용 규약: draw*는 wt()로 끝난다
@@ -2846,6 +2895,7 @@ export function events(view, evs, opts) {
   let hits = 0, kills = 0, shatters = 0, shields = 0, bigs = 0, crits = 0;
   numCap = mode === 'simple' ? 4 : 6; // 동시 표시 상한(§6) — 넘치면 가장 약하고 오래된 숫자부터 비킨다
   numBudget = mode === 'simple' ? 2 : 3; // 새 숫자: 프레임당 생성 상한(합쳐지는 건 제외)
+  partLeft = Math.round(PART_FRAME * fxQ);
   bossBand = !!view.boss;
   meteorKills.length = 0;
   let meteorFrame = false;

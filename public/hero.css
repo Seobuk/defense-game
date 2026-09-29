@@ -297,7 +297,7 @@
 @keyframes hu-spin { to { rotate: 360deg; } }
 @keyframes hu-rune { from { transform: scaleY(.29) rotate(0); } to { transform: scaleY(.29) rotate(360deg); } }
 @keyframes hu-breathe { 0%, 100% { transform: scale(1, 1); } 50% { transform: scale(1.015, 1.03) translateY(-2px); } }
-@keyframes hu-heroIn { from { opacity: 0; transform: translateY(26px) scale(.8); } }
+@keyframes hu-heroIn { from { opacity: 0; translate: 0 26px; scale: .8; } } /* translate·scale(개별 속성): 같은 요소의 hu-breathe(transform)와 겹치면 숨쉬기가 GPU 합성에서 빠져 매 프레임 스타일 계산 */
 @keyframes hu-tileIn { from { opacity: 0; transform: scale(.6); } }
 
 @media (max-height: 700px) {
@@ -312,10 +312,10 @@
 /* 장착 유도 · 비교 화살표 */
 .hu-up { position: absolute; right: 5px; bottom: 6px; width: 0; height: 0; border-left: 7px solid transparent; border-right: 7px solid transparent; border-bottom: 11px solid #4fe06a; filter: drop-shadow(0 0 0 #0e4a1e) drop-shadow(0 1.5px 0 #0e4a1e); animation: huUp 1s ease-in-out infinite; }
 @keyframes huUp { 0%, 100% { translate: 0 0; } 50% { translate: 0 -3px; } }
-.hu-eq.can-up { animation: huPulse 1.3s ease-in-out infinite; }
+.hu-eq.can-up::before { content: ""; position: absolute; inset: -2.5px; border-radius: inherit; pointer-events: none; opacity: 0; /* 빛 맥박 = opacity(kit.css kGlowFade) */
+  box-shadow: 0 0 0 5px rgba(79, 224, 106, .75), 0 0 18px rgba(79, 224, 106, .6); animation: kGlowFade 1.3s ease-in-out infinite; }
 .hu-eq.can-up::after { content: ""; position: absolute; right: -4px; top: -6px; width: 0; height: 0; border-left: 8px solid transparent; border-right: 8px solid transparent; border-bottom: 13px solid #4fe06a; filter: drop-shadow(0 1.5px 0 #0e4a1e); animation: huUp 1s ease-in-out infinite; }
-@keyframes huPulse { 0%, 100% { box-shadow: 0 0 0 2.5px var(--ink), 0 0 0 0 rgba(79, 224, 106, 0); } 50% { box-shadow: 0 0 0 2.5px var(--ink), 0 0 0 5px rgba(79, 224, 106, .75), 0 0 18px rgba(79, 224, 106, .6); } }
-@media (prefers-reduced-motion: reduce) { .hu-up, .hu-eq.can-up, .hu-eq.can-up::after { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .hu-up, .hu-eq.can-up::before, .hu-eq.can-up::after { animation: none; } }
 
 /* ── 영웅 화면: 특성 탭 · 정비 화면 모드(판매 숨김) ── */
 .hu-tabs .k-tab { font-size: 14px; }
@@ -466,8 +466,7 @@
 .tt-node[data-st="alt"] { opacity: .38; filter: grayscale(.85); }
 .tt-node[data-st="alt"] .tt-disc::after { content: ""; position: absolute; left: 8%; right: 8%; top: 50%; height: 3px; rotate: -35deg; border-radius: 2px; background: rgba(255, 255, 255, .55); }
 .tt-node.can .tt-plus { display: block; }
-.tt-node.can .tt-disc { animation: ttCan 1.4s ease-in-out infinite; background: radial-gradient(circle at 50% 38%, color-mix(in srgb, var(--b) 55%, #fff) 0, color-mix(in srgb, var(--b) 60%, #2b2366) 45%, #140f2e 100%); }
-@keyframes ttCan { 50% { box-shadow: inset 0 0 0 2.5px var(--b), 0 3px 0 rgba(0, 0, 0, .45), 0 0 0 4px color-mix(in srgb, var(--b) 45%, transparent), 0 0 16px var(--b); } }
+.tt-node.can .tt-disc { box-shadow: inset 0 0 0 2.5px var(--b), 0 3px 0 rgba(0, 0, 0, .45), 0 0 0 3px color-mix(in srgb, var(--b) 35%, transparent), 0 0 12px color-mix(in srgb, var(--b) 80%, transparent); animation: kBreath 1.4s ease-in-out infinite; background: radial-gradient(circle at 50% 38%, color-mix(in srgb, var(--b) 55%, #fff) 0, color-mix(in srgb, var(--b) 60%, #2b2366) 45%, #140f2e 100%); }
 .tt-node[data-st="ranked"] .tt-disc { background: radial-gradient(circle at 50% 38%, color-mix(in srgb, var(--b) 45%, #fff) 0, var(--b) 45%, color-mix(in srgb, var(--b) 40%, #140f2e) 100%); box-shadow: inset 0 0 0 2.5px rgba(255, 255, 255, .45), 0 3px 0 rgba(0, 0, 0, .45); }
 .tt-node[data-st="ranked"] .tt-rank { background: var(--b); -webkit-text-stroke: 2.5px var(--ink); paint-order: stroke fill; }
 .tt-node[data-st="max"] .tt-disc {
@@ -686,8 +685,9 @@
   color: #fff; font-family: var(--font-display); font-size: 13px; background: rgba(10, 6, 30, .55); box-shadow: inset 0 0 0 2px rgba(160, 148, 255, .3), 0 3px 0 rgba(0, 0, 0, .3); transition: transform .16s var(--ease-back);
 }
 .cp-ss-slot:active { transform: scale(.95); }
-.cp-ss-slot.empty { background: radial-gradient(circle at 25% 50%, rgba(123, 108, 255, .35), rgba(10, 6, 30, .6) 70%); animation: ssGlow 2.2s ease-in-out infinite; }
-@keyframes ssGlow { 50% { box-shadow: inset 0 0 0 2px rgba(190, 180, 255, .7), 0 3px 0 rgba(0, 0, 0, .3), 0 0 14px rgba(123, 108, 255, .6); } }
+.cp-ss-slot.empty { background: radial-gradient(circle at 25% 50%, rgba(123, 108, 255, .35), rgba(10, 6, 30, .6) 70%); }
+.cp-ss-slot.empty::after { content: ""; position: absolute; inset: -2px; border-radius: inherit; pointer-events: none; opacity: 0; /* 빛 맥박 = opacity(kit.css kGlowFade) */
+  box-shadow: inset 0 0 0 2px rgba(190, 180, 255, .7), 0 0 14px rgba(123, 108, 255, .6); animation: kGlowFade 2.2s ease-in-out infinite; }
 .cp-ss-plus { position: relative; flex: none; width: 44px; height: 44px; border-radius: 12px; background: rgba(123, 108, 255, .25); box-shadow: inset 0 0 0 2px rgba(190, 180, 255, .5); }
 .cp-ss-plus::before, .cp-ss-plus::after { content: ""; position: absolute; left: 50%; top: 50%; width: 18px; height: 4px; translate: -50% -50%; border-radius: 2px; background: #d8cfff; }
 .cp-ss-plus::after { rotate: 90deg; }

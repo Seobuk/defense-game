@@ -82,16 +82,17 @@ function lightMeter(ctx) {
 }
 
 export function createRenderer(canvas) {
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas.getContext('2d', { alpha: false }); // 매 프레임 불투명 바탕을 칠한다 — 페이지와 섞는 합성 비용 없음
   C.setCanvas(ctx);
   const meter = lightMeter(ctx);
   let W = 1, H = 1, scale = 1, ox = 0, oy = 0, lastCW = -1, lastCH = -1, lastDpr = 0;
+  let dprCap = 2, sized = false, sizeAt = 0; // 해상도 상한(설정 '그래픽' — gfx.js) · 크기 바뀜 표시(ResizeObserver)
   let T = 0, RT = 0, frameNo = 0;
 
   // ── 크기 ──
   function resize() {
     const r = canvas.getBoundingClientRect();
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const dpr = Math.min(dprCap, window.devicePixelRatio || 1);
     const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
     if (canvas.width !== w) canvas.width = w;
     if (canvas.height !== h) canvas.height = h;
@@ -105,10 +106,17 @@ export function createRenderer(canvas) {
     C.setScale(scale);
     fx.resetGlows();
   }
+  // 크기 읽기(레이아웃 강제)는 바뀐 때만: 관찰자가 표시 → 다음 프레임에 resize. 관찰자를 놓친 변경(가려진 웹뷰)은 1초마다 한 번 확인
+  if (typeof ResizeObserver === 'function') new ResizeObserver(() => { sized = true; }).observe(canvas);
   function checkSize() {
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    if (canvas.clientWidth !== lastCW || canvas.clientHeight !== lastCH || dpr !== lastDpr) resize();
+    const dpr = Math.min(dprCap, window.devicePixelRatio || 1), now = performance.now();
+    if (sized || dpr !== lastDpr || now > sizeAt) {
+      sized = false; sizeAt = now + 1000;
+      if (canvas.clientWidth !== lastCW || canvas.clientHeight !== lastCH || dpr !== lastDpr) resize();
+    }
   }
+  // 그래픽 단계(gfx.js): 해상도 상한은 다음 프레임 checkSize 가 dpr 차이를 보고 다시 잡는다 · 연출 예산은 art 모듈이 C.fxQ 로 읽는다
+  function setQuality(q) { dprCap = q.dpr > 0 ? q.dpr : 2; C.setFxQ(q.fx); }
 
   // ── 한 프레임: 이벤트 → 갱신 → 그리기 ──
   function frame(view, events, dtReal, opts = {}) {
@@ -208,7 +216,7 @@ export function createRenderer(canvas) {
     fx.drawFlash();
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
-    return { coins: world.takeCoinsArrived() };
+    return { coins: world.takeCoinsArrived(), live: hud.live() };
   }
 
   // 화면(clientX/Y) → 월드 좌표 (탭 이동용). 흔들림·줌은 무시(수 px 차이)
@@ -239,5 +247,5 @@ export function createRenderer(canvas) {
   window.__wdLight = meter; // 디버그: 가산 빛 수요·배율 확인
   // topExtra: 월드 y=0 위로 보이는 여분(월드 단위). DOM HUD는 화면 맨 위라 HUD 띠 = 월드 y < 90 - topExtra
   // sideX: 넓은 화면에서 월드 x=0 왼쪽/x=720 오른쪽으로 보이는 여분(월드 단위)
-  return { resize, frame, toWorld, toScreen, layout, get topExtra() { return C.topExtra; }, get sideX() { return C.sideX; } };
+  return { resize, frame, setQuality, toWorld, toScreen, layout, get topExtra() { return C.topExtra; }, get sideX() { return C.sideX; } };
 }

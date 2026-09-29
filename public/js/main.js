@@ -15,12 +15,17 @@ import * as updater from './updater.js';
 import * as pwa from './pwa.js';
 import { gemStoreHandleBack } from './gemstoreui.js'; // v0.1.2 보석 충전(결제 미연결)
 import { initSummonUI, summonHandleBack, openWardrobe, syncLoadout } from './summonui.js'; // v0.1.2 소환의 제단 · 옷장(자기 전체 화면 층)
+import { GFX, autoStart, createGovernor } from './gfx.js'; // 설정 '그래픽'(발열·배터리)
 
 const HITSTOP_CAP = 500;          // ms
 const HITSTOP_SCALE = [1, 0.75, 0.5]; // 배속별 히트스톱 축소
 const NEXT_DELAY = 3900;          // 클리어 후 자동 진행까지(ms) — 보상 패널을 볼 최소 시간
 const SAVE_EVERY = 3000;
-const MAX_STEPS = 20;             // 한 프레임 최대 시뮬 스텝(큰 공백은 버림)
+const MAX_STEPS = 8;              // 한 프레임 최대 시뮬 스텝(넘는 시간은 버림): 느린 폰의 3배속이 '느린 프레임 → 더 많은 스텝 → 더 느린 프레임'으로
+                                  // 달아오르지 않게 — 3배속은 22fps 까지(절전 30fps = 6스텝) 제 속도, 그보다 느리면 조금 느리게 돈다(전투 규칙은 그대로)
+const IDLE_MS = 250;              // 전장이 없는 화면(타이틀·정비·결과): 4Hz 로만 갱신(입력이 오면 바로 — wake)
+const STILL_MS = 100;             // 멈춘 전투(카드·메뉴·영웅 화면·도장·결과): 전장 그림은 멈추고 UI 만 10Hz
+const SETTLE_MS = 800;            // 멈춘 뒤 이만큼은 계속 그린다(카드 뒤 어둡게·패배 회색이 다 깔리게) → 그 뒤 마지막 그림 그대로
 const HUD_H = 90;                 // 전장 탭 무시: 월드 y < 90 은 상단 HUD
 // 카드가 네임드 보스 등장 배너·운석 착탄을 덮지 않게: 그동안 전투는 계속 돌고 카드는 뒤에 뜬다
 const PICK_HOLD_BOSS = 1800, PICK_HOLD_METEOR = 800, PICK_HOLD_ULT = 1400; // 궁극기·합동 필살 연출을 카드가 가리지 않게
@@ -44,12 +49,25 @@ let stackAt = 0, stackLeft = NaN, comboAt = null; // 오른쪽 스킬 스택 왼
 const heldPicks = [];             // 미뤄 둔 카드(보스 배너·운석 뒤에 띄움)
 let pendingResult = null;         // runOver → 이번 프레임 UI 이벤트(패배 도장) 뒤에 결과 화면
 let pendingUpdate = null, updSnooze = false;
+let stillFrom = 0, sampling = false, live = false; // 멈춘 전투의 시작 시각 · 이번 프레임이 자동 그래픽 측정 대상(실제 전투를 그림)인가
 let dbgSpells = null, dbgLoot = null; // 디버그(브라우저 전용): ?spells ?loot
 
 const audio = createAudio();
 audio.setEnabled(data.settings.sound);
 const renderer = createRenderer(document.getElementById('game'));
 const meta = {};
+// ── 그래픽 단계(gfx.js): 설정값 → fps 상한 · 해상도 · 연출 예산. 자동이면 조절기가 전투 프레임을 재서 내린다 ──
+let gfx = GFX.high, gfxSet = '', gov = null;
+function applyGfx() {
+  const s = data.settings;
+  if (s.gfx !== gfxSet || !gov) { gfxSet = s.gfx; gov = createGovernor(autoStart(s.gfxAuto)); }
+  const lv = GFX[s.gfx] ? s.gfx : gov.level; // 자동 = 이번 실행에서 조절기가 정한 단계(배운 절전은 보통부터 다시 — gfx.js autoStart)
+  gfx = GFX[lv];
+  renderer.setQuality(gfx);
+  document.documentElement.dataset.gfx = lv; // CSS: 절전은 꾸밈 반복 애니메이션을 한 번만(css/kit.css)
+  meta.gfxLevel = lv; // 설정 화면 '지금: 보통'
+}
+applyGfx();
 const inRun = () => mode === 'run' && !!game;
 const persistOk = ok => { if (ok) persist(true); return !!ok; };
 
@@ -98,6 +116,8 @@ const ui = createUI(document.getElementById('app'), {
     data.settings = { ...data.settings, ...s };
     if (pickChanged && inRun()) act(game, 0, { type: 'autoPick', on: !!data.settings.autoPick }); // 설정 화면의 '카드 자동 선택'
     audio.setEnabled(data.settings.sound);
+    if (s.gfx === 'auto' && gfxSet !== 'auto') data.settings.gfxAuto = ''; // '자동'을 다시 고르면 높음부터 다시 잰다
+    applyGfx();
     persist();
   },
   onResetSave,
@@ -269,6 +289,7 @@ function resetState() {
   pendingResult = null;
   heroUI.close();
   audio.setEnabled(data.settings.sound);
+  gov = null; applyGfx(); // 저장이 바뀌었다(초기화·복원): 그래픽 설정도 그 저장 것으로
   syncLoadout(); // v0.1.2 저장이 바뀌면(초기화·백업 복원) 장착 외형도 전장 그림에 다시
 }
 function showHome() { // 저장이 바뀐 뒤: 도전 중이면 타이틀(이어하기), 아니면 정비 화면
@@ -294,6 +315,7 @@ function onRestoreSave(code, preview) {
   if (!r.ok) return false;
   store.clear();
   r.data.settings.storage = data.settings.storage; // 저장 보호 상태는 이 기기 값(코드를 만든 기기 값이 아님)
+  r.data.settings.gfxAuto = data.settings.gfxAuto; // 자동 그래픽이 배운 단계도 이 기기 값
   data = r.data;
   store.save(data);
   if (!store.flush()) return false;
@@ -338,15 +360,18 @@ function checkOffline() {
   });
 }
 
+let away = false; // 앱이 뒤로 갔다(APK appStateChange — 웹뷰가 hidden 을 알리지 않는 기기 대비): 루프·소리를 멈춘다
 function onHide() { persist(true); }
 function onShow() {
   lastT = performance.now();
   acc = 0;
+  away = false;
+  wake();
   checkOffline();
 }
 document.addEventListener('visibilitychange', () => (document.hidden ? onHide() : onShow()));
 addEventListener('pagehide', onHide);
-App?.addListener('appStateChange', s => (s.isActive ? onShow() : onHide()));
+App?.addListener('appStateChange', s => { if (s.isActive) onShow(); else { away = true; audio.nap(); onHide(); } });
 
 // ── 이벤트 → 효과음 · 저장 · 도전 흐름 ──
 function handleEvents(events, now) {
@@ -536,6 +561,7 @@ async function protectStorage() {
 
 // ── 안드로이드 뒤로가기: 시트·모달 닫기 → 도전 중이면 일시정지 메뉴, 정비·타이틀에선 두 번 눌러 종료 ──
 App?.addListener('backButton', () => {
+  wake(); // 포인터·키가 아닌 입력: 저속 틱(4Hz)을 기다리지 않고 바로 다음 프레임
   if (gemStoreHandleBack()) return; // v0.1.2 보석 충전 화면(정비 위)
   if (summonHandleBack()) return; // v0.1.2 소환·옷장 층이 영웅 화면 위
   if (heroUI.handleBack()) return;
@@ -559,14 +585,68 @@ document.getElementById('game').addEventListener('pointerdown', e => {
 });
 
 // ── 메인 루프 ──
+// 전투가 움직일 때만 매 화면 프레임(그래픽 fps 상한 — 90·120·144Hz 화면도 평균 60) · 멈춘 전투는 10Hz · 전장 없는 화면은 4Hz.
+// 저속 틱은 setTimeout → rAF 라 숨김·백그라운드에선 rAF 가 멈추면서 같이 멈춘다. 입력이 오면 wake()로 바로 다음 프레임
+// fps 상한 = 마감 시각(due): 마감 PACE_TOL 전부터 오는 화면 프레임에 그린다. 60Hz 는 매번, 120Hz 는 한 칸 걸러, 90Hz 는 11/22ms 번갈아(평균 60).
+// ponytail: 옛 규칙 '지난 그림에서 1000/fps-2ms' 는 90Hz 에서 22ms(45fps)로 떨어져 자동이 절전까지 내려갔다
+const PACE_TOL = 5;
+let rafId = 0, idleTimer = 0, drawnAt = -1e9, due = 0;
+function schedule(ms) {
+  if (ms > 0) idleTimer = setTimeout(() => { idleTimer = 0; if (!rafId) rafId = requestAnimationFrame(loop); }, ms);
+  else rafId = requestAnimationFrame(loop);
+}
+// 손대지 않고 멈춰 있는 화면(타이틀·정비·결과·카드·메뉴): CALM_MS 뒤 무한 반복 꾸밈 애니메이션을 그 자리에 멈춘다 — 60Hz 합성·GPU 가 쉰다(발열).
+// 한 번 도는 등장·퇴장은 건드리지 않는다. 멈춤 = 요소에 data-calm(css/kit.css) — 애니메이션 API pause() 는 CSS 멈춤 규칙(cv-*)을 영영 무시하게 만들어서 안 쓴다
+const CALM_MS = 10000, CALM_LOW_MS = 3000; // 절전은 금방(몇 번 돌고 멈춤)
+let busyAt = 0;
+const calmed = new Set();
+function calmDown() { // 저속 틱마다: 새로 뜬 화면의 반복도 잡는다
+  for (const a of document.getAnimations()) {
+    const el = a.effect?.target;
+    if (el && a.playState === 'running' && a.effect.getTiming().iterations === Infinity && el.id !== 'upd-progress-fill') { el.setAttribute('data-calm', ''); calmed.add(el); }
+  }
+}
+function calmUp() { for (const el of calmed) el.removeAttribute('data-calm'); calmed.clear(); }
+function wake() {
+  busyAt = performance.now(); calmUp();
+  if (idleTimer) { clearTimeout(idleTimer); idleTimer = 0; }
+  if (!rafId && !away) rafId = requestAnimationFrame(loop);
+}
+for (const t of ['pointerdown', 'pointerup', 'keydown']) addEventListener(t, wake, { capture: true, passive: true });
+
 function loop(now) {
-  requestAnimationFrame(loop);
-  frame(now);
+  rafId = 0;
+  if (away) return;
+  const iv = 1000 / gfx.fps;
+  if (game && now < due - PACE_TOL) { schedule(0); return; } // fps 상한: 마감 전 화면 프레임은 건너뜀
+  due = Math.max(due + iv, now + iv - PACE_TOL); // 밀렸으면(느린 프레임·쉬다 옴) 지금부터 다시
+  const gap = now - drawnAt;
+  drawnAt = now;
+  const t0 = performance.now();
+  const wait = frame(now);
+  if (sampling && data.settings.gfx === 'auto') { // 자동 그래픽: 실제 전투 프레임의 작업 시간·간격
+    const lv = gov.sample(performance.now() - t0, gap);
+    if (lv) { data.settings.gfxAuto = lv; applyGfx(); persist(); }
+  } else gov.reset();
+  if (!wait) { busyAt = now; if (calmed.size) calmUp(); } else if (now - busyAt > (gfx === GFX.low ? CALM_LOW_MS : CALM_MS)) calmDown();
+  schedule(wait || (game ? due - 12 - performance.now() : 0)); // 다음 그림 직전(12ms 앞)까지는 rAF 도 걸지 않는다 — 절전 30fps 에서 쉬는 화면 프레임에 페이지가 깨지 않게
 }
 
+// 전체 화면 층에 가려 안 보이는 화면: 반복 CSS 애니메이션 멈춤(css/kit.css html.cv-*)
+const titleEl = document.getElementById('title'), rootCl = document.documentElement.classList;
+function syncCover() {
+  const hero = heroUI.isOpen(), camp = ui.isCampOpen(), full = !!document.querySelector('.sm-scr:not([hidden]), .gs-scr:not([hidden])');
+  rootCl.toggle('cv-camp', camp && (hero || full));
+  rootCl.toggle('cv-stage', camp || !titleEl.hidden || modalOpen('m-result') || (inRun() && (hero || full)));
+}
+
+// 한 번 갱신. 반환 = 다음 갱신까지 쉴 ms(0 = 다음 화면 프레임)
 function frame(now) {
-  const dt = Math.min(0.1, Math.max(0, (now - lastT) / 1000));
+  const wallDt = Math.min(0.5, Math.max(0, (now - lastT) / 1000)); // 저속 틱에서도 실제 흐른 시간(카드 카운트다운·플레이 시간)
+  const dt = Math.min(0.1, wallDt);
   lastT = now;
+  sampling = false;
+  syncCover();
   meta.gems = data.gems;
   meta.gold = data.gold;
   meta.best = data.best;
@@ -585,19 +665,19 @@ function frame(now) {
     maybeShowUpdate();
     maybeApplyPwa();
     if (now >= saveAt) { saveAt = now + SAVE_EVERY; persist(); }
-    return;
+    return IDLE_MS;
   }
 
   // 카드 선택 중: 전투 정지(sim도 스스로 멈춤). 카드 화면 '자동 선택'을 켰을 때만 실시간 카운트다운(sim이 판단), 아니면 고를 때까지 기다린다
   const picking = !!game.pick;
-  if (picking && !heroUI.isOpen() && ui.isPickShown()) tickPick(game, dt);
-  if (game.relicPick && !heroUI.isOpen() && ui.isRelicShown()) tickRelic(game, dt); // 유물 3택(자동 선택 ON일 때만 카운트다운)
+  if (picking && !heroUI.isOpen() && ui.isPickShown()) tickPick(game, wallDt);
+  if (game.relicPick && !heroUI.isOpen() && ui.isRelicShown()) tickRelic(game, wallDt); // 유물 3택(자동 선택 ON일 때만 카운트다운)
   // 모달(메뉴·영웅 화면·결과 등)이 열리면 일시정지
   const paused = picking || !!game.relicPick || ui.isBusy() || heroUI.isOpen();
   const holding = now < stopUntil;
   if (mode === 'run' && !game.run.over) { // 도전 기록: 실제 플레이 초(배속 전) — 메뉴·영웅 화면·백그라운드(rAF 멈춤)는 빼고, 카드 고르는 시간은 넣는다
     const lg = game.run.log;
-    if (!heroUI.isOpen() && !anyModal()) lg.ps += dt;
+    if (!heroUI.isOpen() && !anyModal()) lg.ps += wallDt;
     if (!paused) lg.sp = Math.max(lg.sp, game.speed);
     if (game.players[0].autoPick) lg.ap = true;
   }
@@ -620,9 +700,17 @@ function frame(now) {
     const c = document.getElementById('combo'), cr = (c.hidden ? document.getElementById('st-row') : c).getBoundingClientRect(); // 4차: 콤보 알약 가운데(단계 팝이 빨려 드는 곳)
     comboAt = renderer.toWorld(cr.left + cr.width / 2, cr.top + cr.height / 2);
   }
-  const out = renderer.frame(g, events, dt, {
+  // 멈춘 전투: 어둡게 깔리는 동안(SETTLE_MS)만 그리고 그 뒤엔 마지막 그림 그대로(히트스톱 시계도 멈춰 있어 바뀌는 게 없다).
+  // 이벤트가 오면(카드 고름·유물·다시 뽑기) 그 연출을 위해 다시 그린다
+  // 캔버스 연출(층 배너·보스 경고·컷인·팝)이 아직 움직이면(live) 그것도 끝까지 그린 뒤에 멈춘다 — 카드 뒤에 반쯤 그린 배너가 얼어붙지 않게
+  if (!paused || events.length || live) stillFrom = paused ? now : 0;
+  else if (!stillFrom) stillFrom = now;
+  const still = paused && now - stillFrom > SETTLE_MS;
+  const out = still ? { coins: 0 } : renderer.frame(g, events, dt, {
     dmgNumbers: data.settings.dmgNumbers, shake: data.settings.shake, hitstop: holding || paused, myIndex: 0, stackLeft, comboAt,
   });
+  live = !!out.live;
+  sampling = !paused && g.phase === 'play';
   if (out.coins > 0) audio.play('coin');
   ui.onEvents(events, g);
   ui.update(g, meta);
@@ -638,6 +726,8 @@ function frame(now) {
   } else maybeShowUpdate();
 
   if (now >= saveAt) { saveAt = now + SAVE_EVERY; persist(); }
+  if (!still) return 0;
+  return inRun() && (game.pick?.autoLeft != null || game.relicPick?.autoLeft != null) ? 33 : STILL_MS; // 자동 선택 고리가 차오르는 동안은 30Hz
 }
 
 // ── 부팅 ──

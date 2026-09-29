@@ -6,7 +6,7 @@ import { HERO_GATE } from '../hero.js';
 import { fmt, clamp } from '../util.js';
 import {
   TAU, bake, tint, circ, ell, rrect, fs, rad, lin, poly, shine, mulberry, cache, RARITY_COL, TIER_RARITY, BAG_POS, GOLD_POS, OWN,
-  ctx, T, RT, topExtra, sideX,
+  ctx, T, RT, topExtra, sideX, fxQ,
   shake, flash, rnd, easeBack, pool, take,
   wt, place, spr, txt, rr, additive, groundRune,
 } from './core.js';
@@ -699,10 +699,11 @@ function lootFx(view, ev) {
 export function drawAmbient(theme, da) {
   const A = AMB[theme];
   const aw = WORLD_W + sideX * 2;
-  if (ambTheme !== theme || amb.length !== Math.round(A.n * aw / WORLD_W)) { // 넓은 화면이면 폭만큼 더
+  const an = Math.round(A.n * aw / WORLD_W * (fxQ < 0.5 ? 0.5 : 1)); // 넓은 화면이면 폭만큼 더 · 그래픽 절전은 반만
+  if (ambTheme !== theme || amb.length !== an) {
     ambTheme = theme;
     amb = [];
-    for (let i = 0, n = Math.round(A.n * aw / WORLD_W); i < n; i++) amb.push({ x: rnd() * aw - sideX, y: rnd() * WALL_Y, ph: rnd() * TAU, s: 0.5 + rnd(), v: 0.5 + rnd() });
+    for (let i = 0, n = an; i < n; i++) amb.push({ x: rnd() * aw - sideX, y: rnd() * WALL_Y, ph: rnd() * TAU, s: 0.5 + rnd(), v: 0.5 + rnd() });
   }
   // 묘지 안개(동적, 부드럽게 흐름)
   if (theme === 2) {
