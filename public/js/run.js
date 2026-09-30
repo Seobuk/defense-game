@@ -4,7 +4,7 @@
 import { META_KEYS, metaMax, metaCost, metaFx, RUN_GEMS, SPELL_KEYS, TRAIN_KEYS, trainMax, trainCost, START_CARDS } from './config.js';
 import { createGame, serializeRun, normalizeRun } from './sim.js';
 import { unlockedClasses, addXp, equipItem, autoEquipAll, sellItem, sellItemsByRarity } from './hero.js';
-import { allocateTalent, resetTalents, recommendNext } from './talents.js';
+import { allocateTalent, resetTalents, refundTalent, recommendNext } from './talents.js';
 import { runBonus, takePrep, buyTrainBreak, buyGemBreak, togglePrep, openBox, unlockRelic } from './shop.js'; // 4차 경제 싱크
 import { relicPool } from './relics.js'; // 4차 유물
 import { runRecord, addRecord } from './records.js'; // v0.1.1 도전 기록
@@ -130,7 +130,7 @@ export function applyOffline(meta, off) {
 }
 
 // 정비 화면(도전 사이) 조작: 마법사 수련 {type:'train', stat} · 영구 강화 {type:'meta', key} · 영웅 클래스·장착·판매(골드는 바로 meta.gold)
-// 특성: {type:'talent', cls, key}(1랭크) · {type:'talentReset', cls}(무료 초기화 — 정비 화면 전용) · {type:'autoTalent', on, cls?}
+// 특성: {type:'talent', cls, key}(1랭크) · {type:'talentReset', cls}(무료 초기화 — 정비 화면 전용) · {type:'talentRefund', cls, key}(1랭크 빼기 — 정비 화면 전용) · {type:'autoTalent', on, cls?}
 // · {type:'talentNoticeSeen'}(hero.talentNotice — '특성이 개편되어 포인트를 돌려받았어요' 1회 안내를 닫음)
 export function campAct(meta, a) {
   const hero = meta.hero;
@@ -157,6 +157,10 @@ export function campAct(meta, a) {
     }
     case 'talent': return unlockedClasses(meta.best).includes(a.cls) && allocateTalent(hero, a.cls, a.key);
     case 'talentReset': return resetTalents(hero, a.cls);
+    case 'talentRefund': // 1랭크 빼기(정비 화면 전용). 자동 배분이 켜져 있으면 끈다 — 뺀 포인트를 도전에서 봇이 도로 찍지 않게(UI가 안내)
+      if (!unlockedClasses(meta.best).includes(a.cls) || !refundTalent(hero, a.cls, a.key)) return false;
+      hero.autoTalent = false; // ponytail: 다른 클래스를 빼도 끈다 — 자동 배분은 전역이라 나중에 그 클래스로 바꾸면 봇이 도로 찍는다
+      return true;
     case 'autoTalent': { // 켜는 즉시 남은 포인트를 추천 빌드로 배분(특성 개편 환불 뒤 빈 트리 방지). cls = 보고 있는 클래스 탭
       hero.autoTalent = !!a.on;
       const c = unlockedClasses(meta.best).includes(a.cls) ? a.cls : hero.cls;

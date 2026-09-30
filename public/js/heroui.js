@@ -244,10 +244,12 @@ export function createHeroUI(root, handlers = {}) {
   const bonusesEl = $('.hu-bonuses'), milestonesEl = $('.hu-milestones');
   const autoEqBtn = $('.hu-autoeq'), sortBtns = $$('.hu-sorts .k-tab'), sellRow = $('.hu-sellrow'), bagGrid = $('.hu-baggrid');
   const newDot = $('.hu-bdot'), tDot = $('.hu-tdot');
-  // 특성 트리: 정비 화면이면 무료 초기화까지(onReset), 도전 중이면 찍기만
+  // 특성 트리: 정비 화면이면 1랭크 빼기(onRefund)·무료 초기화(onReset)까지, 도전 중이면 찍기만
   const th = {
     onAllocate: key => { const ok = H.onTalent?.(key); forceRender(); return ok !== false; },
     onReset: null,
+    onRefund: null,
+    toast: m => toast(m),
     onAutoToggle: v => { H.onToggleAutoTalent?.(v); forceRender(); },
   };
   const tree = createTalentTree(panels.talent, main, th);
@@ -422,6 +424,7 @@ export function createHeroUI(root, handlers = {}) {
     goldEl.parentElement.hidden = noSell(); // 정비 화면은 호출측이 영구 골드(ctx.gold)를 주면 판매·골드 표시
     $('.hu-changeclass').hidden = !curCtx.classChange;
     th.onReset = curCtx.camp ? () => !!H.onTalentReset?.() : null;
+    th.onRefund = curCtx.camp ? key => !!H.onTalentRefund?.(key) : null; // 1랭크 빼기도 정비 화면만
     const tl = curHero && curHero.cls ? talentLeft(curHero, curHero.cls) : 0;
     tDot.hidden = !(tl > 0) || activeTab === 'talent';
     tDot.textContent = '+' + tl;

@@ -4,7 +4,7 @@
 // 좁은 화면(폰)은 갈래 탭으로 하나씩, 넓은 화면(폴드·태블릿, 컨테이너 600px↑)은 3갈래를 나란히. 재질 kit.css(.k-*), 배치 hero.css(.tt-*)
 import {
   TALENTS, TALENT_HYBRIDS, TALENT_RECOMMEND, TIER_REQ, HYBRID_REQ, talentPoints, talentSpent, talentLeft, talentRank, talentNode,
-  talentBlock, branchSpent, branchMax, nextTierNeed, talentCap, recommendNext,
+  talentBlock, refundBlock, branchSpent, branchMax, nextTierNeed, talentCap, recommendNext,
 } from './talents.js';
 import { HERO_CLASSES } from './hero.js';
 import { icon } from './icons.js';
@@ -41,7 +41,8 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;',
 const TIERS = TIER_REQ.length;
 
 // host: 트리를 넣을 요소 · sheetHost: 상세 시트·확인 창이 뜰 전체 화면 요소(position 기준)
-// H: onAllocate(key) → bool · onReset() → bool(정비 화면만, 없으면 초기화 버튼 숨김) · onAutoToggle(on)
+// H: onAllocate(key) → bool · onReset() → bool(정비 화면만, 없으면 초기화 버튼 숨김) · onRefund(key) → bool(정비 화면만 — 1랭크 빼기, 없으면 빼기 버튼 숨김)
+//    · onAutoToggle(on) · toast(msg, icon)
 export function createTalentTree(host, sheetHost, H = {}) {
   const el = document.createElement('div');
   el.className = 'tt';
@@ -70,7 +71,8 @@ export function createTalentTree(host, sheetHost, H = {}) {
         <div class="tt-sh-desc"><b class="tt-sh-lbl"></b><p class="tt-sh-txt"></p></div>
         <div class="tt-sh-alt" hidden></div>
         <p class="tt-sh-why"></p>
-        <button class="k-btn success l wide tt-sh-go"></button>
+        <div class="tt-sh-acts"><button class="k-btn neutral l tt-sh-rf" aria-label="1랭크 빼기 — 포인트 1점 돌려받기">빼기 <span class="tt-sh-cost">+1</span></button><button class="k-btn success l wide tt-sh-go"></button></div>
+        <p class="tt-sh-rfwhy" hidden></p>
       </div>
     </div>
     <div class="k-modal narrow tt-confirm" role="alertdialog" aria-modal="true" hidden>
@@ -85,7 +87,7 @@ export function createTalentTree(host, sheetHost, H = {}) {
   const $ = s => el.querySelector(s), $s = s => sheet.querySelector(s);
   const leftEl = $('.tt-left'), ofEl = $('.tt-of'), hintEl = $('.tt-hint'), treeEl = $('.tt-tree'), tabsEl = $('.tt-tabs');
   const autoBtn = $('.tt-autobtn'), resetBtn = $('.tt-reset');
-  const shBox = $s('.tt-sheet'), cfBox = $s('.tt-confirm'), goBtn = $s('.tt-sh-go');
+  const shBox = $s('.tt-sheet'), cfBox = $s('.tt-confirm'), goBtn = $s('.tt-sh-go'), rfBtn = $s('.tt-sh-rf'), rfWhy = $s('.tt-sh-rfwhy');
   let hero = null, cls = null, sig = '', openKey = null, built = null;
   const tabOf = {}; // 클래스별 폰 화면 갈래 탭(기억)
 
@@ -186,8 +188,8 @@ export function createTalentTree(host, sheetHost, H = {}) {
     const rec = left > 0 ? recommendNext(hero, cls) : null;
     const main = TALENTS[cls].find(b => b.key === TALENT_RECOMMEND[cls]?.order[0]);
     hintEl.innerHTML = left > 0
-      ? `빛나는 특성을 눌러 찍으세요. 단은 <b>그 갈래에 쓴 포인트</b>로 열려요.${main ? ` 추천: <b style="color:${BRANCH_COL[TALENTS[cls].indexOf(main)]}">${esc(main.name)}</b> 마스터` : ''}`
-      : H.onReset ? '레벨이 오르면 포인트가 생겨요. 궁극 특성은 하나만 — 초기화는 무료예요.' : '레벨이 오르면 포인트가 생겨요.';
+      ? `빛나는 특성을 눌러 찍으세요. 단은 <b>그 갈래에 쓴 포인트</b>로 열려요.${H.onRefund && talentSpent(hero, cls) ? ' 찍은 특성은 눌러서 1랭크씩 뺄 수 있어요.' : ''}${main ? ` 추천: <b style="color:${BRANCH_COL[TALENTS[cls].indexOf(main)]}">${esc(main.name)}</b> 마스터` : ''}`
+      : H.onReset ? `레벨이 오르면 포인트가 생겨요.${H.onRefund ? ' 찍은 특성을 눌러 <b>하나씩 뺄</b> 수 있어요.' : ''} 초기화도 무료예요.` : '레벨이 오르면 포인트가 생겨요.';
     TALENTS[cls].forEach((b, bi) => {
       const sec = treeEl.children[bi], spent = branchSpent(hero, cls, b.key), max = branchMax(cls, b.key), need = nextTierNeed(hero, cls, b.key);
       for (const n of b.nodes) {
@@ -256,14 +258,20 @@ export function createTalentTree(host, sheetHost, H = {}) {
       altEl.innerHTML = `<span class="tt-vs">또는</span>
         <button class="tt-alt-card${took ? ' on' : ''}" data-alt="${alt.key}"><span class="tt-alt-ico">${nodeArt(alt)}</span>
           <span class="tt-alt-txt"><b>${esc(alt.name)}</b><em data-tag="${esc(alt.tag)}">${esc(alt.tag)}</em><span>${esc(alt.desc)}</span></span></button>
-        ${took ? '' : `<small>둘 중 하나만 — ${H.onReset ? '초기화하면 다시 고를 수 있어요' : '바꾸려면 정비 화면에서 무료 초기화'}</small>`}`;
+        ${took ? '' : `<small>둘 중 하나만 — ${H.onRefund ? '찍은 쪽을 모두 빼면 다시 고를 수 있어요' : '바꾸려면 정비 화면에서 빼거나 초기화'}</small>`}`;
     }
     const bl = talentBlock(hero, cls, n.key), can = !bl;
     const whyEl = $s('.tt-sh-why');
-    whyEl.textContent = can ? `남은 포인트 ${talentLeft(hero, cls)}점` : bl.msg;
+    whyEl.textContent = can ? `남은 포인트 ${talentLeft(hero, cls)}점` : H.onRefund ? bl.msg.replace('정비 화면에서 ', '') : bl.msg; // 이미 정비 화면
     whyEl.classList.toggle('bad', !can && r < n.max);
     goBtn.disabled = !can;
     goBtn.innerHTML = r >= n.max ? `${icon('check')}최대 랭크` : can ? `찍기 <span class="tt-sh-cost">-1</span>` : icon('lock') + '잠김';
+    // 1랭크 빼기(정비 화면): 다른 배분을 깨면 잠그고 이유를 보여 준다
+    const rbl = H.onRefund && r > 0 ? refundBlock(hero, cls, n.key) : null;
+    rfBtn.hidden = !(H.onRefund && r > 0);
+    rfBtn.disabled = !!rbl;
+    rfWhy.hidden = !rbl;
+    rfWhy.textContent = rbl ? rbl.msg : '';
   }
   function closeSheet() { sheet.hidden = true; openKey = null; }
   goBtn.addEventListener('click', () => {
@@ -274,6 +282,15 @@ export function createTalentTree(host, sheetHost, H = {}) {
     const b = treeEl.querySelector(`[data-key="${key}"]`);
     if (b) { b.classList.remove('burst'); void b.offsetWidth; b.classList.add('burst'); }
     shBox.querySelector('.tt-sh-art').animate([{ scale: 1 }, { scale: 1.15, offset: 0.3 }, { scale: 1 }], { duration: 300, easing: 'cubic-bezier(.34,1.56,.64,1)' });
+  });
+  rfBtn.addEventListener('click', () => {
+    if (!openKey || rfBtn.disabled) return;
+    const key = openKey, wasAuto = !!hero.autoTalent;
+    if (H.onRefund?.(key) === false) { rfBtn.classList.add('shake'); setTimeout(() => rfBtn.classList.remove('shake'), 260); return; }
+    render(hero, cls, true);
+    if (rfBtn.hidden) goBtn.focus(); // 0랭크가 되어 버튼이 숨으면 포커스를 잃지 않게
+    if (wasAuto && !hero.autoTalent) H.toast?.('자동 배분을 껐어요 · 직접 찍어 주세요', 'hero');
+    shBox.querySelector('.tt-sh-art').animate([{ scale: 1 }, { scale: 0.86, offset: 0.3 }, { scale: 1 }], { duration: 260, easing: 'cubic-bezier(.34,1.56,.64,1)' });
   });
   $s('.tt-sh-close').addEventListener('click', closeSheet);
   $s('.tt-sh-alt').addEventListener('click', e => { const k = e.target.closest('[data-alt]')?.dataset.alt; if (k) openSheet(k); });

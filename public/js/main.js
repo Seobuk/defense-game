@@ -139,6 +139,7 @@ const heroUI = createHeroUI(document.getElementById('app'), {
   onToggleAutoEquip: on => heroDo({ type: 'autoEquip', on }),
   onTalent: key => heroDo({ type: 'talent', key }, { type: 'talent', cls: data.hero.cls, key }),
   onTalentReset: () => !inRun() && persistOk(campAct(data, { type: 'talentReset', cls: data.hero.cls })),
+  onTalentRefund: key => !inRun() && persistOk(campAct(data, { type: 'talentRefund', cls: data.hero.cls, key })),
   onToggleAutoTalent: on => persistOk(campAct(data, { type: 'autoTalent', on })),
   onOpenWardrobe: cls => openWardrobe({ cls }), // v0.1.2 옷장(영웅 화면 '영웅' 탭)
   onClose: () => {},

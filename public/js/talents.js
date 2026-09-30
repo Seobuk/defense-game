@@ -396,12 +396,12 @@ export function talentBlock(hero, cls, key) {
     const lack = n.req.map(bk => [bk, HYBRID_REQ - branchSpent(hero, cls, bk)]).filter(([, d]) => d > 0);
     if (lack.length) return { code: 'hybrid', msg: lack.map(([bk, d]) => `${TALENTS[cls].find(b => b.key === bk).name} ${d}점 더`).join(' · ') + ' 찍으면 열려요' };
   } else {
-    if (n.cap && r === 0 && talentCap(hero, cls)) return { code: 'cap', msg: '궁극 특성은 하나만 — 초기화하면 다시 고를 수 있어요' }; // 단 조건보다 먼저: 점수를 더 찍어도 안 열린다
+    if (n.cap && r === 0 && talentCap(hero, cls)) return { code: 'cap', msg: '궁극 특성은 하나만 — 정비 화면에서 찍은 궁극을 빼면 다시 고를 수 있어요' }; // 단 조건보다 먼저: 점수를 더 찍어도 안 열린다
     const need = TIER_REQ[n.tier] - branchSpent(hero, cls, f.branch.key);
     if (need > 0) return { code: 'tier', msg: `${f.branch.name} 갈래에 ${need}점 더 찍으면 ${n.tier + 1}단이 열려요` };
     if (n.or && r === 0) {
       const other = f.branch.nodes.find(x => x.or === n.or && x !== n && talentRank(hero, cls, x.key) > 0);
-      if (other) return { code: 'or', msg: `〈${other.name}〉와 둘 중 하나만 고를 수 있어요` };
+      if (other) return { code: 'or', msg: `〈${other.name}〉와 둘 중 하나만 — 정비 화면에서 그쪽을 모두 빼면 바꿀 수 있어요` };
     }
   }
   if (talentLeft(hero, cls) <= 0) return { code: 'points', msg: '남은 포인트가 없어요 — 레벨이 오르면 생겨요' };
@@ -415,6 +415,29 @@ export function allocateTalent(hero, cls, key) {
   hero.talents ||= {};
   hero.talents[cls] ||= {};
   hero.talents[cls][key] = talentRank(hero, cls, key) + 1;
+  return true;
+}
+
+// 왜 1랭크를 못 빼나(정비 화면): null(뺄 수 있음) | { code, msg, key? }. code: empty · tier · hybrid. key = 먼저 빼야 할 노드(이름은 겹칠 수 있다 — 암살자 '거물 사냥')
+// 빼면 줄어드는 건 이 갈래 포인트뿐 — 깨질 수 있는 건 ① 같은 갈래 위 단 노드(그 아래 단 포인트 ≥ TIER_REQ) ② 이 갈래를 쓰는 혼합 노드.
+// 택1·궁극·최대 랭크는 빼서 깨지지 않는다(0이 되면 다른 쪽·다른 궁극이 저절로 열린다). 가장 높은 단을 알려 준다 — 거기부터 빼면 늘 된다
+export function refundBlock(hero, cls, key) {
+  const f = talentNode(cls, key);
+  if (!f || !(talentRank(hero, cls, key) > 0)) return { code: 'empty', msg: '찍은 랭크가 없어요' };
+  if (!f.branch) return null; // 혼합 노드에 기대는 노드는 없다
+  const b = f.branch, a = allocOf(hero, cls), n = f.node;
+  const below = t => b.nodes.reduce((s, x) => s + (x.tier < t ? a[x.key] | 0 : 0), 0);
+  const top = b.nodes.filter(m => m.tier > n.tier && a[m.key] > 0 && below(m.tier) - 1 < TIER_REQ[m.tier]).sort((x, y) => y.tier - x.tier)[0];
+  if (top) return { code: 'tier', msg: `〈${top.name}〉(${top.tier + 1}단)부터 빼 주세요 — ${b.name} 아래 단에 ${TIER_REQ[top.tier]}점이 필요해요`, key: top.key };
+  const hy = branchSpent(hero, cls, b.key) - 1 < HYBRID_REQ && (TALENT_HYBRIDS[cls] || []).find(h => a[h.key] > 0 && h.req.includes(b.key));
+  if (hy) return { code: 'hybrid', msg: `〈${hy.name}〉부터 빼 주세요 — 혼합 특성은 ${b.name} 갈래 ${HYBRID_REQ}점이 필요해요`, key: hy.key };
+  return null;
+}
+// 1랭크 빼기(정비 화면 전용 — 포인트는 바로 돌아온다). 성공하면 true
+export function refundTalent(hero, cls, key) {
+  if (refundBlock(hero, cls, key)) return false;
+  const a = hero.talents[cls];
+  if (--a[key] <= 0) delete a[key];
   return true;
 }
 

@@ -159,6 +159,8 @@ export function createCamp(root, H = {}) {
   const tree = createTalentTree($('.cp-thost'), el, {
     onAllocate: key => !!H.onCampAct?.({ type: 'talent', cls: tCls, key }),
     onReset: () => !!H.onCampAct?.({ type: 'talentReset', cls: tCls }),
+    onRefund: key => !!H.onCampAct?.({ type: 'talentRefund', cls: tCls, key }),
+    toast: (m, i) => H.toast?.(m, i),
     onAutoToggle: on2 => H.onCampAct?.({ type: 'autoTalent', on: on2, cls: tCls }),
   });
 

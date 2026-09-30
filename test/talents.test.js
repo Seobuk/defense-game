@@ -3,9 +3,12 @@ import assert from 'node:assert/strict';
 import { mulberry32 } from '../public/js/util.js';
 import { WALL_Y } from '../public/js/config.js';
 import { newHero, spawnHeroUnit, updateHeroUnit, heroTakeDamage, castHeroUlt, heroOnKill, heroCombatStats, HERO_GATE } from '../public/js/hero.js';
-import { TALENTS, TALENT_HYBRIDS, TALENT_TAGS, TALENT_RECOMMEND, TALENT_VER, talentBonus, migrateTalents, normalizeTalents, talentNode } from '../public/js/talents.js';
+import { TALENTS, TALENT_HYBRIDS, TALENT_TAGS, TALENT_RECOMMEND, TALENT_VER, talentBonus, migrateTalents, normalizeTalents, talentNode,
+  refundBlock, refundTalent, talentBlock, canAllocate, allocateTalent, talentLeft, talentSpent, classNodes } from '../public/js/talents.js';
+import { defaults } from '../public/js/save.js';
+import { campAct, newRun } from '../public/js/run.js';
 import { normalize } from '../public/js/save.js';
-import { createGame, step, drainEvents } from '../public/js/sim.js';
+import { createGame, step, drainEvents, act } from '../public/js/sim.js';
 
 const DT = 1 / 30;
 
@@ -198,4 +201,96 @@ const proc = (g, sub) => g.ev.filter(e => e.type === 'heroProc' && (e.sub === su
   const on = mageDmgOn(1), off = mageDmgOn(0);
   assert.ok(off > 0 && on > off * 1.6, `mark: 표식 적 마법사 피해 ${off.toFixed(0)} → ${on.toFixed(0)}`);
 }
-console.log('talents.test OK (택1 30쌍 · 이전 2→3 · 훅 27종)');
+// ── 4) 1랭크 빼기(정비 화면): 다른 배분을 깨는 빼기는 이유와 함께 거절 · 0이 되면 택1·궁극이 다시 열린다 ──
+{
+  const H = t => ({ ...newHero(), cls: 'knight', level: 99, talents: { knight: { ...t } } });
+  const code = (h, k) => refundBlock(h, 'knight', k)?.code ?? null;
+  // 단: 위 단 노드가 아래 단 포인트(TIER_REQ)를 잃으면 거절 — 위 단부터 빼면 된다
+  let h = H({ guard1: 3, guard3: 1 });
+  assert.equal(code(h, 'guard1'), 'tier');
+  assert.match(refundBlock(h, 'knight', 'guard1').msg, /〈방패 막기〉\(2단\)부터 빼 주세요 — 수호 아래 단에 3점/);
+  assert.ok(!refundTalent(h, 'knight', 'guard1') && h.talents.knight.guard1 === 3, '거절하면 그대로');
+  assert.ok(refundTalent(h, 'knight', 'guard3') && !('guard3' in h.talents.knight), '0이 되면 키를 지운다');
+  assert.ok(refundTalent(h, 'knight', 'guard1') && h.talents.knight.guard1 === 2 && talentLeft(h, 'knight') === talentLeft(H({}), 'knight') - 2, '포인트가 바로 돌아온다');
+  h = H({ guard1: 3, guard2: 1, guard3: 1 });
+  assert.equal(code(h, 'guard1'), null, '아래 단에 여유가 있으면(4 → 3) 빼도 된다');
+  assert.equal(code(h, 'guard3'), null, '맨 위 단은 늘 뺄 수 있다');
+  // 가장 높은 깨지는 노드를 알려 준다(거기부터 빼면 늘 된다)
+  h = H({ guard1: 3, guard2: 3, guard3: 3, guard6: 1, guard8: 1 });
+  assert.match(refundBlock(h, 'knight', 'guard1').msg, /〈철갑〉\(4단\)/);
+  assert.match(refundBlock(h, 'knight', 'guard6').msg, /〈철갑〉\(4단\)/, '3단 노드도 4단을 받친다');
+  assert.equal(talentNode('knight', refundBlock(h, 'knight', 'guard1').key)?.node.name, '철갑', '거절은 먼저 뺄 노드의 key를 준다(이름은 겹칠 수 있다)');
+  assert.equal(code(h, 'guard8'), null);
+  // 혼합: 두 갈래 각각 HYBRID_REQ(8)점 — 어느 쪽 갈래를 빼도 거절, 혼합 노드 자체는 언제든
+  h = H({ guard1: 3, guard2: 3, guard3: 2, crusade1: 3, crusade2: 3, crusade3: 2, oath: 1 });
+  assert.equal(code(h, 'guard3'), 'hybrid');
+  assert.equal(code(h, 'crusade1'), 'hybrid');
+  assert.match(refundBlock(h, 'knight', 'guard3').msg, /〈성기사의 맹세〉부터 빼 주세요 — 혼합 특성은 수호 갈래 8점/);
+  assert.equal(refundBlock(h, 'knight', 'guard3').key, 'oath');
+  assert.ok(refundTalent(h, 'knight', 'oath') && refundTalent(h, 'knight', 'guard3'), '혼합을 먼저 빼면 된다');
+  assert.equal(code(H({ guard1: 3, guard2: 3, guard3: 3, crusade1: 3, crusade2: 3, crusade3: 2, oath: 1 }), 'guard3'), null, '9 → 8점은 괜찮다');
+  // 궁극: 빼면 다른 갈래 궁극이 열린다
+  const full = (bk, cap) => Object.fromEntries(TALENTS.knight.find(b => b.key === bk).nodes.filter(n => (cap || !n.cap) && ![5, 10].includes(+n.key.slice(bk.length))).map(n => [n.key, n.max]));
+  h = H({ ...full('crusade', true), ...full('guard', false) });
+  assert.deepEqual(normalizeTalents(h.talents, 99).knight, h.talents.knight, '시험 배분이 합법');
+  assert.equal(talentBlock(h, 'knight', 'guard13').code, 'cap');
+  assert.equal(code(h, 'crusade13'), null);
+  assert.ok(refundTalent(h, 'knight', 'crusade13'));
+  assert.ok(canAllocate(h, 'knight', 'guard13'), '궁극을 빼면 다른 갈래 궁극이 열린다');
+  // 택1: 모두 빼면 다른 쪽을 고를 수 있다
+  h = H({ crusade1: 3, crusade4: 2 });
+  assert.equal(talentBlock(h, 'knight', 'crusade5').code, 'or');
+  assert.ok(refundTalent(h, 'knight', 'crusade4') && talentBlock(h, 'knight', 'crusade5').code === 'or', '1랭크 남으면 아직 택1');
+  assert.ok(refundTalent(h, 'knight', 'crusade4') && allocateTalent(h, 'knight', 'crusade5'), '0랭크 → 다른 쪽으로 바꾸기');
+  // 빈 노드 · 모르는 노드
+  assert.equal(code(h, 'guard1'), 'empty');
+  assert.equal(code(h, 'nope'), 'empty');
+  assert.ok(!refundTalent(h, 'knight', 'nope') && !refundTalent({ ...newHero(), level: 9 }, 'knight', 'guard1'));
+
+  // 성질: 무작위 합법 배분의 모든 노드에서 '빼기 허용' ⇔ 뺀 결과가 저장 검증(normalizeTalents)을 그대로 통과
+  const rng = mulberry32(42), sorted = o => JSON.stringify(Object.entries(o).sort());
+  let ok = 0, no = 0;
+  for (const cls of Object.keys(TALENTS)) for (let trial = 0; trial < 60; trial++) {
+    const level = 5 + Math.floor(rng() * 95), hero = { ...newHero(), cls, level, talents: {} };
+    for (let open = classNodes(cls).filter(n => canAllocate(hero, cls, n.key)); open.length; open = classNodes(cls).filter(n => canAllocate(hero, cls, n.key)))
+      allocateTalent(hero, cls, open[Math.floor(rng() * open.length)].key);
+    for (const key of Object.keys(hero.talents[cls] || {})) {
+      const t = { ...hero.talents[cls], [key]: hero.talents[cls][key] - 1 };
+      if (!t[key]) delete t[key];
+      const legal = sorted(normalizeTalents({ [cls]: t }, level)[cls] || {}) === sorted(t);
+      const allow = !refundBlock(hero, cls, key);
+      assert.equal(allow, legal, `${cls} Lv${level} ${key}: 빼기 ${allow} ↔ 합법 ${legal} ${JSON.stringify(hero.talents[cls])}`);
+      allow ? ok++ : no++;
+      if (allow) { const c = { ...hero, talents: { [cls]: { ...hero.talents[cls] } } }; assert.ok(refundTalent(c, cls, key)); assert.deepEqual(c.talents[cls], t); }
+    }
+  }
+  assert.ok(ok > 500 && no > 100, `성질 검사 표본: 허용 ${ok} · 거절 ${no}`);
+
+  // 정비 화면 campAct: 빼기 · 자동 배분 끄기(뺀 포인트를 봇이 도로 찍지 않게) · 미해금·거절 · 도전 중엔 없음
+  const m = defaults();
+  m.hero.level = 30;
+  assert.ok(campAct(m, { type: 'autoTalent', on: true, cls: 'knight' }) && talentLeft(m.hero, 'knight') === 0);
+  const leaf = Object.keys(m.hero.talents.knight).find(k => !refundBlock(m.hero, 'knight', k));
+  const before = talentSpent(m.hero, 'knight');
+  assert.ok(campAct(m, { type: 'talentRefund', cls: 'knight', key: leaf }));
+  assert.ok(talentSpent(m.hero, 'knight') === before - 1 && talentLeft(m.hero, 'knight') === 1 && !m.hero.autoTalent, '1점 돌려받고 자동 배분 꺼짐');
+  assert.ok(!campAct(m, { type: 'talentRefund', cls: 'cleric', key: 'heal1' }) && !campAct(m, { type: 'talentRefund', cls: 'knight' }));
+  assert.deepEqual(normalizeTalents(m.hero.talents, 30).knight, m.hero.talents.knight, '뺀 뒤에도 저장 검증 통과');
+  assert.deepEqual(normalize(JSON.parse(JSON.stringify(m))).hero.talents.knight, m.hero.talents.knight, '저장 → 불러오기 왕복');
+  const g = newRun(m, { cls: 'knight', startSpells: [] }, 1);
+  assert.ok(!act(g, 0, { type: 'talentRefund', key: leaf }) && !act(g, 0, { type: 'talentRefund', cls: 'knight', key: leaf }), '도전 중엔 빼기 없음');
+
+  // 협공 갈래 조건(수호 3점 — 서리 방벽)은 빼면 다음 판·이어하기에서 꺼진다(sim refreshCollab이 영웅 배분을 다시 읽는다)
+  const m2 = defaults();
+  m2.hero.level = 20;
+  for (let i = 0; i < 3; i++) campAct(m2, { type: 'talent', cls: 'knight', key: 'guard1' });
+  const cg = () => createGame({ stage: 8, best: 40, seed: 700, players: [{}, {}], hero: { ...m2.hero, cls: 'knight' }, run: { spells: { frostWard: 3 } } }).collabs.includes('frostBastion');
+  assert.ok(cg(), '수호 3점 = 서리 방벽');
+  assert.ok(campAct(m2, { type: 'talent', cls: 'knight', key: 'guard3' }));
+  m2.hero.autoTalent = true;
+  assert.ok(!campAct(m2, { type: 'talentRefund', cls: 'knight', key: 'guard1' }) && m2.hero.talents.knight.guard1 === 3 && m2.hero.autoTalent, '거절 = 아무것도 안 바뀜(자동 배분도 그대로)');
+  assert.ok(campAct(m2, { type: 'talentRefund', cls: 'knight', key: 'guard3' }) && cg());
+  assert.ok(campAct(m2, { type: 'talentRefund', cls: 'knight', key: 'guard1' }) && !cg(), '2점으로 빼면 꺼짐');
+}
+console.log('talents.test OK (택1 30쌍 · 이전 2→3 · 훅 27종 · 1랭크 빼기)');
+

@@ -579,7 +579,7 @@ normalizeTalents(raw, level)            // 저장 검증: 순서·최대 랭크�
 talentNode(cls, key) → { branch, index, node } · TALENT_FX_KEYS · CAPSTONES(15)
 ```
 **어디서 찍나**
-- 정비 화면(게임 없이, `run.js`): `campAct(meta, {type:'talent', cls, key})`(해금된 클래스만) · `{type:'talentReset', cls}`(**무료 초기화 — 정비 화면 전용**) · `{type:'autoTalent', on}`.
+- 정비 화면(게임 없이, `run.js`): `campAct(meta, {type:'talent', cls, key})`(해금된 클래스만) · `{type:'talentReset', cls}`(**무료 초기화 — 정비 화면 전용**) · `{type:'talentRefund', cls, key}`(**1랭크 빼기 — 정비 화면 전용**, `talents.js refundBlock/refundTalent`: 같은 갈래 위 단 노드의 아래 단 포인트(`TIER_REQ`)나 혼합 노드의 갈래 `HYBRID_REQ`를 깨면 한국어 이유와 함께 거절 — 가장 높은 깨지는 노드를 알려 준다. 0이 되면 택1 다른 쪽·다른 궁극이 열린다. 자동 배분이 켜져 있으면 끈다) · `{type:'autoTalent', on}`.
 - 도전 중(`sim.js`): `act(game, 0, {type:'talent', key})` — 현재 클래스에만, 레벨업으로 생긴 포인트를 바로 쓰는 용도(다음 프레임 반영, `talent{cls,key}` 이벤트). 도전 중 초기화는 없다.
 - 자동: `hero.autoTalent`가 켜져 있고 자동 강화가 on이면 `autoHero`가 남는 포인트를 추천 빌드로 배분.
 
