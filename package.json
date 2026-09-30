@@ -1,12 +1,12 @@
 {
   "name": "defense-game",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "description": "대마법사의 용사 키우기 — 마법 성벽 디펜스 로그라이트",
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "test": "node test/sim.test.js && node test/save.test.js && node test/talents.test.js && node test/dungeons.test.js && node test/relics.test.js && node test/shop.test.js && node test/mutations.test.js && node test/fix4.test.js && node test/records.test.js && node test/summon.test.js && node test/gemstore.test.js && node test/gfx.test.js",
+    "test": "node test/sim.test.js && node test/save.test.js && node test/talents.test.js && node test/dungeons.test.js && node test/relics.test.js && node test/shop.test.js && node test/mutations.test.js && node test/fix4.test.js && node test/records.test.js && node test/summon.test.js && node test/gemstore.test.js && node test/gfx.test.js && node test/awake.test.js",
     "release": "node scripts/release.mjs"
   },
   "license": "MIT",

@@ -16,6 +16,7 @@ import * as pwa from './pwa.js';
 import { gemStoreHandleBack } from './gemstoreui.js'; // v0.1.2 보석 충전(결제 미연결)
 import { initSummonUI, summonHandleBack, openWardrobe, syncLoadout } from './summonui.js'; // v0.1.2 소환의 제단 · 옷장(자기 전체 화면 층)
 import { GFX, autoStart, createGovernor } from './gfx.js'; // 설정 '그래픽'(발열·배터리)
+import { createAwake, wantAwake } from './awake.js'; // 설정 '화면 꺼짐 방지'
 
 const HITSTOP_CAP = 500;          // ms
 const HITSTOP_SCALE = [1, 0.75, 0.5]; // 배속별 히트스톱 축소
@@ -68,6 +69,8 @@ function applyGfx() {
   meta.gfxLevel = lv; // 설정 화면 '지금: 보통'
 }
 applyGfx();
+const awake = createAwake(updater.plugin());
+meta.awakeOk = awake.supported; // 설정 화면: 미지원이면 안내
 const inRun = () => mode === 'run' && !!game;
 const persistOk = ok => { if (ok) persist(true); return !!ok; };
 
@@ -362,12 +365,14 @@ function checkOffline() {
 }
 
 let away = false; // 앱이 뒤로 갔다(APK appStateChange — 웹뷰가 hidden 을 알리지 않는 기기 대비): 루프·소리를 멈춘다
-function onHide() { persist(true); }
+function syncAwake() { awake.sync(wantAwake(data.settings.screenOn, { run: inRun(), visible: !document.hidden && !away })); }
+function onHide() { awake.sync(false); persist(true); }
 function onShow() {
   lastT = performance.now();
   acc = 0;
   away = false;
   wake();
+  syncAwake();
   checkOffline();
 }
 document.addEventListener('visibilitychange', () => (document.hidden ? onHide() : onShow()));
@@ -659,6 +664,7 @@ function frame(now) {
   meta.native = native; // 설정 '기록 보호' 줄(APK = 앱 저장소)
   meta.discovered = game ? game.discovered : data.discovered;
   meta.summon = data.summon; // v0.1.2 타이틀 'NEW 외형 소환' 리본(ui.js syncTeaser — giftPending)
+  syncAwake(); // 화면이 바뀌면(도전 ↔ 정비·타이틀) 바로 따라간다 — 바뀔 때만 실제 호출
 
   if (!game) { // 타이틀 · 정비 화면 · (전장 없는) 결과 화면
     ui.update(null, meta);

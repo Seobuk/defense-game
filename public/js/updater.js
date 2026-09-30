@@ -24,7 +24,7 @@ export function isNative() {
 }
 
 let pluginRef = null;
-function plugin() {
+export function plugin() { // 네이티브 AppUpdater(웹: null) — 화면 꺼짐 방지(awake.js)도 쓴다
   if (!isNative()) return null;
   return (pluginRef ??= cap().Plugins?.AppUpdater ?? cap().registerPlugin('AppUpdater'));
 }

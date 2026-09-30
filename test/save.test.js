@@ -8,7 +8,7 @@ import { serializeRun } from '../public/js/sim.js';
 
 const zeroMeta = Object.fromEntries(META_KEYS.map(k => [k, 0]));
 const zeroTrain = Object.fromEntries(TRAIN_KEYS.map(k => [k, 0]));
-const SETTINGS0 = { dmgNumbers: 'full', sound: true, shake: true, speed: 1, autoNext: true, autoPick: false, storage: '', gfx: 'auto', gfxAuto: '' }; // 새 저장 = 자동 진행 ON(카드는 늘 직접) · 카드 자동 선택 OFF
+const SETTINGS0 = { dmgNumbers: 'full', sound: true, shake: true, speed: 1, autoNext: true, autoPick: false, storage: '', gfx: 'auto', gfxAuto: '', screenOn: 'battle' }; // 새 저장 = 자동 진행 ON(카드는 늘 직접) · 카드 자동 선택 OFF
 const oldStartGoldGems = lv => { let s = 0; for (let i = 0; i < lv; i++) s += Math.ceil(12 * 1.25 ** i); return s; };
 
 // 깨진 입력 → 기본값, 절대 throw 없음
@@ -49,7 +49,7 @@ assert.equal(v1.gems, 40 + 12 * MIGRATE_GEMS_PER_BEST + oldStartGoldGems(4));
 assert.equal(v1.gold, 0, 'v1 인게임 골드(옛 경제)는 버림');
 assert.deepEqual(v1.metaLv, { ...zeroMeta, pickaxe: 20, critBoom: 2 });
 assert.deepEqual(v1.training, zeroTrain);
-assert.deepEqual(v1.settings, { dmgNumbers: 'simple', sound: false, shake: true, speed: 2, autoNext: false, autoPick: false, storage: '', gfx: 'auto', gfxAuto: '' });
+assert.deepEqual(v1.settings, { dmgNumbers: 'simple', sound: false, shake: true, speed: 2, autoNext: false, autoPick: false, storage: '', gfx: 'auto', gfxAuto: '', screenOn: 'battle' });
 assert.deepEqual(v1.discovered, ['flame']);
 assert.equal(v1.hero.cls, 'ranger');
 assert.equal(v1.hero.level, 30);

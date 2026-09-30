@@ -1409,6 +1409,8 @@ export function createUI(root, handlers = {}) {
   for (const b of segBtns) on(b, 'click', () => setSettings({ dmgNumbers: b.dataset.dmg }));
   const gfxBtns = [...root.querySelectorAll('#m-settings [data-gfx]')], gfxHelp = root.querySelector('#set-gfx-help');
   for (const b of gfxBtns) on(b, 'click', () => setSettings({ gfx: b.dataset.gfx }));
+  const awakeBtns = [...root.querySelectorAll('#m-settings [data-awake]')];
+  for (const b of awakeBtns) on(b, 'click', () => setSettings({ screenOn: b.dataset.awake }));
   for (const b of switches) on(b, 'click', () => setSettings({ [b.dataset.set]: !meta.settings?.[b.dataset.set] }));
   function renderSettings() {
     const s = meta.settings || {};
@@ -1417,6 +1419,8 @@ export function createUI(root, handlers = {}) {
     for (const b of gfxBtns) attr(b, 'aria-checked', String(b.dataset.gfx === gs));
     txt(gfxHelp, gs === 'auto' ? `지금 ${GFX_NAME[lv]}(${GFX_HELP[lv]}) · 폰이 뜨거워지면 스스로 낮춰요` : GFX_HELP[lv]);
     for (const b of switches) attr(b, 'aria-checked', String(!!s[b.dataset.set]));
+    for (const b of awakeBtns) attr(b, 'aria-checked', String(b.dataset.awake === (s.screenOn || 'battle')));
+    root.querySelector('#set-awake-help').hidden = meta.awakeOk !== false;
     txt(E['set-nick'], meta.profile?.name || '');
     // v0.1.1 저장 보호: 웹은 영구 저장소 요청 결과(main.js protectStorage), APK는 앱 저장소. 웹에서 못 받았으면 백업 안내를 조금 더 강조(팝업 없음)
     const on = !meta.native && s.storage === 'on', weak = !meta.native && (s.storage === 'off' || s.storage === 'na');

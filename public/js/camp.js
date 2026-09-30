@@ -72,16 +72,16 @@ export function createCamp(root, H = {}) {
         <section class="cp-card cp-goal"></section>
       </section>
       <section class="cp-pane" data-pane="train" hidden>
-        <div class="cp-tr-top">
-          <div class="cp-tr-mages" aria-hidden="true"><i class="cp-tr-glow"></i><img class="cp-tr-m solo" alt="" draggable="false"></div>
-          <div class="cp-tr-info">
-            <h3>마법사 수련</h3>
-            <div class="cp-tr-gold">${icon('coin')}<b class="k-num gold cp-tr-goldn">0</b></div>
+        <div class="cp-train-list">
+          <div class="cp-tr-top">
+            <div class="cp-tr-mages" aria-hidden="true"><i class="cp-tr-glow"></i><img class="cp-tr-m solo" alt="" draggable="false"></div>
+            <div class="cp-tr-info">
+              <h3>마법사 수련</h3>
+              <div class="cp-tr-gold">${icon('coin')}<b class="k-num gold cp-tr-goldn">0</b></div>
+            </div>
+            <div class="cp-tr-rank"><span>수련 단계 <b class="k-num cp-tr-sum"></b></span><div class="k-bar gold cp-tr-bar"><i></i></div></div>
           </div>
         </div>
-        <p class="cp-note cp-tr-note">도전 중 처치로 모은 <b>골드</b>로 성벽 위 대마법사의 기본기를 영구히 다져요. 마법사의 진짜 힘은 도전 중 고르는 <b>스킬</b>이에요.</p>
-        <div class="cp-tr-rank"><span>수련 단계</span><div class="k-bar gold cp-tr-bar"><i></i></div><b class="k-num cp-tr-sum"></b></div>
-        <div class="cp-shop-list cp-train-list"></div>
       </section>
       <section class="cp-pane" data-pane="talent" hidden>
         <div class="cp-tcls"></div>
@@ -142,6 +142,20 @@ export function createCamp(root, H = {}) {
           </ul>
           <button class="k-btn l wide cp-nt-go">${icon('crit')}특성 찍으러 가기</button>
           <button class="k-btn gray wide cp-nt-ok">나중에</button>
+        </div>
+      </div>
+    </div>
+    <div class="cp-ov cp-trsh" hidden>
+      <div class="k-modal dark narrow" role="dialog" aria-modal="true" aria-labelledby="cp-trsh-h">
+        <div class="k-ribbon gold"><h2 id="cp-trsh-h"></h2></div>
+        <button class="k-close cp-trsh-x" aria-label="닫기">${icon('close')}</button>
+        <div class="k-sheet center">
+          <div class="cp-trsh-art"><span class="cp-mu-ico"></span></div>
+          <div class="cp-trsh-lv"><b class="k-num"></b><div class="k-bar gold cp-mu-bar"><i></i></div></div>
+          <p class="cp-trsh-desc"></p>
+          <div class="cp-mu-fx cp-trsh-fx"></div>
+          <button class="k-btn l wide cp-trsh-buy">${icon('coin')}<b class="k-cost k-num"></b></button>
+          <p class="cp-note">도전 중 처치로 모은 <b>골드</b>로 대마법사의 기본기를 영구히 다져요. 만렙 뒤엔 <b>돌파</b>로 끝없이 올라요.</p>
         </div>
       </div>
     </div>`;
@@ -258,28 +272,36 @@ export function createCamp(root, H = {}) {
   }
 
   // ── 마법사 수련 (골드, 영구) ──
-  $('.cp-train-list').innerHTML = MAGE_TRAINING.map(t => `
+  // 타일 격자(폰 2열 · 넓으면 3열): 이름·레벨·효과(지금→다음 한 줄)·값. 설명은 타일을 누르면 뜨는 시트에
+  $('.cp-train-list').insertAdjacentHTML('beforeend', MAGE_TRAINING.map(t => `
     <div class="cp-mu cp-tr" data-k="${t.key}" data-tone="${TRAIN_TONE[t.key] || 'b'}">
-      <span class="cp-mu-ico">${icon(t.key)}</span>
-      <div class="cp-mu-body">
-        <div class="cp-mu-name"><b>${t.name}</b><span class="cp-mu-lv k-num"></span></div>
-        <div class="k-bar gold cp-mu-bar"><i></i></div>
-        <p>${t.desc}</p>
-        <div class="cp-mu-fx"></div>
-      </div>
+      <button class="cp-tr-open" aria-label="${t.name} 자세히"><span class="cp-mu-ico">${icon(t.key)}</span>
+        <span class="cp-mu-name"><b>${t.name}</b><span class="cp-mu-lv k-num"></span></span></button>
+      <div class="k-bar gold cp-mu-bar"><i></i></div>
+      <div class="cp-tr-fx"></div>
       <button class="k-btn s cp-mu-buy">${icon('coin')}<b class="k-cost k-num"></b></button>
-    </div>`).join('');
+    </div>`).join(''));
+  const trSheet = $('.cp-trsh');
+  let trOpen = null; // 시트에 열린 수련 키
+  function buyTrain(k, b) {
+    const row = $(`.cp-tr[data-k="${k}"]`);
+    if (b.classList.contains('is-poor')) { b.classList.remove('shake'); void b.offsetWidth; b.classList.add('shake'); H.toast?.('골드가 부족해요 — 도전에서 모아 와요', 'coin'); return; }
+    if (!H.onCampAct?.({ type: row.classList.contains('brk') ? 'trainBreak' : 'train', stat: k })) return; // 만렙 뒤 = 수련 돌파(shop.js)
+    row.animate([{ scale: 1 }, { scale: 1.05, offset: 0.35 }, { scale: 1 }], { duration: 260, easing: 'cubic-bezier(.34,1.56,.64,1)' });
+    const sp = document.createElement('i'); sp.className = 'cp-mu-spark'; row.append(sp); setTimeout(() => sp.remove(), 600);
+    for (const m of $$('.cp-tr-m')) m.animate([{ translate: '0 0' }, { translate: '0 -10px', offset: 0.4 }, { translate: '0 0' }], { duration: 360, easing: 'cubic-bezier(.34,1.56,.64,1)' });
+    render(true);
+  }
   for (const row of $$('.cp-tr')) {
     const b = row.querySelector('.cp-mu-buy');
-    on(b, 'click', () => {
-      if (b.classList.contains('is-poor')) { b.classList.remove('shake'); void b.offsetWidth; b.classList.add('shake'); H.toast?.('골드가 부족해요 — 도전에서 모아 와요', 'coin'); return; }
-      if (!H.onCampAct?.({ type: row.classList.contains('brk') ? 'trainBreak' : 'train', stat: row.dataset.k })) return; // 만렙 뒤 = 수련 돌파(shop.js)
-      row.animate([{ scale: 1 }, { scale: 1.03, offset: 0.35 }, { scale: 1 }], { duration: 260, easing: 'cubic-bezier(.34,1.56,.64,1)' });
-      const sp = document.createElement('i'); sp.className = 'cp-mu-spark'; row.append(sp); setTimeout(() => sp.remove(), 600);
-      for (const m of $$('.cp-tr-m')) m.animate([{ translate: '0 0' }, { translate: '0 -10px', offset: 0.4 }, { translate: '0 0' }], { duration: 360, easing: 'cubic-bezier(.34,1.56,.64,1)' });
-      render(true);
-    });
+    on(b, 'click', () => buyTrain(row.dataset.k, b));
+    on(row, 'click', e => { if (!b.contains(e.target)) openTrain(row.dataset.k); }); // 타일 어디든(값 버튼 빼고) → 상세
   }
+  function openTrain(k) { trOpen = k; trSheet.hidden = false; renderTrain(); $('.cp-trsh-buy').focus({ preventScroll: true }); }
+  function closeTrain() { trSheet.hidden = true; trOpen = null; }
+  on($('.cp-trsh-x'), 'click', closeTrain);
+  on(trSheet, 'click', e => { if (e.target === trSheet) closeTrain(); });
+  on($('.cp-trsh-buy'), 'click', () => buyTrain(trOpen, $('.cp-trsh-buy')));
 
   // ── 출정 ──
   function loadout() { validStart(); return { cls: cur(), startSpells: [...startSpells] }; }
@@ -381,7 +403,7 @@ export function createCamp(root, H = {}) {
 
   function renderTalent() {
     tCls = cur();
-    $('.cp-tcls').innerHTML = `<img src="${portrait(tCls, 120)}" alt=""><div><b>${HERO_CLASSES[tCls].name}의 특성</b><span>레벨은 모든 영웅이 함께 쓰고, 배분은 영웅마다 따로예요</span></div>`;
+    $('.cp-tcls').innerHTML = `<img src="${portrait(tCls, 120)}" alt=""><div><b>${HERO_CLASSES[tCls].name}의 특성</b><span>레벨은 함께, 배분은 영웅마다 따로</span></div>`;
     tree.render(meta.hero, tCls, true);
   }
 
@@ -428,15 +450,16 @@ export function createCamp(root, H = {}) {
     const ml = $('.cp-tr-m'), sl = magePortraitURL(0, tier, 300);
     if (ml.getAttribute('src') !== sl) ml.src = sl;
     $('.cp-tr-bar').style.setProperty('--p', (sum / TRAIN_TOTAL).toFixed(3));
-    txt($('.cp-tr-sum'), `${sum}/${TRAIN_TOTAL}`);
+    const brks = TRAIN_KEYS.reduce((a, k) => a + (meta.trainBreak?.[k] | 0), 0);
+    txt($('.cp-tr-sum'), `${sum}/${TRAIN_TOTAL}${brks ? ` · 돌파 ${brks}` : ''}`);
     for (const row of $$('.cp-tr')) {
       const k = row.dataset.k, lv = trainLv(meta, k), max = trainMax(k), isMax = lv >= max, n = meta.trainBreak?.[k] | 0; // 만렙 뒤 = 수련 돌파(shop.js, 끝없음)
       const cost = isMax ? trainBreakCost(k, n) : trainCost(k, lv);
-      txt(row.querySelector('.cp-mu-lv'), isMax ? `MAX · 돌파 ${n}단` : `Lv.${lv}/${max}`);
+      const now = isMax ? trainBreakText(k, n) : trainDisplay(k, lv), next = isMax ? trainBreakText(k, n + 1) : trainDisplay(k, lv + 1);
+      txt(row.querySelector('.cp-mu-lv'), isMax ? `돌파 ${n}` : `Lv.${lv}/${max}`);
       row.querySelector('.cp-mu-bar').style.setProperty('--p', (lv / max).toFixed(3));
-      row.querySelector('.cp-mu-fx').innerHTML = isMax
-        ? `<span class="fx-chip brk">돌파 ${n ? trainBreakText(k, n) : '없음'}</span><i class="fx-arrow" aria-hidden="true"></i><span class="fx-chip next">${trainBreakText(k, n + 1)}</span>`
-        : `<span class="fx-chip now">${lv ? trainDisplay(k, lv) : '기본'}</span><i class="fx-arrow" aria-hidden="true"></i><span class="fx-chip next">${trainDisplay(k, lv + 1)}</span>`;
+      const fx = fxDiff(now, next).split(' · '); // 둘 다 바뀌는 효과면 한 줄에 하나씩(끝 글자만 넘어가는 줄바꿈 방지)
+      row.querySelector('.cp-tr-fx').innerHTML = `<span>${fx.join(fx.every(x => x.includes('<i>')) ? '<br>' : ' · ')}</span>`;
       const b = row.querySelector('.cp-mu-buy');
       b.classList.toggle('is-poor', g < cost);
       txt(b.querySelector('b'), fmt(cost));
@@ -445,7 +468,28 @@ export function createCamp(root, H = {}) {
       row.classList.toggle('best', k === best);
       row.classList.toggle('maxed', isMax);
       row.classList.toggle('brk', isMax);
+      if (k !== trOpen) continue;
+      // 상세 시트: 설명 · 지금 → 다음(칩) · 같은 값 버튼
+      const t = MAGE_TRAINING.find(x => x.key === k), sb = $('.cp-trsh-buy');
+      txt($('#cp-trsh-h'), t.name);
+      $('.cp-trsh-art').dataset.tone = row.dataset.tone;
+      $('.cp-trsh-art .cp-mu-ico').innerHTML = icon(k);
+      txt($('.cp-trsh-lv b'), isMax ? `MAX · 돌파 ${n}단` : `Lv.${lv} / ${max}`);
+      $('.cp-trsh-lv .cp-mu-bar').style.setProperty('--p', (lv / max).toFixed(3));
+      txt($('.cp-trsh-desc'), t.desc);
+      $('.cp-trsh-fx').innerHTML = `<span class="fx-chip ${isMax ? 'brk' : 'now'}">${isMax ? `돌파 ${n ? now : '없음'}` : lv ? now : '기본'}</span><i class="fx-arrow" aria-hidden="true"></i><span class="fx-chip next">${next}</span>`;
+      $('.cp-trsh').classList.toggle('brk', isMax);
+      sb.classList.toggle('is-poor', g < cost);
+      txt(sb.querySelector('b'), `${fmt(cost)} · ${isMax ? `돌파 ${n + 1}단` : '수련'}`);
+      sb.setAttribute('aria-label', b.getAttribute('aria-label'));
     }
+  }
+  // 지금 → 다음을 한 줄로: 문구 뼈대가 같으면 바뀐 숫자만 '24→27' (시전 +24→27% · 쿨타임 -14→15%)
+  function fxDiff(a, b) {
+    const num = /\d+(?:\.\d+)?/g, na = a.match(num) || [];
+    if (a.replace(num, '#') !== b.replace(num, '#')) return `<b>${b}</b>`;
+    let i = 0;
+    return b.replace(num, m => { const o = na[i++]; return o === m ? m : `${o}<i>→</i><b>${m}</b>`; });
   }
 
   function renderDock(hero, cls) {
@@ -484,11 +528,12 @@ export function createCamp(root, H = {}) {
       setTimeout(() => $('.cp-nt-go').focus({ preventScroll: true }), 50);
     }
   }
-  function hide() { el.hidden = true; notice.hidden = true; closePick(); tree.close(); shop.hide(); }
+  function hide() { el.hidden = true; notice.hidden = true; closePick(); closeTrain(); tree.close(); shop.hide(); }
   function handleBack() {
     if (el.hidden) return false;
     if (!notice.hidden) { closeNotice(false); return true; }
     if (!$('.cp-ov').hidden) { closePick(); return true; }
+    if (!trSheet.hidden) { closeTrain(); return true; }
     if (shop.handleBack()) return true;
     if (tree.handleBack()) return true;
     if (pane !== 'sortie') { setPane('sortie'); return true; }

@@ -14,6 +14,7 @@ import { lockedRelics } from './relics.js'; // 4차 유물: 보석으로 해금�
 import { normHistory, normLifetime, packRecord, BACKUP_RUNS, HISTORY_MAX } from './records.js'; // v0.1.1 도전 기록 · 평생 통계
 import { normSummon, packSummon } from './summon.js'; // v0.1.2 외형 소환(보유·장착·별조각·소환권·천장·내역)
 import { GFX, GFX_KEYS } from './gfx.js'; // 그래픽 품질(발열)
+import { SCREEN_ON_KEYS } from './awake.js'; // 화면 꺼짐 방지
 
 export const STORAGE_KEY = 'wallDefense.save.v1'; // 키는 그대로, 안의 스키마가 v:3
 export const SAVE_VERSION = 3;
@@ -84,6 +85,7 @@ export function normalize(d) {
       // 그래픽 품질(gfx.js): 'auto'(기본 — 옛 저장도) · 'high' · 'mid' · 'low'. gfxAuto = 자동이 배운 단계(''= 아직, 높음부터)
       gfx: GFX_KEYS.includes(s.gfx) ? s.gfx : 'auto',
       gfxAuto: GFX[s.gfxAuto] ? s.gfxAuto : '',
+      screenOn: SCREEN_ON_KEYS.includes(s.screenOn) ? s.screenOn : 'battle', // 화면 꺼짐 방지(awake.js): 옛 저장도 '전투 중'
     },
     hero: hero(d.hero),
     discovered: keys(d.discovered, SYN_KEYS),

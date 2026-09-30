@@ -1,7 +1,8 @@
 // 영웅 특성 트리 UI (DOM) — 정비 화면 '특성' 탭과 영웅 화면 '특성' 탭(도전 중 빠른 배분)이 같이 쓴다.
-// 갈래마다 6단(행) × 노드 격자, 왼쪽 레일이 단 해금(그 갈래 포인트)을 보여 준다. 택1 노드는 '또는'으로 묶고(두 쪽마다 싸우는 방식 분류 알약 + 한 줄 요약, 시트는 다른 쪽 비교 카드) 한쪽을 고르면 다른 쪽이 흐려진다.
-// 궁극 특성은 클래스당 하나(다른 갈래 궁극은 자물쇠) · 핵심 노드 · 혼합 노드(두 갈래 사이) · 추천 다음 노드 · 상세 시트 · 무료 초기화(정비 화면만)
-// 좁은 화면(폰)은 갈래 탭으로 하나씩, 넓은 화면(폴드·태블릿, 컨테이너 600px↑)은 3갈래를 나란히. 재질 kit.css(.k-*), 배치 hero.css(.tt-*)
+// 한눈에 보는 밀도형: 3갈래를 늘 나란히(열) × 6단(행), 왼쪽 축이 단 번호·해금 포인트. 노드는 작은 칩(그림 · 랭크 눈금 · 잠김/택1/핵심/궁극/혼합 모양),
+// 이름·설명은 누르면 뜨는 상세 시트(찍기/빼기, 택1은 다른 쪽 비교 카드). 갈래 머리 = 쓴 포인트 · 다음 단까지 남은 점수(아래 테 진행선).
+// 궁극 특성은 클래스당 하나 · 혼합 노드는 두 갈래 사이 아래 띠(괄호선) · 추천 다음 노드 · 무료 초기화(정비 화면만)
+// 폰 360도 3열이 들어가게 칩 크기는 컨테이너 폭으로(넓으면 이름까지). 재질 kit.css(.k-*), 배치 hero.css(.tt-*)
 import {
   TALENTS, TALENT_HYBRIDS, TALENT_RECOMMEND, TIER_REQ, HYBRID_REQ, talentPoints, talentSpent, talentLeft, talentRank, talentNode,
   talentBlock, refundBlock, branchSpent, branchMax, nextTierNeed, talentCap, recommendNext,
@@ -48,12 +49,11 @@ export function createTalentTree(host, sheetHost, H = {}) {
   el.className = 'tt';
   el.innerHTML = `
     <div class="tt-top">
-      <div class="tt-pts"><span class="tt-pts-l">특성 포인트</span><b class="k-num gold tt-left">0</b><span class="tt-of">/ 0</span></div>
+      <div class="tt-pts"><span class="tt-pts-l">포인트</span><b class="k-num gold tt-left">0</b><span class="tt-of">/ 0</span></div>
       <label class="tt-auto"><button class="k-toggle tt-autobtn" aria-pressed="false" aria-label="자동 배분"></button><span>자동 배분</span></label>
       <button class="k-btn s gray tt-reset">${icon('reroll')}초기화</button>
     </div>
     <p class="tt-hint"></p>
-    <div class="tt-tabs" role="tablist"></div>
     <div class="tt-tree"></div>`;
   host.append(el);
 
@@ -85,67 +85,57 @@ export function createTalentTree(host, sheetHost, H = {}) {
   sheetHost.append(sheet);
 
   const $ = s => el.querySelector(s), $s = s => sheet.querySelector(s);
-  const leftEl = $('.tt-left'), ofEl = $('.tt-of'), hintEl = $('.tt-hint'), treeEl = $('.tt-tree'), tabsEl = $('.tt-tabs');
+  const leftEl = $('.tt-left'), ofEl = $('.tt-of'), hintEl = $('.tt-hint'), treeEl = $('.tt-tree');
   const autoBtn = $('.tt-autobtn'), resetBtn = $('.tt-reset');
   const shBox = $s('.tt-sheet'), cfBox = $s('.tt-confirm'), goBtn = $s('.tt-sh-go'), rfBtn = $s('.tt-sh-rf'), rfWhy = $s('.tt-sh-rfwhy');
   let hero = null, cls = null, sig = '', openKey = null, built = null;
-  const tabOf = {}; // 클래스별 폰 화면 갈래 탭(기억)
 
-  const nodeBtn = (n, bi, cap) => `
+  // 노드 칩: 그림 원판 + 랭크 눈금(아래) · 이름은 넓고 키 큰 화면에서만(아니면 시트에서 · 택1 분류 알약도 시트)
+  const nodeBtn = (n, bi, extra = '') => `
     <button class="tt-node${n.cap ? ' cap' : ''}${n.ks ? ' ks' : ''}${n.hybrid ? ' hyb' : ''}" data-key="${n.key}" style="--i:${bi}">
-      <span class="tt-disc"><span class="tt-ico">${nodeArt(n)}</span><span class="tt-lock">${icon('lock')}</span><span class="tt-plus" aria-hidden="true"></span>${n.ks ? '<em class="tt-kst">핵심</em>' : ''}<em class="tt-rec">추천</em></span>
-      <span class="tt-rank k-num"></span><span class="tt-name">${esc(n.name)}</span>${cap ? '<span class="tt-capnote">궁극은 하나만</span>' : ''}
-      ${n.brief ? `<span class="tt-brief" data-tag="${esc(n.tag)}"><i>${esc(n.tag)}</i>${esc(n.brief)}</span>` : ''}
+      <span class="tt-disc"><span class="tt-ico">${nodeArt(n)}</span><span class="tt-lock">${icon('lock')}</span><span class="tt-plus" aria-hidden="true"></span></span>
+      <span class="tt-pips" aria-hidden="true">${'<i></i>'.repeat(n.max)}</span><em class="tt-rec" aria-hidden="true">추천</em>
+      <span class="tt-name">${esc(n.name)}</span>${extra}
     </button>`;
 
-  // 트리 뼈대는 클래스가 바뀔 때만 다시 만든다(노드 상태만 갱신)
+  // 트리 뼈대는 클래스가 바뀔 때만 다시 만든다(노드 상태만 갱신). 격자 = [단 축] [갈래 ×3] · 아래 혼합 띠(축 + 반칸 6개 → 갈래 가운데끼리 잇는다)
   function build() {
     built = cls;
     const branches = TALENTS[cls] || [];
-    tabsEl.innerHTML = branches.map((b, bi) => `<button class="tt-tab" role="tab" data-b="${bi}" style="--b:${BRANCH_COL[bi]}"><i></i><b>${esc(b.name)}</b><span class="k-num"></span></button>`).join('');
+    const axis = `<div class="tt-axis" aria-hidden="true"><span class="tt-axh">단</span>${TIER_REQ.map((r, t) => `<span class="tt-ax"><b>${t + 1}</b><small>${r || '—'}</small></span>`).join('')}</div>`;
     const branchHtml = (b, bi) => {
       let rows = '';
-      for (let t = 0; t < TIERS; t++) {
-        const ns = b.nodes.filter(n => n.tier === t);
-        if (!ns.length) continue;
+      for (let t = 0; t < TIERS; t++) { // 빈 단도 줄은 남긴다(세 갈래 행 맞춤)
         let cells = '', seen = new Set();
+        const ns = b.nodes.filter(n => n.tier === t);
         for (const n of ns) {
-          if (!n.or) { cells += nodeBtn(n, bi * 14 + t, !!n.cap); continue; }
+          if (!n.or) { cells += nodeBtn(n, bi * 14 + t); continue; }
           if (seen.has(n.or)) continue;
           seen.add(n.or);
           const pair = ns.filter(x => x.or === n.or);
           cells += `<div class="tt-or" data-or="${n.or}">${nodeBtn(pair[0], bi * 14 + t)}<span class="tt-orw" aria-hidden="true">또는</span>${nodeBtn(pair[1], bi * 14 + t)}</div>`;
         }
-        rows += `<div class="tt-tier" data-t="${t}"><div class="tt-rail"><span class="tt-knob k-num">${t + 1}</span><i class="tt-seg"><i></i></i><span class="tt-req">${TIER_REQ[t]}점</span></div><div class="tt-cells">${cells}</div></div>`;
+        rows += `<div class="tt-tier" data-t="${t}">${cells}</div>`;
       }
-      return `<section class="tt-br" style="--b:${BRANCH_COL[bi]}" data-b="${bi}" data-key="${b.key}">
-        <header class="tt-bh"><div class="tt-bh-top"><b>${esc(b.name)}</b><span class="tt-bpts k-num">0</span></div><p>${esc(b.desc)}</p>
-          <div class="tt-next"><i class="tt-nbar"><i></i></i><span class="tt-ntxt"></span></div></header>
+      return `<section class="tt-br" style="--b:${BRANCH_COL[bi]}" data-b="${bi}" data-key="${b.key}" aria-label="${esc(b.name)} 갈래">
+        <header class="tt-bh" title="${esc(b.desc)}"><div class="tt-bh-top"><i class="tt-bdot"></i><b>${esc(b.name)}</b><span class="tt-bpts k-num">0</span></div>
+          <p>${esc(b.desc)}</p><span class="tt-ntxt"></span><i class="tt-nbar"><i></i></i></header>
         <div class="tt-rows">${rows}</div>
       </section>`;
     };
     const hyb = TALENT_HYBRIDS[cls] || [];
+    // 두 혼합의 갈래 구간이 겹치면(0-1 · 0-2) 괄호선 격자는 두 줄이 된다 → .tt-hy2: 키 작은 폰에선 한 줄 칩으로(hero.css)
+    const span = n => n.req.map(k => branches.findIndex(x => x.key === k)).sort();
+    const stack = hyb.some((x, i) => hyb.some((y, j) => i < j && span(x)[0] < span(y)[1] && span(y)[0] < span(x)[1]));
     const hybHtml = hyb.map(n => {
       const [a, b] = n.req.map(k => branches.findIndex(x => x.key === k));
       const lo = Math.min(a, b), hi = Math.max(a, b);
-      return `<div class="tt-hy" style="--ba:${BRANCH_COL[a]};--bb:${BRANCH_COL[b]};--c0:${lo * 2 + 2};--c1:${hi * 2 + 2}" data-req="${a},${b}">
-        ${nodeBtn(n, 40)}<span class="tt-hyreq"><i style="--b:${BRANCH_COL[a]}"></i>${esc(branches[a].name)} ${HYBRID_REQ} + <i style="--b:${BRANCH_COL[b]}"></i>${esc(branches[b].name)} ${HYBRID_REQ}</span></div>`;
+      const req = `<span class="tt-hyreq"><i style="--b:${BRANCH_COL[a]}"></i>${HYBRID_REQ}<i style="--b:${BRANCH_COL[b]}"></i>${HYBRID_REQ}</span>`;
+      return `<div class="tt-hy" style="--ba:${BRANCH_COL[lo]};--bb:${BRANCH_COL[hi]};--c0:${lo * 2 + 3};--c1:${hi * 2 + 3}" data-req="${a},${b}">${nodeBtn(n, 40, req)}</div>`;
     }).join('');
-    treeEl.innerHTML = branches.map(branchHtml).join('') + (hyb.length ? `<div class="tt-hyband"><div class="tt-hyh"><b>혼합 특성</b><span>두 갈래에 각각 ${HYBRID_REQ}점 이상 찍으면 열려요</span></div>${hybHtml}</div>` : '');
+    treeEl.innerHTML = axis + branches.map(branchHtml).join('')
+      + (hyb.length ? `<div class="tt-hyband${stack ? ' tt-hy2' : ''}" title="혼합 특성 — 두 갈래에 각각 ${HYBRID_REQ}점 이상 찍으면 열려요"><span class="tt-hyh" aria-hidden="true">혼합</span>${hybHtml}</div>` : '');
     for (const b of treeEl.querySelectorAll('.tt-node')) b.addEventListener('click', () => openSheet(b.dataset.key));
-    for (const t of tabsEl.children) t.addEventListener('click', () => { tabOf[cls] = +t.dataset.b; showTab(); });
-    if (tabOf[cls] == null) { // 처음엔 가장 많이 찍은 갈래, 없으면 추천 주력 갈래
-      const sp = branches.map(b => branchSpent(hero, cls, b.key)), mx = Math.max(...sp);
-      tabOf[cls] = mx > 0 ? sp.indexOf(mx) : Math.max(0, branches.findIndex(b => b.key === TALENT_RECOMMEND[cls]?.order[0]));
-    }
-    showTab();
-  }
-  function showTab() {
-    const cur = tabOf[cls] | 0;
-    treeEl.dataset.tab = String(cur);
-    for (const t of tabsEl.children) t.setAttribute('aria-selected', String(+t.dataset.b === cur));
-    for (const s of treeEl.querySelectorAll('.tt-br')) s.classList.toggle('on', +s.dataset.b === cur);
-    for (const h of treeEl.querySelectorAll('.tt-hy')) h.classList.toggle('on', h.dataset.req.split(',').includes(String(cur)));
   }
 
   // 노드 상태: max · ranked · avail(찍을 수 있음) · open(열렸지만 포인트 없음) · locked(단/혼합 조건) · alt(택1 다른 쪽) · capLock(궁극은 하나만)
@@ -164,7 +154,7 @@ export function createTalentTree(host, sheetHost, H = {}) {
       btn.dataset.st = st;
     }
     btn.classList.toggle('can', st === 'avail');
-    btn.querySelector('.tt-rank').textContent = `${r}/${n.max}`;
+    btn.querySelectorAll('.tt-pips i').forEach((p, i) => p.classList.toggle('on', i < r));
     const lbl = { locked: ', 잠김', alt: ', 다른 쪽을 골랐어요', capLock: ', 궁극 특성은 하나만' }[st] || '';
     btn.setAttribute('aria-label', `${n.name} ${r}/${n.max}${lbl}`);
     return st;
@@ -187,11 +177,12 @@ export function createTalentTree(host, sheetHost, H = {}) {
     resetBtn.disabled = !talentSpent(hero, cls);
     const rec = left > 0 ? recommendNext(hero, cls) : null;
     const main = TALENTS[cls].find(b => b.key === TALENT_RECOMMEND[cls]?.order[0]);
-    hintEl.innerHTML = left > 0
-      ? `빛나는 특성을 눌러 찍으세요. 단은 <b>그 갈래에 쓴 포인트</b>로 열려요.${H.onRefund && talentSpent(hero, cls) ? ' 찍은 특성은 눌러서 1랭크씩 뺄 수 있어요.' : ''}${main ? ` 추천: <b style="color:${BRANCH_COL[TALENTS[cls].indexOf(main)]}">${esc(main.name)}</b> 마스터` : ''}`
-      : H.onReset ? `레벨이 오르면 포인트가 생겨요.${H.onRefund ? ' 찍은 특성을 눌러 <b>하나씩 뺄</b> 수 있어요.' : ''} 초기화도 무료예요.` : '레벨이 오르면 포인트가 생겨요.';
+    hintEl.innerHTML = left > 0 // 한두 줄로: 무엇을 누르나 · 단 규칙 · 추천 갈래
+      ? `빛나는 칩을 눌러 찍어요 · 단은 <b>그 갈래에 쓴 포인트</b>로 열려요${H.onRefund && talentSpent(hero, cls) ? ' · 찍은 칩은 눌러서 빼기' : ''}${main ? ` · 추천 <b style="color:${BRANCH_COL[TALENTS[cls].indexOf(main)]}">${esc(main.name)}</b> 마스터` : ''}`
+      : H.onReset ? `레벨이 오르면 포인트가 생겨요${H.onRefund ? ' · 찍은 칩을 눌러 <b>하나씩 빼기</b>' : ''} · 초기화 무료` : '레벨이 오르면 포인트가 생겨요 · 칩을 누르면 자세히';
+    const secs = treeEl.querySelectorAll('.tt-br');
     TALENTS[cls].forEach((b, bi) => {
-      const sec = treeEl.children[bi], spent = branchSpent(hero, cls, b.key), max = branchMax(cls, b.key), need = nextTierNeed(hero, cls, b.key);
+      const sec = secs[bi], spent = branchSpent(hero, cls, b.key), max = branchMax(cls, b.key), need = nextTierNeed(hero, cls, b.key);
       for (const n of b.nodes) {
         const btn = sec.querySelector(`[data-key="${n.key}"]`);
         paintNode(btn, n);
@@ -199,21 +190,14 @@ export function createTalentTree(host, sheetHost, H = {}) {
       }
       // 택1: 한쪽을 고르면 묶음이 '결정됨'
       for (const o of sec.querySelectorAll('.tt-or')) o.classList.toggle('picked', [...o.querySelectorAll('.tt-node')].some(x => talentRank(hero, cls, x.dataset.key) > 0));
-      // 단 레일: 열린 단은 불이 들어오고, 다음 단까지의 진행을 채운다
-      for (const row of sec.querySelectorAll('.tt-tier')) {
-        const t = +row.dataset.t, open = spent >= TIER_REQ[t], nextReq = TIER_REQ[t + 1];
-        row.classList.toggle('open', open);
-        row.querySelector('.tt-seg').style.setProperty('--p', nextReq == null ? (open ? 1 : 0) : Math.max(0, Math.min(1, (spent - TIER_REQ[t]) / (nextReq - TIER_REQ[t]))).toFixed(3));
-      }
+      for (const row of sec.querySelectorAll('.tt-tier')) row.classList.toggle('open', spent >= TIER_REQ[+row.dataset.t]); // 안 열린 단은 흐리게
       sec.querySelector('.tt-bpts').textContent = `${spent}/${max}`;
       const nt = sec.querySelector('.tt-ntxt'), cur = TIER_REQ.filter(r => r <= spent).length;
-      nt.innerHTML = need ? `다음 단 해금까지 <b class="k-num">${need}</b>점` : spent >= max ? '갈래 마스터!' : '모든 단 해금';
+      nt.innerHTML = need ? `다음 단 <b class="k-num">+${need}</b>` : spent >= max ? '마스터!' : '모든 단 열림';
+      nt.title = need ? `다음 단 해금까지 ${need}점` : '';
       sec.querySelector('.tt-nbar').style.setProperty('--p', need ? ((spent - TIER_REQ[cur - 1]) / (TIER_REQ[cur] - TIER_REQ[cur - 1])).toFixed(3) : '1');
       sec.classList.toggle('done', spent >= max);
       sec.classList.toggle('capped', !!capKey && !b.nodes.some(n => n.cap === capKey));
-      const tab = tabsEl.children[bi];
-      tab.querySelector('span').textContent = String(spent);
-      tab.classList.toggle('done', spent >= max);
     });
     for (const n of TALENT_HYBRIDS[cls] || []) {
       const btn = treeEl.querySelector(`.tt-hy [data-key="${n.key}"]`);

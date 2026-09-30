@@ -7,6 +7,7 @@ import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.provider.Settings;
+import android.view.WindowManager;
 import androidx.core.content.FileProvider;
 import androidx.core.content.pm.PackageInfoCompat;
 import com.getcapacitor.JSObject;
@@ -185,6 +186,17 @@ public class AppUpdaterPlugin extends Plugin {
             part.delete();
             if (c != null) c.disconnect();
         }
+    }
+
+    // 설정 '화면 꺼짐 방지'(js/awake.js): 창 플래그라 UI 스레드에서
+    @PluginMethod
+    public void keepAwake(PluginCall call) {
+        boolean on = Boolean.TRUE.equals(call.getBoolean("on", false));
+        getActivity().runOnUiThread(() -> {
+            if (on) getActivity().getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            else getActivity().getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            call.resolve();
+        });
     }
 
     @PluginMethod
