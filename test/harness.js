@@ -9,6 +9,7 @@ import { defaults } from '../public/js/save.js';
 import { botShop, shopOffers, affordable } from '../public/js/shop.js';
 import { HERO_CLASS_KEYS, unlockedClasses } from '../public/js/hero.js';
 import { pickRelic, forgetChoice } from '../public/js/relics.js'; // 4차 유물·망각 봇
+import { pickPath } from '../public/js/paths.js'; // v0.1.6 갈림길 봇
 
 // 카드가 뜨면 봇 휴리스틱으로 즉시 선택(시간은 멈춰 있음)
 export function resolvePick(g, collect) {
@@ -25,6 +26,7 @@ export function resolvePick(g, collect) {
 export function playStage(g, maxT = 900, collect = null) {
   for (let t = 0; t < maxT && g.phase === 'play'; t += DT) {
     if (g.relicPick) { act(g, 0, { type: 'relic', index: pickRelic(g) }); continue; } // 유물(보스 보상 · 이어하기 복원)
+    if (g.path.fork) { act(g, 0, { type: 'path', index: pickPath(g) }); continue; } // 갈림길(클리어 때 뜬 것 — 층 시작에서 고르면 효과는 이 층)
     if (g.pick) { resolvePick(g, collect); continue; }
     step(g, DT);
     const ev = drainEvents(g);
@@ -76,7 +78,7 @@ export function playRun(meta, loadout, seed, talents = 'build', opts = {}) {
   if (saved) meta.hero.talents = saved;
   const full = !saved && TALENTS[g.hero.cls].some(b => branchSpent(meta.hero, g.hero.cls, b.key) >= branchMax(g.hero.cls, b.key)); // 특성 완성 = 도전이 끝날 때 한 갈래를 마스터했나
   const d = g.dmgDone, share = d[2] / Math.max(1, d[0] + d[1] + d[2]);
-  return { g, summary: endRun(g, meta), floors, share, skillShare, full, collabs: [...g.collabs], fusions: g.fusions.length, firstFuse, relics: [...g.relics], forgets: g.run.forgets, muts: Object.values(g.mutations || {}) }; // relics·forgets·muts = 4차 유물·망각·변이 지표
+  return { g, summary: endRun(g, meta), floors, share, skillShare, full, collabs: [...g.collabs], fusions: g.fusions.length, firstFuse, relics: [...g.relics], forgets: g.run.forgets, muts: Object.values(g.mutations || {}), paths: [...g.path.taken] }; // relics·forgets·muts = 4차 유물·망각·변이 지표
 }
 
 // 새 저장부터 100층 돌파까지 도전 반복. cls: 고정 클래스(없으면 해금된 클래스 순환)
@@ -90,12 +92,12 @@ export function campaign({ seed = 1, maxRuns = 60, cls = null, onRun = null, unt
     const open = unlockedClasses(meta.best);
     const c = cls || open[i % open.length];
     const lo = botLoadout(meta, c);
-    const { summary, floors, share, skillShare, full, collabs, fusions, firstFuse, relics, forgets, muts } = playRun(meta, lo, seed * 1000 + i);
+    const { summary, floors, share, skillShare, full, collabs, fusions, firstFuse, relics, forgets, muts, paths } = playRun(meta, lo, seed * 1000 + i);
     total += summary.time;
     const row = {
       run: i + 1, cls: lo.cls, start: lo.startSpells, reached: summary.floorsCleared, stage: summary.stageReached,
       prevBest: summary.prevBest, time: summary.time, gems: summary.rewards.gems, gold: summary.rewards.gold, total, floors, heroLv: meta.hero.level,
-      share, skillShare, full, collabs, fusions, firstFuse, relics, forgets, muts, train: TRAIN_KEYS.map(k => meta.training[k]).join('/'),
+      share, skillShare, full, collabs, fusions, firstFuse, relics, forgets, muts, paths, train: TRAIN_KEYS.map(k => meta.training[k]).join('/'),
     };
     if (shop) { // 4차 경제: 정산 직후(소비 전) 통화별로 살 수 있는(효과 있는) 것이 있나 — 목표: '살 게 없는' 방문 0
       const aff = affordable(meta, shopOffers(meta));

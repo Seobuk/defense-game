@@ -554,11 +554,12 @@ function fantasyPick() {
   tickPick(ag, 999); step(ag, 1);
   assert.ok(ag.pick, '자동 진행 ON: 고를 때까지 기다린다');
   // 카드 화면 '자동 선택'(autoPick, 자동 진행과 별개): 켜면 PICK_AUTO_T초 뒤 추천 카드
-  assert.ok(act(ag, 0, { type: 'autoPick', on: true }) && ag.pick.autoLeft === PICK_AUTO_T && PICK_AUTO_T === 2, '선택 중 자동 선택 ON → 2초 카운트다운');
-  tickPick(ag, 1.5);
-  assert.ok(ag.pick, '2초 전엔 그대로');
-  tickPick(ag, 0.6);
-  assert.ok(!ag.pick, '2초 지나면 추천 카드 자동 선택');
+  // v0.1.6 템포: 자동 선택은 추천 카드를 잠깐 보여 주고 바로(PICK_AUTO_T ≤ 0.4초)
+  assert.ok(act(ag, 0, { type: 'autoPick', on: true }) && ag.pick.autoLeft === PICK_AUTO_T && PICK_AUTO_T > 0 && PICK_AUTO_T <= 0.4, '선택 중 자동 선택 ON → 짧은 카운트다운');
+  tickPick(ag, PICK_AUTO_T * 0.7);
+  assert.ok(ag.pick, '카운트다운 전엔 그대로');
+  tickPick(ag, PICK_AUTO_T * 0.4);
+  assert.ok(!ag.pick, '지나면 추천 카드 자동 선택');
   assert.equal(Object.keys(ag.spells).length, 1);
   // 자동 선택 OFF(기본): 카운트다운도 자동 선택도 없이 고를 때까지 기다린다 · 선택 중 토글은 즉시 반영
   const mg = createGame({ stage: 2, players: [{ lv: { atk: 20 } }, {}], seed: 23, run: buff(20, 20) });

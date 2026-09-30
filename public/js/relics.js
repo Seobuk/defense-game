@@ -7,8 +7,9 @@ import { refreshFx, refreshFusion, reofferPick, serializeRun, slotsUsed } from '
 import { toInt } from './util.js';
 
 export const RELIC_PICK_N = 3;   // 보스 보상 후보 수
-export const RELIC_AUTO_T = 4;   // 카드 '자동 선택' ON이면 유물도 이 초 뒤 추천 유물
+export const RELIC_AUTO_T = 0.5; // 카드 '자동 선택' ON이면 유물도 이 초 뒤 추천 유물(v0.1.6 템포: 4초 → 0.5초 — 보스 층 처치→다음 층 2초 안쪽)
 export const FORGET_PER_RUN = 2; // 망각(비우기) 기본 횟수
+export const FORGET_REFUND_MAX = 3; // 망각 환급 상한(다음 스킬 카드 +레벨)
 
 export const RELICS = [
   // ── 시작 풀(8) ──
@@ -187,18 +188,27 @@ export function tickRelic(g, dtReal) {
   if ((rp.autoLeft -= dtReal) <= 0) chooseRelic(g, pickRelic(g, rp.cards));
 }
 
-// 망각(비우기): 카드 선택 중에만. 스킬을 빼고(융합이면 두 재료도 함께) 떠 있는 카드를 지금 빌드로 다시 뽑는다
+// 망각(비우기) — 카드 화면 · 전투 중 스킬 칸(탭 → 비우기) 어디서든. 스킬을 빼고(융합이면 두 재료도 함께)
+// 환급: 비운 레벨의 절반(융합 3)이 다음 스킬 카드에 +레벨로 붙는다(g.forgetBonus → sim cardGain · 스킬 카드를 고르면 0).
+// 카드 화면이면 떠 있는 카드를 지금 빌드로 다시 뽑는다(환급 반영). 카드 한 장 더는 없음 — 봇 A/B에서 도전 수 −15~20%라 뺐다
+export const forgetRefund = (key, level) => (FUSION_BY_KEY[key] ? FORGET_REFUND_MAX : Math.min(FORGET_REFUND_MAX, Math.ceil(level / 2)));
+export const canForget = g => g.forgetLeft > 0 && !g.relicPick && (!!g.pick || g.phase === 'play');
 export function forgetSkill(g, key) {
-  if (!g.pick || !(g.forgetLeft > 0) || !(g.spells[key] > 0)) return false;
-  const level = g.spells[key];
+  if (!canForget(g) || !(g.spells[key] > 0)) return false;
+  const n = Object.keys(g.spells).length;
+  if (!g.pick && n < 3 && n < slotCap(g)) return false; // 전투 중 칸에서: 스킬 3개 이상이거나 칸이 찼을 때만(relicui.tipHTML과 같은 규칙 — 책을 비우지 않게)
+  const level = g.spells[key], refund = forgetRefund(key, level), pick = g.pick;
   delete g.spells[key];
   if (g.mutations) delete g.mutations[key]; // 변이 기록(MUTATIONS 트랙)
   g.forgetLeft--;
   g.run.forgets++;
+  g.forgetBonus = (g.forgetBonus | 0) + refund;
   refreshFusion(g);
-  emit(g, { type: 'forget', spell: key, level, fusion: !!FUSION_BY_KEY[key] });
-  reofferPick(g, g.pick);
-  if (g.pick) g.pick.autoLeft = picker(g) ? PICK_AUTO_T : null; // 새 카드 = 카운트다운도 처음부터(새로고침과 같게)
+  emit(g, { type: 'forget', spell: key, level, fusion: !!FUSION_BY_KEY[key], refund });
+  if (pick) {
+    reofferPick(g, pick);
+    if (g.pick) g.pick.autoLeft = picker(g) ? PICK_AUTO_T : null; // 새 카드 = 카운트다운도 처음부터(새로고침과 같게)
+  }
   return true;
 }
 
@@ -232,7 +242,7 @@ export function relicRevive(g) {
 
 // ── 저장 ──
 export function relicRunSave(g) {
-  return { relics: [...g.relics], relicPick: g.relicPick ? [...g.relicPick.cards] : null, forgetLeft: g.forgetLeft, forgets: g.run.forgets, relicRevives: g.run.relicRevives, relicCards: g.run.relicCards | 0 };
+  return { relics: [...g.relics], relicPick: g.relicPick ? [...g.relicPick.cards] : null, forgetLeft: g.forgetLeft, forgets: g.run.forgets, forgetBonus: g.forgetBonus | 0, relicRevives: g.run.relicRevives, relicCards: g.run.relicCards | 0 };
 }
 // 신뢰할 수 없는 런 저장값 → 모양 검증(throw 없음). forgetLeft null = 새 도전(createGame이 채움)
 export function normalizeRelicRun(r) {
@@ -241,12 +251,13 @@ export function normalizeRelicRun(r) {
   return {
     relics, relicPick: rp.length ? rp : null,
     forgetLeft: r.forgetLeft == null ? null : toInt(r.forgetLeft, 0, 99),
-    forgets: toInt(r.forgets, 0, 99), relicRevives: toInt(r.relicRevives, 0, 9), relicCards: toInt(r.relicCards, 0, 1e4),
+    forgets: toInt(r.forgets, 0, 99), forgetBonus: toInt(r.forgetBonus, 0, 9), relicRevives: toInt(r.relicRevives, 0, 9), relicCards: toInt(r.relicCards, 0, 1e4),
   };
 }
 // createGame: 런 저장(normalizeRun 결과)에서 유물 상태를 세운다(g.fx가 계산된 뒤, startStage 전)
 export function initRelics(g, run, opts) {
   g.forgetLeft = run.forgetLeft ?? FORGET_PER_RUN + (g.fx.forgets | 0) + toInt(opts.bonusForgets, 0, 9);
+  g.forgetBonus = run.forgetBonus | 0; // 망각 환급(다음 스킬 카드 +레벨)
   g.relicPick = run.relicPick ? { cards: run.relicPick, autoLeft: picker(g) ? RELIC_AUTO_T : null } : null;
   if (g.relicPick) emit(g, { type: 'relicOffer', cards: g.relicPick.cards });
 }
@@ -262,15 +273,19 @@ export function pickRelic(g, cards = g.relicPick?.cards || []) {
   cards.forEach((k, i) => { if (score(k) > score(cards[best])) best = i; });
   return best;
 }
-// 망각을 쓸 만한가(헤드리스 봇): 칸이 다 찼고 이번 카드로 합체가 안 되며, 어떤 짝(융합 재료)에도 들지 않고 협공도 켜지 않는
-// 낮은 레벨(≤3) 기본 스킬이 있으면 그것을 비워 짝이 될 새 스킬을 노린다(8층부터). 없으면 null
-export function forgetChoice(g) {
+// 망각을 쓸 만한가(헤드리스 봇): 카드가 떠 있고 이번 카드로 합체가 안 되면 forgetHint(6층부터). 없으면 null
+export function forgetChoice(g, minStage = 6) {
   const p = g.pick;
-  if (!p || p.starter || !(g.forgetLeft > 0) || g.rfx.noNew || g.stage < 8 || slotsUsed(g) < slotCap(g)) return null;
-  if (p.cards.some(c => c.fusionHint)) return null;
+  if (!p || p.starter || p.cards.some(c => c.fusionHint)) return null;
+  return forgetHint(g, minStage);
+}
+// 비울 만한 스킬(봇 · UI 추천 공용 — g 대신 뷰도 된다): 칸이 다 찼고, 어떤 짝(융합 재료)에도 들지 않고 협공도 켜지 않는
+// 낮은 레벨(≤4) 기본 스킬 — 비우면 환급 +레벨로 짝이 될 새 스킬을 노린다. 가장 낮은 레벨부터
+export function forgetHint(g, minStage = 3) {
+  if (!(g.forgetLeft > 0) || g.rfx?.noNew || g.stage < minStage || slotsUsed(g) < slotCap(g)) return null;
   const inPair = k => FUSIONS.some(f => !g.spells[f.key] && f.test(g.spells) && f.groups.some(gr => gr.includes(k)));
-  const collab = k => COLLABS.some(c => g.collabs.includes(c.key) && c.spells.includes(k));
-  const c = Object.keys(g.spells).filter(k => !FUSION_BY_KEY[k] && g.spells[k] <= 3 && !inPair(k) && !collab(k))
+  const collab = k => COLLABS.some(c => (g.collabs || []).includes(c.key) && c.spells.includes(k));
+  const c = Object.keys(g.spells).filter(k => !FUSION_BY_KEY[k] && g.spells[k] <= 4 && !inPair(k) && !collab(k))
     .sort((a, b) => g.spells[a] - g.spells[b]);
   return c[0] || null;
 }

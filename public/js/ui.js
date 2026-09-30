@@ -40,7 +40,8 @@ const MILESTONE_BY_KEY = Object.fromEntries(MILESTONES.map(m => [m.key, m]));
 const AWAKEN_ICON = { power: 'atk', haste: 'rate', ward: 'wall', fortune: 'coin' };
 const AWAKEN_STAT = { power: 'atk', haste: 'rate', ward: 'wall', fortune: 'gold' }; // AWAKENINGS 의 수치 필드
 const GEM_ROWS = [['floor', '층 클리어', 'wall'], ['first', '첫 돌파', 'new'], ['boss', '네임드 보스', 'trophy'], ['flawless', '무결점', 'check'], ['best', '신기록 보너스', 'crit']];
-const CLEAR_SHOW_MS = 3200;
+const CLEAR_SHOW_MS = 3200;      // 100층(도전 끝) 클리어 패널 — 곧 결과 화면
+const CLEAR_QUICK_MS = 700, CLEAR_BOSS_MS = 1000; // v0.1.6 템포: 자동 진행이면 클리어는 짧은 도장(탭하면 바로 다음 층) — 보스 층만 한 박자 더
 const DEFEAT_HOLD_MS = 1600;      // 패배 도장을 보여 주는 최소 시간 → 결과 화면
 const BERSERK_WARN = 15;         // 광폭화(sim.js BERSERK_T) 15초 전부터 카운트다운
 const WIDE_SIDE = 120;            // 전장 옆 여백(px)이 이 이상이면 옆 열을 여백으로 뺀다(폴더블 펼침·태블릿·데스크톱)
@@ -141,7 +142,7 @@ const collabNames = c => {
   -- 전투 --
   onToggleAutoNext(on)             '자동 진행' 하나 = 다음 층 자동 · 영웅 궁극기 자동, 카드는 늘 직접(act {type:'auto', on} + settings.autoNext).
                                    카드 선택 중에도 누를 수 있다(하단 패널에서 이 토글만 살아 있음)
-  onToggleAutoPick(on)             카드 화면의 '자동 선택'(자동 진행과 별개, 기본 OFF) → act {type:'autoPick', on} + settings.autoPick.
+  onToggleAutoPick(on)             하단 패널 '자동 선택'(자동 진행과 별개, 기본 OFF — v0.1.6 카드 화면에서 옮김) → act {type:'autoPick', on} + settings.autoPick.
                                    설정 화면의 같은 스위치는 onSettings({ autoPick })로 온다
   onSkill(skill) · onSpeed() · onNext() · onPick(index) · onReroll() · onHeroUlt()
   -- 설정 --
@@ -163,10 +164,10 @@ export function createUI(root, handlers = {}) {
     'link-chip', 'link-bar', 'collab-h', 'collab-list', 'flinks',
     'toasts', 'clear', 'clear-stage', 'clear-gems', 'clear-gold', 'clear-xp', 'clear-drops', 'badge-flawless', 'badge-first', 'btn-next',
     'defeat', 'defeat-stage', 'defeat-icon',
-    'pick', 'pick-h', 'pick-sub', 'pick-ring', 'pick-ring-fg', 'pick-ring-n', 'pick-cards', 'pick-reroll', 'pick-reroll-n', 'pick-auto',
+    'pick', 'pick-h', 'pick-sub', 'pick-ring', 'pick-ring-fg', 'pick-ring-n', 'pick-cards', 'pick-reroll', 'pick-reroll-n',
     'btn-hero', 'hb-portrait', 'hb-lv', 'hb-pow', 'hb-new', 'hb-tal',
     'sk-heroult', 'heroult-ico', 'heroult-name',
-    'controls', 'btn-speed', 'speed-text', 'speed-lock', 'btn-autonext',
+    'controls', 'btn-speed', 'speed-text', 'speed-lock', 'btn-autonext', 'btn-autopick',
     'btn-start', 'start-sub', 'title-ver', 'codex-count', 'codex-fill', 'codex-list', 'codex-list-fusion', 'codex-list-collab', 'ctab-hidden', 'ctab-fusion', 'ctab-collab',
     'set-ver', 'btn-check-update', 'btn-reset', 'reset-confirm', 'btn-reset-yes', 'btn-reset-no', 'btn-backup', 'btn-restore',
     'bk-lead', 'bk-code', 'btn-bk-copy', 'rs-step1', 'rs-step2', 'rs-code', 'rs-err', 'btn-rs-check', 'rs-sum', 'btn-rs-back', 'btn-rs-yes',
@@ -221,7 +222,7 @@ export function createUI(root, handlers = {}) {
     spellTipTimer = setTimeout(hideSpellTip, ms);
   }
   dg = createDungeonUI({ stage, hudLeft: $('hud-left'), showTip }); // 던전
-  on(stage, 'pointerdown', e => { if (!e.target.closest('.ss, .cb, .hero-card, .pc-spark, .st-chip')) hideSpellTip(); });
+  on(stage, 'pointerdown', e => { if (!e.target.closest('.ss, .cb, .hero-card, .pc-spark, .st-chip, .tip-forget')) hideSpellTip(); });
 
   // ── 모달 스택 ──
   const stack = []; // { el, prev, onClose }
@@ -258,9 +259,9 @@ export function createUI(root, handlers = {}) {
     const modal = stack.length > 0, cover = !E.title.hidden || camp.isOpen();
     E['stage-wrap'].inert = modal || cover;
     E.panel.inert = modal || cover;
-    // 카드 선택 중엔 하단 패널을 잠그되(sim도 거부) '자동 진행'만 살려 둔다 — 고르는 도중에 켜고 끌 수 있게
+    // 카드 선택 중엔 하단 패널을 잠그되(sim도 거부) '자동 진행'·'자동 선택'(.tog-stack)만 살려 둔다 — 고르는 도중에 켜고 끌 수 있게
     const picking = pickOpen || !!rel?.isOpen(); // 유물 3택도 카드처럼 전투 정지
-    for (const c of E.controls.children) if (c !== E['btn-autonext']) c.inert = picking;
+    for (const c of E.controls.children) if (!c.classList.contains('tog-stack')) c.inert = picking;
     E.panel.classList.toggle('dim', picking);
     E.title.inert = modal;
     camp.el.inert = modal;
@@ -310,6 +311,14 @@ export function createUI(root, handlers = {}) {
     attr(E['btn-autonext'], 'aria-pressed', String(next));
     H.onToggleAutoNext?.(next);
     if (view && !camp.isOpen()) toast(next ? '자동 진행 켜짐 — 다음 층·궁극기·운석·빙결 자동' : '자동 진행 꺼짐 — 다음 층·궁극기·운석·빙결은 직접', next ? 'auto' : 'hero');
+  });
+  // v0.1.6 '자동 선택'(자동 진행과 별개, 기본 OFF, 저장됨): 카드 화면에서 하단 패널로 — 켜면 카드·유물이 추천 카드로 후다닥(PICK_AUTO_T)
+  on(E['btn-autopick'], 'click', () => {
+    const next = !meta.settings?.autoPick;
+    meta = { ...meta, settings: { ...meta.settings, autoPick: next } }; // 다음 update 전에도 바로 반영
+    attr(E['btn-autopick'], 'aria-pressed', String(next));
+    H.onToggleAutoPick?.(next);
+    if (view && !camp.isOpen() && !pickOpen) toast(next ? '자동 선택 켜짐 — 카드·유물을 추천대로 바로 골라요' : '자동 선택 꺼짐 — 카드는 직접 골라요', next ? 'auto' : 'hero');
   });
   // 4차 배속 해금: 열린 단계만 돈다. 끝(최고 열린 단계)에서 누르면 다음 잠긴 단계를 알려 준다
   on(E['btn-speed'], 'click', () => {
@@ -481,7 +490,8 @@ export function createUI(root, handlers = {}) {
       + road
       + dg.tip(view, k) // 던전: 이 지역 약점·내성
       + mutTipHTML(k, lv, view?.mutations?.[k]) // 변이
-      + (lv < SPELL_MAX_LV ? `<small>다음 Lv.${lv + 1}: ${esc(d.desc[lv] || '')}</small>` : '<small>최대 레벨 MAX</small>'), 4600);
+      + (lv < SPELL_MAX_LV ? `<small>다음 Lv.${lv + 1}: ${esc(d.desc[lv] || '')}</small>` : '<small>최대 레벨 MAX</small>')
+      + rel.tipHTML(k), rel.tipHTML(k) ? 9000 : 4600); // 망각: 전투 중 칸에서 바로 '비우기'(relicui) — 버튼이 있으면 오래(카드가 뜨면 openPick이 닫는다)
   });
   function paintSlot(s, key, lv) {
     const prevKey = s.key, prevLv = s.level;
@@ -850,14 +860,6 @@ export function createUI(root, handlers = {}) {
   const mutSheet = createMutSheet(E.pick, (i, c) => { if (pickOpen && !pickClosing) H.onPick?.(i, c); }, k => skillArt(k)); // 4차 FIX: 좁은 화면 변이 A/B 시트
   let pickOpen = false, pickClosing = false, pickResolveTimer = 0, pickRef = null, pickWaitRef = null, pickWaitT = 0, pickRec = -1;
   on(E['pick-reroll'], 'click', () => { if (pickOpen && !pickClosing) H.onReroll?.(); });
-  // 카드 화면의 '자동 선택'(자동 진행과 별개, 기본 OFF, 저장됨): 켜면 추천 카드 테두리가 차오르고 PICK_AUTO_T초 뒤 자동 선택
-  on(E['pick-auto'], 'click', () => {
-    if (!pickOpen || pickClosing) return;
-    const next = !meta.settings?.autoPick;
-    meta = { ...meta, settings: { ...meta.settings, autoPick: next } }; // 다음 update 전에도 바로 반영
-    attr(E['pick-auto'], 'aria-checked', String(next));
-    H.onToggleAutoPick?.(next);
-  });
   function syncReroll(n) {
     const show = pickOpen && !pickClosing && n > 0;
     if (E['pick-reroll'].hidden === show) E['pick-reroll'].hidden = !show;
@@ -892,7 +894,8 @@ export function createUI(root, handlers = {}) {
     const used = Object.keys(view?.spells || {}).length, cap = view ? slotCap(view) : SPELL_SLOTS, full = used >= cap; // 유물 왕관이면 5칸
     // 1층 처치 0에서 뜨는 (무료 카드 아닌) 카드 = 영웅 Lv30 보너스 카드 — 마나를 모으기 전이라 '마나 폭주'가 아니다
     const gift = !pick.starter && view?.stage === 1 && !(view?.progress?.killed > 0);
-    txt(E.pick.querySelector('.pick-ribbon'), pick.starter ? '출정의 축복!' : gift ? '영웅의 선물!' : full ? `스킬 칸 ${used}/${cap}` : '마나 폭주!');
+    const road = !pick.starter && view?.stage > 1 && !(view?.progress?.killed > 0); // v0.1.6 갈림길 보상 카드(층 시작 처치 0 — 다른 카드는 마나로만)
+    txt(E.pick.querySelector('.pick-ribbon'), pick.starter ? '출정의 축복!' : gift ? '영웅의 선물!' : road ? '갈림길 보상!' : full ? `스킬 칸 ${used}/${cap}` : '마나 폭주!');
     txt(E['pick-h'], pick.starter ? '첫 마법을 고르세요' : gift ? '영웅 Lv30 보너스 카드' : full ? '스킬을 강화하세요' : '스킬을 고르세요');
     E['pick-cards'].classList.toggle('four', n === 4); // 4장 = 2×2, 5장 = 3 + 2
     E['pick-cards'].classList.toggle('five', n >= 5);
@@ -933,7 +936,7 @@ export function createUI(root, handlers = {}) {
       const up = from > 0 ? upgradeHTML(card.spell, card.level, from, narrowPick ? 2 : 3) : ''; // 강화: '마력 240% → 310%' 수치 줄(+ Lv6 완전체·변이 해금) — 좁은 화면 4~5장이면 2줄
       if (up) { c.desc._t = undefined; html(c.desc, up); c.desc.classList.add('pu'); } else { c.desc._h = undefined; txt(c.desc, dsc); }
       c.desc.classList.toggle('long', !up && dsc.length > 30); // 고정 칸에 맞춰 한 단계 작게
-      txt(c.rar, ({ common: '일반', rare: '희귀', legend: '전설' }[card.rarity] || '일반') + (card.catchUp ? ' · 따라잡기 +1' : '')); // 20층 뒤 Lv3 미만 = 한 장에 +1레벨 더
+      txt(c.rar, ({ common: '일반', rare: '희귀', legend: '전설' }[card.rarity] || '일반') + (card.catchUp ? ' · 따라잡기 +1' : '') + (card.refund ? ` · 망각 +${card.refund}` : '')); // 20층 뒤 Lv3 미만 = 한 장에 +1레벨 더
       c.tag.hidden = false;
       if (from > 0) { c.tag.className = fu ? 'pc-tag up fu' : 'pc-tag up'; txt(c.tag, `${fu ? '융합 ' : ''}Lv${from} → ${card.level >= SPELL_MAX_LV ? 'MAX' : card.level}`); }
       else { c.tag.className = 'pc-tag'; txt(c.tag, card.level > 1 ? `NEW Lv${card.level}` : 'NEW'); }
@@ -951,7 +954,9 @@ export function createUI(root, handlers = {}) {
     pickCardEls.forEach((c, i) => c.b.classList.toggle('rec', i === pickRec));
     pickMode = '';
     void E['pick-cards'].offsetWidth; // 등장 애니메이션 재시작(rar-legend 후광 포함)
-    pickCardEls.forEach((c, i) => { if (i < n) setTimeout(() => c.b.classList.add('in'), 90 * i); });
+    const quick = pick.autoLeft != null; // v0.1.6 자동 선택: 카드를 한 장씩 돌리지 않고 한꺼번에 — 추천 카드만 번쩍
+    E.pick.classList.toggle('quick', quick);
+    pickCardEls.forEach((c, i) => { if (i < n) { if (quick) c.b.classList.add('in'); else setTimeout(() => c.b.classList.add('in'), 90 * i); } });
     syncPickRing(pick);
     E.pick.hidden = false;
     fitPickDescs(n);
@@ -998,7 +1003,6 @@ export function createUI(root, handlers = {}) {
       pickMode = mode;
       E['pick-ring'].hidden = !has;
       E.pick.classList.toggle('manual', !has);
-      attr(E['pick-auto'], 'aria-checked', String(has));
       const ico = E['pick-sub'].querySelector('.ps-ico');
       ico.hidden = has;
       if (!ico.firstChild) ico.innerHTML = PAUSE_ICON;
@@ -1025,7 +1029,7 @@ export function createUI(root, handlers = {}) {
     }
     if (chosen && ev.mutate) chosen.desc.querySelector(`[data-m="${ev.mutate}"]`)?.classList.add('chosen'); // 고른 갈래
     clearTimeout(pickResolveTimer);
-    pickResolveTimer = setTimeout(hidePick, 380);
+    pickResolveTimer = setTimeout(hidePick, E.pick.classList.contains('quick') ? 160 : 380); // 자동 선택은 고른 카드만 톡 하고 바로 전투로
   }
   function hidePick() {
     E.pick.hidden = true;
@@ -1133,6 +1137,7 @@ export function createUI(root, handlers = {}) {
   on(E['btn-ab-yes'], 'click', () => { closeModal('m-abandon'); H.onAbandonRun?.(); });
 
   // ── 클리어 · 패배 도장 (보스 경고 배너는 render.js 캔버스 몫) ──
+  let clearBoss = false; // 보스 층 클리어(격파 연출이 먼저 — 도장도 한 박자 길게)
   let clearTimer = 0, clearWait = false, clearDelay = 0, clearDueAt = 0, bossKillAt = -1e9, defeatAt = -1e9, clearAt = -1e9;
   let runStage = -1, runGold = 0;
   const runDrops = [];
@@ -1157,12 +1162,14 @@ export function createUI(root, handlers = {}) {
     E['badge-flawless'].hidden = !r.flawless;
     E['badge-first'].hidden = !r.firstClear;
     clearWait = !meta.autoNext && !v.run?.over; // 100층 돌파(도전 끝)면 다음 층 버튼 없음 — 곧 결과 화면
+    const quick = !clearWait && !v.run?.over; // v0.1.6 자동 진행: 짧은 도장(연출 압축 · 탭하면 바로 다음 층)
     E['btn-next'].hidden = !clearWait;
+    E.clear.classList.toggle('quick', quick);
     E.clear.hidden = true;
     void E.clear.offsetWidth; // 별 애니메이션 재시작
     E.clear.hidden = false;
     if (clearWait) E['btn-next'].focus({ preventScroll: true });
-    else clearTimer = setTimeout(hideClear, CLEAR_SHOW_MS);
+    else clearTimer = setTimeout(hideClear, !quick ? CLEAR_SHOW_MS : clearBoss ? CLEAR_BOSS_MS : CLEAR_QUICK_MS);
   }
   function hideClear() {
     clearTimeout(clearTimer);
@@ -1170,6 +1177,7 @@ export function createUI(root, handlers = {}) {
     clearWait = false;
   }
   on(E['btn-next'], 'click', () => { hideClear(); H.onNext?.(); });
+  on(E.clear, 'click', () => { if (E.clear.classList.contains('quick') && !clearWait) { hideClear(); H.onNext?.(); } }); // 짧은 도장은 탭하면 건너뛴다
   // 클리어 화면이 떠 있는 동안 자동 진행을 바꾸면 '다음 층' 버튼도 바로 따라간다
   function syncClearWait(v) {
     if (v.phase !== 'clear' || v.run?.over) return;
@@ -1181,8 +1189,9 @@ export function createUI(root, handlers = {}) {
     if (wait === clearWait) return;
     clearWait = wait;
     E['btn-next'].hidden = !wait;
+    E.clear.classList.toggle('quick', !wait); // 탭해서 건너뛰기는 자동 진행일 때만
     clearTimeout(clearTimer);
-    if (!wait) clearTimer = setTimeout(hideClear, 1200);
+    if (!wait) clearTimer = setTimeout(hideClear, 400);
   }
 
   function showDefeat(stage) {
@@ -1646,6 +1655,7 @@ export function createUI(root, handlers = {}) {
     updateSkill(skills[0], me.cd.meteor, v.phase);
     updateSkill(skills[1], me.cd.freeze, v.phase);
     attr(E['btn-autonext'], 'aria-pressed', String(!!meta.autoNext));
+    attr(E['btn-autopick'], 'aria-pressed', String(!!meta.settings?.autoPick));
     syncClearWait(v);
     txt(E['speed-text'], v.speed + 'x');
     const cap = meta.speedCap || 1, lockTxt = cap < SPEEDS.length ? `${cap + 1}x` : ''; // 다음 잠긴 단계(없으면 숨김)
@@ -1672,13 +1682,14 @@ export function createUI(root, handlers = {}) {
     rel.onEvents(events, v); // 유물 획득·발동·망각 알림
     for (const ev of events) {
       switch (ev.type) {
-        case 'clear': { // 보스를 쓰러뜨린 판은 격파 연출이 먼저 보이고 1.2초 뒤 클리어
+        case 'clear': { // 보스를 쓰러뜨린 판은 격파 연출이 먼저 보이고 0.6초 뒤 클리어(v0.1.6 템포: 1.2초 · 보통 0.35 → 0.12초)
           clearTimeout(clearDelay);
-          const boss = performance.now() - bossKillAt < 1500;
-          clearDueAt = performance.now() + (boss ? 1200 : 350);
-          clearDelay = setTimeout(() => { if (v.phase === 'clear') showClear(v); }, boss ? 1200 : 350);
+          const boss = clearBoss = v.stage % 10 === 0 && performance.now() - bossKillAt < 1500; // 네임드 보스 층만(stages.bossOf) — 엘리트가 마지막이면 보통 층 템포
+          clearDueAt = performance.now() + (boss ? 600 : 120);
+          clearDelay = setTimeout(() => { if (v.phase === 'clear') showClear(v); }, boss ? 600 : 120);
           break;
         }
+        case 'relicPick': if (!clearWait && !view?.run?.over) hideClear(); break; // 유물을 고르면 뒤에 숨어 있던 클리어 도장도 걷는다(바로 다음 층)
         case 'kill':
           if (ev.isBoss) bossKillAt = performance.now();
           if (v.stage !== runStage) { runStage = v.stage; runGold = 0; runDrops.length = 0; }
@@ -1725,7 +1736,7 @@ export function createUI(root, handlers = {}) {
 
   // 전투를 멈춰야 하는 동안 true(모달 · 클리어/패배 연출 · 카드 선택 · 정비 화면)
   function isBusy() {
-    return stack.length > 0 || !E.defeat.hidden || !E.clear.hidden || pickOpen || rel.isOpen() || camp.isOpen();
+    return stack.length > 0 || !E.defeat.hidden || !E.clear.hidden || pickOpen || rel.isOpen() || rel.forgetOpen() || camp.isOpen(); // 망각 시트(칸에서 열면 전투 정지)
   }
 
   // 안드로이드 뒤로가기: 처리했으면 true. 카드 선택·유물 3택은 삼킨다(선택을 피할 수 없게). 이어하기 창은 false(두 번 눌러 종료)

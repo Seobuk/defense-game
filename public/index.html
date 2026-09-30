@@ -20,6 +20,7 @@
 <link rel="stylesheet" href="css/records.css">
 <link rel="stylesheet" href="css/gemstore.css"> <!-- v0.1.2 보석 충전(결제 미연결, gemstoreui.js) -->
 <link rel="stylesheet" href="css/summon.css"> <!-- v0.1.2 외형 소환 · 옷장 (summonui.js · wardrobeui.js) -->
+<link rel="stylesheet" href="css/paths.css"> <!-- v0.1.6 갈림길 (pathui.js) -->
 <!-- iPhone/웹 PWA (docs/pwa-head.html). Capacitor APK에선 js/pwa.js가 스스로 비활성 -->
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="mobile-web-app-capable" content="yes">
@@ -142,15 +143,13 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><path d="M21 3v6h-6z" fill="currentColor"/></svg>
             새로고침 <b id="pick-reroll-n" class="num">1</b>
           </button>
-          <!-- 자동 선택(자동 진행과 별개, 기본 OFF): 켜면 추천 카드 테두리가 차오르고 2초 뒤 자동 선택 -->
-          <button id="pick-auto" class="pick-auto" type="button" role="switch" aria-checked="false"><span class="pa-sw" aria-hidden="true"></span>자동 선택</button>
         </div>
       </div>
     </div>
   </div>
 
   <!-- 하단 조작 패널: 비상 마법 · 영웅 궁극기 | 배속 · 자동 진행 (강화는 정비 화면 '마법사 수련').
-       자동 진행 하나가 영웅 궁극기 자동 사용 · 다음 층 자동 시작을 함께 켜고 끈다(카드는 늘 직접 — 카드 화면의 '자동 선택'은 별개) -->
+       자동 진행 하나가 영웅 궁극기 자동 사용 · 다음 층 자동 시작을 함께 켜고 끈다. '자동 선택'(카드·유물 추천대로 바로)은 별개 — v0.1.6 카드 화면에서 여기로, 둘을 한 칸에 위아래로 -->
   <div id="panel">
     <div id="controls">
       <button id="sk-meteor" class="skill meteor" aria-label="운석 낙하"><span class="sk-sweep"></span><span class="sk-ico" aria-hidden="true"><img class="k-ico" src="assets/icons/meteor.svg" alt=""></span><span class="sk-cd num"></span><span class="sk-name">운석</span></button>
@@ -158,7 +157,10 @@
       <button id="sk-heroult" class="skill heroult" aria-label="영웅 궁극기" hidden><span class="sk-sweep"></span><span id="heroult-ico" class="sk-ico" aria-hidden="true"></span><span class="sk-cd num"></span><span id="heroult-name" class="sk-name"></span></button>
       <span class="ctl-gap"></span>
       <button id="btn-speed" class="spd" aria-label="게임 속도"><b id="speed-text" class="num">1x</b><span id="speed-lock" class="lock">3x <img class="k-ico" style="--ico:11px" src="assets/icons/lock.svg" alt=""></span></button>
-      <button id="btn-autonext" class="tog" aria-pressed="false" aria-label="자동 진행: 영웅 궁극기·운석·빙결 자동 사용 · 다음 층 자동 시작"><span class="tog-label">자동 진행</span><span class="tog-sw"></span></button>
+      <div class="tog-stack">
+        <button id="btn-autonext" class="tog" aria-pressed="false" aria-label="자동 진행: 영웅 궁극기·운석·빙결 자동 사용 · 다음 층 자동 시작"><span class="tog-label">자동 진행</span><span class="tog-sw"></span></button>
+        <button id="btn-autopick" class="tog pick" aria-pressed="false" aria-label="자동 선택: 카드·유물을 추천대로 바로 고름"><span class="tog-label">자동 선택</span><span class="tog-sw"></span></button>
+      </div>
     </div>
   </div>
 

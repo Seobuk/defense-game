@@ -227,6 +227,18 @@ body { font-synthesis: none; }
 .cr-drop img { width: 78%; height: 78%; object-fit: contain; }
 .cr-drop[data-r="epic"], .cr-drop[data-r="legend"] { box-shadow: inset 0 2px 0 rgba(255, 255, 255, .5), 0 0 12px var(--rc); }
 .cr-more { align-self: center; color: #fff; font-size: 16px; -webkit-text-stroke: 3px var(--ink); paint-order: stroke fill; }
+/* v0.1.6 템포: 자동 진행 클리어 = 짧은 도장(ui.js CLEAR_QUICK_MS) — 같은 연출을 0.4초 안에 압축, 탭하면 바로 다음 층 */
+#clear.quick { pointer-events: auto; cursor: pointer; animation-duration: .15s; }
+#clear.quick .clear-title { animation-duration: .32s; }
+#clear.quick .clear-stage { animation: fadeUp .22s .04s both; }
+#clear.quick .star { animation: fadeIn .12s both; }
+#clear.quick .star.on { animation: starPop .32s var(--spring) both; }
+#clear.quick .star.on:nth-child(1) { animation-delay: .04s; }
+#clear.quick .star.on:nth-child(2) { animation-delay: .1s; }
+#clear.quick .star.on:nth-child(3) { animation-delay: .16s; }
+#clear.quick .clear-rewards { animation: fadeUp .22s .12s both; }
+#clear.quick .cr-drop { animation-delay: calc(.2s + var(--i) * .03s); }
+#clear.quick .badges { animation: fadeUp .22s .18s both; }
 .badges { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; animation: fadeUp .4s 1.25s both; }
 .badges .k-badge { height: auto; min-height: 26px; padding: 5px 12px; gap: 5px; font-family: var(--font-display); font-size: 13px; }
 .badges .k-badge.flawless { background: linear-gradient(180deg, #7fe7ff, #1f8fe8); border-color: #0e4f8f; box-shadow: 0 0 16px rgba(120, 220, 255, .7); animation: throb .6s ease-in-out infinite alternate; }
@@ -345,18 +357,13 @@ body { font-synthesis: none; }
 .pick-reroll b { display: grid; place-items: center; min-width: 22px; height: 22px; padding: 0 5px; border-radius: 999px; background: #ff3a5a; box-shadow: 0 0 0 2px #0b3070; font-size: 13px; -webkit-text-stroke: 0; }
 .pick-reroll:active { transform: translateY(3px) scale(.95); box-shadow: 0 1px 0 #1c3f8f, inset 0 2px 0 rgba(255, 255, 255, .5); }
 .pick-reroll:active svg { rotate: -120deg; transition: rotate .2s var(--spring); }
-/* 카드 아래 줄: 새로고침 + '자동 선택' 토글(자동 진행과 별개, 기본 OFF) */
+/* 카드 아래 줄: 새로고침(+ 비우기). '자동 선택' 토글은 v0.1.6 하단 패널(.tog-stack)로 옮김 */
 .pick-foot { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 10px 14px; animation: fadeUp .35s .35s both; }
 .pick-foot .pick-reroll { animation: none; }
-.pick-auto { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 14px 0 9px; border: 0; border-radius: 999px; cursor: pointer; touch-action: manipulation;
-  background: rgba(10, 6, 30, .62); box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, .2); color: #cfc8ee;
-  font-family: var(--font-display); font-size: max(12px, calc(var(--u) * 20)); white-space: nowrap; transition: color .2s, box-shadow .2s; }
-.pa-sw { position: relative; flex: none; width: 36px; height: 22px; border-radius: 999px; background: #3a3470; box-shadow: 0 0 0 2px var(--ink), inset 0 2px 4px rgba(0, 0, 0, .45); transition: background .2s; }
-.pa-sw::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 2px 0 #9a94b8; transition: transform .25s var(--spring); }
-.pick-auto[aria-checked="true"] { color: #fff3c4; box-shadow: inset 0 0 0 1.5px rgba(255, 228, 90, .6); }
-.pick-auto[aria-checked="true"] .pa-sw { background: linear-gradient(180deg, #ffe45a, #f0a020); }
-.pick-auto[aria-checked="true"] .pa-sw::after { transform: translateX(14px); }
-.pick-auto:active { transform: scale(.95); }
+/* v0.1.6 자동 선택: 카드를 한 장씩 돌리지 않고 한꺼번에 톡 — 추천 카드 테두리만 0.3초 차오르고 바로 전투로 */
+.pick-ov.quick .pick-card { transition: box-shadow .2s, opacity .08s, transform .16s ease-out; }
+.pick-ov.quick .pick-head { animation-duration: .18s; }
+.pick-ov.quick .pick-foot { animation: none; }
 /* 자동 선택 ON: 추천 카드 테두리가 금빛으로 차오른다(sim autoLeft) */
 .pick-card > .pc-rec { position: absolute; inset: 0; z-index: 4; width: 100%; height: 100%; pointer-events: none; opacity: 0; transition: opacity .2s; }
 .pc-rec rect { fill: none; stroke: #ffe45a; stroke-width: 5px; vector-effect: non-scaling-stroke; stroke-linecap: round; stroke-dasharray: 100; stroke-dashoffset: 100;
@@ -418,10 +425,11 @@ body { font-synthesis: none; }
   background: repeating-linear-gradient(90deg, transparent 0 18px, #ffd97a 18px 22px, transparent 22px 40px);
 }
 #panel > *, #controls > * { transition: filter .25s; }
-#panel.dim::before, #panel.dim #controls > :not(#btn-autonext) { filter: brightness(.5) saturate(.6); }
-/* 카드 선택 중에도 살아 있는 유일한 버튼 = 자동 진행 */
-#panel.dim #btn-autonext { box-shadow: 0 3px 0 #1d1a40, inset 0 1.5px 0 rgba(255, 255, 255, .25), 0 0 0 2px #fff3a8, 0 0 16px 3px rgba(255, 228, 120, .55); }
-#panel.dim #btn-autonext[aria-pressed="true"] { box-shadow: 0 3px 0 #1a5e2c, inset 0 1.5px 0 rgba(255, 255, 255, .4), 0 0 0 2px #fff3a8, 0 0 16px 3px rgba(90, 255, 130, .55); }
+#panel.dim::before, #panel.dim #controls > :not(.tog-stack) { filter: brightness(.5) saturate(.6); }
+/* 카드 선택 중에도 살아 있는 버튼 = 자동 진행 · 자동 선택(.tog-stack) */
+#panel.dim .tog-stack .tog { box-shadow: 0 2px 0 #1d1a40, inset 0 1.5px 0 rgba(255, 255, 255, .25), 0 0 0 2px #fff3a8, 0 0 12px 2px rgba(255, 228, 120, .5); }
+#panel.dim .tog-stack .tog[aria-pressed="true"] { box-shadow: 0 2px 0 #1a5e2c, inset 0 1.5px 0 rgba(255, 255, 255, .4), 0 0 0 2px #fff3a8, 0 0 12px 2px rgba(90, 255, 130, .5); }
+#panel.dim .tog-stack .tog.pick[aria-pressed="true"] { box-shadow: 0 2px 0 #8a5200, inset 0 1.5px 0 rgba(255, 255, 255, .5), 0 0 0 2px #fff3a8, 0 0 12px 2px rgba(255, 200, 60, .6); }
 #controls { display: flex; align-items: center; gap: 8px; }
 .ctl-gap { flex: 1 1 0; min-width: 0; }
 .skill {
@@ -472,6 +480,22 @@ body { font-synthesis: none; }
 .tog[aria-pressed="true"] { background: linear-gradient(180deg, #7cf08a 0 50%, #2c9c48 54%); color: #fff; box-shadow: 0 3px 0 #1a5e2c, inset 0 1.5px 0 rgba(255, 255, 255, .4), 0 0 14px rgba(90, 255, 130, .35); }
 .tog[aria-pressed="true"] .tog-sw { background: #16582a; }
 .tog[aria-pressed="true"] .tog-sw::after { transform: translateX(18px); background: #fff; }
+/* v0.1.6 자동 진행 · 자동 선택 = 한 칸에 위아래 두 줄(좁은 폰 한 줄 패널 폭 그대로) */
+.tog-stack { flex: none; display: flex; flex-direction: column; gap: 4px; width: 82px; height: 52px; }
+.tog-stack .tog { flex: 1 1 0; min-width: 0; min-height: 0; height: auto; padding: 0 6px 0 8px; border-radius: 10px; flex-direction: row; justify-content: space-between; gap: 4px;
+  font-size: 11px; box-shadow: 0 2px 0 #1d1a40, inset 0 1.5px 0 rgba(255, 255, 255, .25); }
+.tog-stack .tog[aria-pressed="true"] { box-shadow: 0 2px 0 #1a5e2c, inset 0 1.5px 0 rgba(255, 255, 255, .4), 0 0 10px rgba(90, 255, 130, .3); }
+.tog-stack .tog-sw { flex: none; width: 24px; height: 12px; }
+.tog-stack .tog-sw::after { top: 2px; left: 2px; width: 8px; height: 8px; }
+.tog-stack .tog[aria-pressed="true"] .tog-sw::after { transform: translateX(12px); }
+.tog-stack .tog:active { transform: translateY(1px) scale(.96); }
+/* 손가락 판정 넓히기(보이는 알약은 그대로): 가운데 틈은 반씩, 바깥쪽은 더 크게 → 두 줄 각각 ~34px */
+.tog-stack .tog { position: relative; }
+.tog-stack .tog::before { content: ''; position: absolute; inset: -4px -8px; } /* 기준 = 패딩 상자(테두리 2px 안쪽) → -4 = 테두리 밖 2px(틈 4px의 반) */
+.tog-stack .tog:first-child::before { top: -12px; }
+.tog-stack .tog:last-child::before { bottom: -12px; }
+.tog.pick[aria-pressed="true"] { background: linear-gradient(180deg, #ffe45a 0 50%, #f0a020 54%); color: #fff; box-shadow: 0 2px 0 #8a5200, inset 0 1.5px 0 rgba(255, 255, 255, .5), 0 0 10px rgba(255, 200, 60, .35); }
+.tog.pick[aria-pressed="true"] .tog-sw { background: #8a5200; }
 
 .spd {
   flex: none; width: 54px; height: 52px; padding: 0; border: 2px solid var(--ink); border-radius: 14px;
@@ -494,7 +518,7 @@ body { font-synthesis: none; }
   .tog { min-width: 64px; padding: 4px 5px; font-size: 11px; }
   .spd { width: 48px; }
 }
-@media (max-width: 350px) { .tog { min-width: 56px; font-size: 10px; } .skill { width: 48px; height: 48px; } }
+@media (max-width: 350px) { .tog { min-width: 56px; font-size: 10px; } .skill { width: 48px; height: 48px; } .tog-stack { width: 74px; } .tog-stack .tog { font-size: 10px; padding: 0 4px 0 6px; } }
 
 /* ── 모달 배경(어둡게 깔고 중앙 정렬) — 상자 재질은 kit.css .k-modal/.k-ribbon/.k-close/.k-sheet ── */
 .modal {
@@ -831,7 +855,8 @@ body { font-synthesis: none; }
   .skill { width: 48px; height: 48px; }
   .sk-ico { top: 5px; } .sk-ico .k-ico { --ico: 22px; }
   .sk-name { bottom: 4px; font-size: 9.5px; }
-  .tog, .spd { height: 46px; }
+  .tog, .spd, .tog-stack { height: 46px; }
+  .tog-stack .tog { height: auto; }
 }
 
 /* ═══════════ 로그라이트 HUD (마나 · 상태 칩 · 광폭화) ═══════════ */

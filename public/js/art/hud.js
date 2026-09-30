@@ -110,10 +110,12 @@ function domBusy() {
 // 새 층: 층 숫자가 쿵 찍히고 룬 띠가 양옆으로 펼쳐진다. 테마가 바뀌는 층(21·41…)은 테마 이름 리본이 크게
 const FLOOR = { t: 9, stage: 0, theme: 0, newTheme: false };
 let lastFloor = 0;
+// v0.1.6 템포: 보통 층은 0.95초(전투가 곧바로 시작 — 전장을 오래 가리지 않게), 지역이 바뀌는 층·1층만 1.6초(테마 리본)
+const floorLife = () => (FLOOR.newTheme || FLOOR.stage === 1 ? 1.6 : 0.95);
 function drawFloor() {
-  const t = FLOOR.t;
-  if (t > 1.6 || moment) return;
-  const a = t < 0.12 ? t / 0.12 : t > 1.25 ? Math.max(0, (1.6 - t) / 0.35) : 1, y = midY() - 40;
+  const t = FLOOR.t, L = floorLife();
+  if (t > L || moment) return;
+  const a = t < 0.12 ? t / 0.12 : t > L - 0.3 ? Math.max(0, (L - t) / 0.3) : 1, y = midY() - 40;
   const k = t < 0.28 ? easeBack(t / 0.28) : 1, open = easeOut(Math.min(1, t / 0.45));
   numZone('floor', 360, y + 20, 480, 170);
   additive(true);
@@ -141,7 +143,7 @@ function drawFloor() {
 }
 
 // 실시간(RT) 연출이 아직 움직이는가 — main.js 는 멈춘 전투(카드·메뉴)에서도 이게 끝날 때까지 그린 뒤 캔버스를 멈춘다
-export const live = () => FLOOR.t <= 1.6 || !!moment || (quietA > 0 && quietA < 1) || STAMPS.some(s => s.life > 0) || POPS.some(p => p.life > 0);
+export const live = () => FLOOR.t <= floorLife() || !!moment || (quietA > 0 && quietA < 1) || STAMPS.some(s => s.life > 0) || POPS.some(p => p.life > 0);
 
 export function drawHud(view) {
   ht();

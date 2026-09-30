@@ -256,7 +256,7 @@ export const EARLY_FLOORS = 5, EARLY_MARKS = [0.3, 0.7]; // 1~5층은 처치 30%
 export const START_CARDS = 1;                 // 도전 시작(1층) 무료 카드
 export const SPELL_SLOTS = 6;                 // 스킬 슬롯
 export const SPELL_MAX_LV = 6;
-export const PICK_AUTO_T = 2;                 // 카드 화면 '자동 선택' ON일 때 추천 카드 자동 선택까지(초). OFF(기본)면 고를 때까지 기다린다
+export const PICK_AUTO_T = 0.3;               // '자동 선택' ON일 때 추천 카드 자동 선택까지(실시간 초) — 추천 카드가 번쩍하고 바로 넘어간다(v0.1.6 템포: 2초 → 0.3초). OFF(기본)면 고를 때까지 기다린다
 export const RARITY_WEIGHT = { common: 60, rare: 32, legend: 8 };
 
 // 각성 카드: 더 강화할 것도 새로 넣을 것도 없을 때만 나오는 소폭 스탯 카드. 런 동안 누적

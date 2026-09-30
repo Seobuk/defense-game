@@ -2,6 +2,8 @@
 // 솔로: 성벽 위 마법사는 나 한 명(players[1]은 협동 모드 자리 — 잠들어 있다)
 import { startStage, step, act, drainEvents, tickPick, refreshFusion, reofferPick } from './sim.js';
 import { tickRelic } from './relics.js'; // 4차 유물: 카드 '자동 선택' ON이면 유물도 자동
+import { tickPath } from './paths.js'; // v0.1.6 갈림길(층 사이 세 갈래)
+import { createPathUI } from './pathui.js';
 import { DT, speedCap, nextSpeed, SPEED_UNLOCK, SPELL_KEYS, SPELL_MAX_LV, SYNERGIES, WALL_Y, WORLD_W, MAX_STAGE } from './config.js';
 import { MAX_HERO_LV, RARITY_KEYS, rollItem, addToBag } from './hero.js';
 import { newRun, restoreRun, endRun, applyOffline, campAct, buyMeta } from './run.js';
@@ -20,7 +22,7 @@ import { createAwake, wantAwake } from './awake.js'; // 설정 '화면 꺼짐 �
 
 const HITSTOP_CAP = 500;          // ms
 const HITSTOP_SCALE = [1, 0.75, 0.5]; // 배속별 히트스톱 축소
-const NEXT_DELAY = 3900;          // 클리어 후 자동 진행까지(ms) — 보상 패널을 볼 최소 시간
+const NEXT_DELAY = 800;           // 클리어 후 자동 진행까지(ms). v0.1.6 템포: 3.9초 → 0.8초 — 실제 문은 ui.js 클리어 도장(보통 0.12+0.7초 · 보스 0.6+1.0초, 탭하면 바로)이 걷힐 때(isBusy)
 const SAVE_EVERY = 3000;
 const MAX_STEPS = 8;              // 한 프레임 최대 시뮬 스텝(넘는 시간은 버림): 느린 폰의 3배속이 '느린 프레임 → 더 많은 스텝 → 더 느린 프레임'으로
                                   // 달아오르지 않게 — 3배속은 22fps 까지(절전 30fps = 6스텝) 제 속도, 그보다 느리면 조금 느리게 돈다(전투 규칙은 그대로)
@@ -214,6 +216,9 @@ function onAbandonRun() {
   else { data.run = null; persist(true); showCamp(); }
 }
 
+// v0.1.6 갈림길 화면: 끝자리 3·7층 클리어 → 세 갈래(고르기 전엔 다음 층 없음 · 전투 정지)
+const pathUI = createPathUI({ onChoose: i => inRun() && act(game, 0, { type: 'path', index: i }) });
+
 // 정산은 도전이 끝난 '즉시' + 바로 기록: 결과 화면 중에 앱을 꺼도 죽은 층이 이어하기로 살아나지 않게.
 // endRun 뒤엔 game.run.checkpoint 를 data.run 에 다시 쓰지 않는다(syncData 가 run.ended 를 본다)
 function finishRun(g) {
@@ -230,7 +235,7 @@ function finishRun(g) {
 
 // 층 시작마다 체크포인트 저장(startStage 가 game.run.checkpoint 를 새로 만든다)
 function nextStage() {
-  if (!inRun() || game.run.over || game.phase !== 'clear' || game.relicPick) return; // 유물을 고르기 전엔 다음 층 없음
+  if (!inRun() || game.run.over || game.phase !== 'clear' || game.relicPick || game.path.fork) return; // 유물을 고르기 전엔 다음 층 없음
   startStage(game, game.stage + 1);
   acc = 0;
   heldPicks.length = 0;
@@ -266,11 +271,11 @@ function setAuto(on) {
   on = !!on;
   data.settings.autoNext = on;
   if (inRun()) act(game, 0, { type: 'auto', on });
-  nextAt = performance.now() + (inRun() && game.phase === 'clear' ? 1200 : NEXT_DELAY); // 클리어 화면에서 켜면 곧 다음 층
+  nextAt = performance.now() + (inRun() && game.phase === 'clear' ? 400 : NEXT_DELAY); // 클리어 화면에서 켜면 곧 다음 층
   persist();
 }
 
-// 카드 화면 '자동 선택'(자동 진행과 별개, 기본 OFF): 선택 중이면 sim이 카운트다운을 바로 켜고 끈다
+// 하단 패널 '자동 선택'(자동 진행과 별개, 기본 OFF — v0.1.6 카드 화면에서 옮김): 선택 중이면 sim이 카운트다운을 바로 켜고 끈다
 function setAutoPick(on) {
   data.settings.autoPick = !!on;
   if (inRun()) act(game, 0, { type: 'autoPick', on: !!on });
@@ -412,9 +417,11 @@ function handleEvents(events, now) {
       case 'spellPick': audio.play('pickConfirm', ev.rarity); break;
       // 4차 유물·망각: 고른 즉시 저장(체크포인트가 유물을 품는다) · 고른 뒤 다음 층까지 잠깐 여유
       case 'relicOffer': audio.play('pickShow'); break;
+      case 'pathPick': audio.play('pickConfirm', 'rare'); nextAt = Math.max(nextAt, now + 380); persist(true); break; // v0.1.6 갈림길: 고른 칸이 빛나는 동안만 기다림
+      case 'pathProc': ui.toast('정예 층 돌파! 다음 층 시작에 스킬 카드 2장', 'check'); break; // v0.1.6 갈림길 정예 보상
       case 'relicPick':
-        audio.play(ev.key ? 'synergy' : 'pickConfirm', 'legend'); nextAt = Math.max(nextAt, now + 1500); persist(true);
-        if (speedUnlockDue) { const n = speedUnlockDue; speedUnlockDue = 0; setTimeout(() => ui.speedUnlocked(n), 900); } // 미뤄 둔 배속 해금 연출
+        audio.play(ev.key ? 'synergy' : 'pickConfirm', 'legend'); nextAt = Math.max(nextAt, now + 400); persist(true); // v0.1.6 템포: 1.5 → 0.4초(유물 화면 닫힘 0.45초가 문)
+        if (speedUnlockDue) { const n = speedUnlockDue; speedUnlockDue = 0; setTimeout(() => ui.speedUnlocked(n), 500); } // 미뤄 둔 배속 해금 연출(전투를 막지 않는 알림)
         break;
       case 'relicProc': audio.play(ev.key === 'phoenix' ? 'synergy' : 'crit'); break;
       case 'forget': audio.play('upgrade'); break;
@@ -441,7 +448,7 @@ function handleEvents(events, now) {
         data.best = Math.max(data.best, game.stage); // 3배속 해금용(신기록 보석은 endRun이 도전 시작 기록 기준으로 계산)
         if (speedCap(data.best) > speedCap(prev)) { // 4차: '2배속 해금!' — 10·30층은 유물 층이라 유물을 고른 뒤에(유물 화면에 묻히지 않게)
           if (game.relicPick) speedUnlockDue = speedCap(data.best);
-          else setTimeout(() => ui.speedUnlocked(speedCap(data.best)), 1600);
+          else setTimeout(() => ui.speedUnlocked(speedCap(data.best)), 700);
         }
         nextAt = now + NEXT_DELAY;
         updSnooze = false;
@@ -668,6 +675,7 @@ function frame(now) {
 
   if (!game) { // 타이틀 · 정비 화면 · (전장 없는) 결과 화면
     ui.update(null, meta);
+    pathUI.update(null, now);
     heroUI.update(data.hero, campCtx());
     maybeShowUpdate();
     maybeApplyPwa();
@@ -679,8 +687,9 @@ function frame(now) {
   const picking = !!game.pick;
   if (picking && !heroUI.isOpen() && ui.isPickShown()) tickPick(game, wallDt);
   if (game.relicPick && !heroUI.isOpen() && ui.isRelicShown()) tickRelic(game, wallDt); // 유물 3택(자동 선택 ON일 때만 카운트다운)
+  if (game.path.fork && !heroUI.isOpen() && pathUI.isShown()) tickPath(game, wallDt); // v0.1.6 갈림길(자동 선택 ON이면 추천 길)
   // 모달(메뉴·영웅 화면·결과 등)이 열리면 일시정지
-  const paused = picking || !!game.relicPick || ui.isBusy() || heroUI.isOpen();
+  const paused = picking || !!game.relicPick || pathUI.isOpen() || (!!game.path.fork && game.phase === 'play') || ui.isBusy() || heroUI.isOpen();
   const holding = now < stopUntil;
   if (mode === 'run' && !game.run.over) { // 도전 기록: 실제 플레이 초(배속 전) — 메뉴·영웅 화면·백그라운드(rAF 멈춤)는 빼고, 카드 고르는 시간은 넣는다
     const lg = game.run.log;
@@ -690,7 +699,9 @@ function frame(now) {
   }
   if (dbgLoot && game.hero?.cls && game.phase === 'play' && !paused) { dropLoot(dbgLoot); dbgLoot = null; }
   if (!paused && !holding) {
-    acc += dt * game.speed * simSlow();
+    // v0.1.6 템포: 층 시작의 빈 전장(첫 묶음까지 게임 1초)은 최소 3배속으로 — sim 일정·밸런스는 그대로, 보여 주는 시간만 줄인다
+    const lead = game.phase === 'play' && game.spawnIdx === 0 && !game.enemies.length ? Math.max(game.speed, 3) : game.speed;
+    acc += dt * lead * simSlow();
     let n = 0;
     while (acc >= DT && n < MAX_STEPS) { step(game, DT); acc -= DT; n++; }
     if (n >= MAX_STEPS) acc = 0;
@@ -721,6 +732,7 @@ function frame(now) {
   if (out.coins > 0) audio.play('coin');
   ui.onEvents(events, g);
   ui.update(g, meta);
+  pathUI.update(g, now); // v0.1.6 갈림길
   heroUI.update(g.hero, mode === 'run' ? runCtx() : campCtx());
   if (pendingResult) { // 패배 도장(ui.onEvents)이 뜬 다음에: 결과 화면은 도장을 보여 준 뒤 스스로 이어서 뜬다
     ui.showResult(pendingResult.sum, pendingResult.g);
@@ -734,7 +746,7 @@ function frame(now) {
 
   if (now >= saveAt) { saveAt = now + SAVE_EVERY; persist(); }
   if (!still) return 0;
-  return inRun() && (game.pick?.autoLeft != null || game.relicPick?.autoLeft != null) ? 33 : STILL_MS; // 자동 선택 고리가 차오르는 동안은 30Hz
+  return inRun() && (game.pick?.autoLeft != null || game.relicPick?.autoLeft != null || game.path.fork?.autoLeft != null) ? 33 : STILL_MS; // 자동 선택 고리가 차오르는 동안은 30Hz
 }
 
 // ── 부팅 ──

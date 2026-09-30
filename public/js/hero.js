@@ -19,7 +19,7 @@ export const HERO_CLASSES = {
     name: '궁수', role: '원거리 속사 — 관통 화살', weapon: '활',
     base: { hp: 150, atk: 9, range: 400, atkSpd: 2.6, moveSpd: 115 },
     passive: '화살이 최대 2마리를 관통하고, 맞은 적을 살짝 밀어낸다',
-    pierce: 2, push: 20, melee: false, dps: 0.95,
+    pierce: 2, push: 20, melee: false, dps: 1.0, // v0.1.6: 0.95 → 1.0 (갈림길로 최고 50층 메타가 조금 일러져 영웅 레벨이 낮은 시점 — 궁수 동등성 −13%(HEAD)~−22%가 ±15% 경계라)
     ult: { name: '화살비', cd: 20, dur: 2.2, r: 170 },
     ultDesc: '전방 넓은 범위에 화살비',
     unlock: () => true,

@@ -1,0 +1,60 @@
+/* 갈림길 화면 (js/pathui.js) — kit.css 토큰 · style.css 키프레임(fadeIn · dropIn)을 쓴다. 360px에서 세 칸 한 줄 */
+.path-ov { z-index: 6; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: max(14px, calc(var(--u) * 26)); pointer-events: auto; overflow: hidden;
+  padding: 20px max(12px, calc(var(--u) * 24));
+  background: radial-gradient(ellipse at 50% 108%, rgba(90, 200, 255, .24), transparent 46%), radial-gradient(ellipse at 50% 36%, rgba(96, 64, 190, .5), rgba(8, 6, 22, .94) 74%), rgba(8, 6, 22, .62); }
+.path-ov[hidden] { display: none; }
+.path-ov.in { animation: fadeIn .18s; }
+.pa-road { position: absolute; left: 50%; bottom: 0; width: min(92%, 520px); height: 62%; transform: translateX(-50%); pointer-events: none; opacity: .55;
+  -webkit-mask: linear-gradient(0deg, #000 30%, transparent); mask: linear-gradient(0deg, #000 30%, transparent); }
+.pa-road path { fill: none; stroke: rgba(255, 236, 170, .35); stroke-width: 14; stroke-linecap: round; stroke-dasharray: 2 22; vector-effect: non-scaling-stroke; }
+
+.pa-head { position: relative; display: flex; flex-direction: column; align-items: center; gap: 5px; animation: dropIn .3s var(--ease-back); }
+.pa-ribbon { padding: 3px 16px 5px; border-radius: 999px; font-family: var(--font-display); font-size: max(12px, calc(var(--u) * 20)); color: #fff;
+  background: linear-gradient(180deg, #8fe4ff 0 50%, #2f8fd8 54%); box-shadow: 0 0 0 2px var(--ink), 0 3px 0 #164a80, 0 0 16px rgba(90, 200, 255, .6);
+  -webkit-text-stroke: 3px #0f3560; paint-order: stroke fill; }
+.pa-head h2 { margin: 0; font-family: var(--font-display); font-weight: 400; font-size: max(20px, calc(var(--u) * 36)); color: #fff; text-align: center;
+  -webkit-text-stroke: 4px var(--ink); paint-order: stroke fill; text-shadow: 0 3px 0 var(--ink), 0 0 20px rgba(140, 200, 255, .5); }
+.pa-sub { margin: 0; padding: 3px 12px 4px; border-radius: 999px; background: rgba(10, 6, 30, .62); box-shadow: inset 0 0 0 1.5px rgba(140, 210, 255, .35);
+  font-family: var(--font-body); font-weight: 700; font-size: max(11.5px, calc(var(--u) * 19)); color: #e6ecff; }
+
+/* 세 칸 한 줄: 메달 · 이름 · ▲ 보상 · ▼ 대가 */
+.pa-cards { position: relative; display: grid; grid-template-columns: repeat(var(--n, 3), minmax(0, 1fr)); gap: max(8px, calc(var(--u) * 14)); width: 100%; max-width: 560px; }
+.pa-card { --pc: #7b6cff; position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; min-height: 196px; padding: 12px 7px 11px; border: 0; border-radius: 18px;
+  cursor: pointer; text-align: center; color: #fff; touch-action: manipulation; isolation: isolate; overflow: hidden;
+  background: radial-gradient(130% 70% at 50% 0%, color-mix(in srgb, var(--pc) 52%, transparent), transparent 70%), linear-gradient(180deg, var(--night-700), var(--night-900));
+  box-shadow: 0 0 0 3px var(--ink), 0 0 0 5px color-mix(in srgb, var(--pc) 75%, #fff 10%), 0 0 16px color-mix(in srgb, var(--pc) 45%, transparent), 0 6px 0 rgba(0, 0, 0, .4), 0 12px 22px rgba(0, 0, 0, .5);
+  opacity: 0; transform: translateY(18px) scale(.94); animation: paIn .28s var(--ease-back) forwards; animation-delay: calc(.04s + var(--i) * .06s);
+  transition: transform .16s var(--ease-back), box-shadow .2s, opacity .18s; }
+.pa-card:active { transform: scale(.95); }
+.pa-card:focus-visible { outline: 3px solid #fff; outline-offset: 4px; }
+@keyframes paIn { to { opacity: 1; transform: none; } }
+.pa-medal { position: relative; display: grid; place-items: center; width: 54px; height: 54px; margin-bottom: 2px; }
+.pa-medal::before { content: ""; position: absolute; inset: -6px; border-radius: 50%; background: radial-gradient(circle, color-mix(in srgb, var(--pc) 75%, #fff 15%), transparent 68%); opacity: .8; }
+.pa-medal .k-ico { --ico: 44px; position: relative; filter: drop-shadow(0 3px 0 rgba(10, 6, 24, .55)); }
+.pa-name { font-family: var(--font-display); font-weight: 400; font-size: 16px; line-height: 1.1; color: #fff4d6; -webkit-text-stroke: 3px var(--ink); paint-order: stroke fill;
+  text-shadow: 0 2px 0 var(--ink); word-break: keep-all; }
+.pa-line { display: flex; align-items: flex-start; gap: 4px; width: 100%; padding: 4px 6px 5px 4px; border-radius: 9px; text-align: left;
+  font-family: var(--font-body); font-weight: 700; font-size: 12px; line-height: 1.25; word-break: keep-all; }
+.pa-line i { flex: none; display: grid; place-items: center; width: 15px; height: 15px; margin-top: 1px; border-radius: 50%; font-style: normal; font-size: 9px; color: #fff; box-shadow: 0 0 0 1.5px var(--ink); }
+.pa-line.up { background: rgba(40, 170, 80, .22); color: #d8ffd8; box-shadow: inset 0 0 0 1px rgba(79, 224, 106, .35); }
+.pa-line.up i { background: var(--ok-lo); }
+.pa-line.down { margin-top: auto; background: rgba(200, 30, 50, .22); color: #ffd6da; box-shadow: inset 0 0 0 1px rgba(255, 77, 94, .35); }
+.pa-line.down i { background: var(--bad-lo); }
+.pa-card.safe .pa-line.down { background: rgba(255, 255, 255, .08); color: #c9d6ee; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .18); }
+.pa-card.safe .pa-line.down i { background: #5a6488; }
+.pa-rec { position: absolute; top: 7px; right: 7px; padding: 1px 7px 2px; border-radius: 999px; font-style: normal; font-family: var(--font-display); font-size: 11px; color: #3a2400;
+  background: linear-gradient(180deg, #fff3a8, #ffc93a); box-shadow: 0 0 0 1.5px var(--ink); }
+.pa-card.rec { box-shadow: 0 0 0 3px var(--ink), 0 0 0 5.5px #fff3a8, 0 0 24px rgba(255, 228, 90, .8), 0 6px 0 rgba(0, 0, 0, .4); }
+.pa-card.chosen { transform: scale(1.06); box-shadow: 0 0 0 3px var(--ink), 0 0 0 6px #fff, 0 0 34px 8px color-mix(in srgb, var(--pc) 80%, #fff), 0 6px 0 rgba(0, 0, 0, .4); }
+.pa-card.chosen .pa-medal .k-ico { animation: paGot .34s var(--ease-back) forwards; }
+@keyframes paGot { 50% { transform: scale(1.3) rotate(-8deg); filter: brightness(1.8); } 100% { transform: scale(1.12); } }
+.pa-card.faded { opacity: 0 !important; transform: translateY(14px) scale(.92) !important; transition: opacity .2s, transform .2s; }
+@media (max-width: 380px) { .pa-card { min-height: 184px; padding: 10px 5px 9px; } .pa-name { font-size: 15px; } .pa-line { font-size: 11.5px; padding: 3px 4px 4px 3px; } }
+@media (prefers-reduced-motion: reduce) { .pa-card, .pa-head { animation-duration: .01s; animation-delay: 0s; } }
+
+/* HUD 칩: 저주(보라) · 정예(빨강) */
+.st-chip.pa-chip { gap: 3px; padding: 0 9px 0 4px; }
+.st-chip.pa-chip[hidden] { display: none; }
+.st-chip.pa-chip[data-k="curse"] { background: linear-gradient(180deg, #c58cff 0 50%, #7a2fd0 54%); box-shadow: 0 2px 0 #3d1470, 0 0 10px rgba(179, 92, 255, .55); -webkit-text-stroke-color: #2a0c50; }
+.st-chip.pa-chip[data-k="next"] { background: linear-gradient(180deg, #7fe6ff 0 50%, #2a9fd0 54%); box-shadow: 0 2px 0 #0e4a66; -webkit-text-stroke-color: #0a3246; } /* 정복한 층: 첫 갈림길 안내 */
+.st-chip.pa-chip[data-k="elite"] { background: linear-gradient(180deg, #ff9a8a 0 50%, #d8332f 54%); box-shadow: 0 2px 0 #6e1210, 0 0 10px rgba(255, 90, 90, .6); -webkit-text-stroke-color: #4a0808; }

@@ -2,14 +2,14 @@
 // 유물 표 · 보스 보상 흐름(전투 정지·체크포인트·이어하기 복원·건너뛰기·자동 선택) · 유물 20종 효과 훅 · 망각 한도 · 해금 API · 봇 정책
 import assert from 'node:assert/strict';
 import { DT, WALL_Y, SKILLS, SPELL_SLOTS, SPELL_MAX_LV, SKILL_BY_KEY } from '../public/js/config.js';
-import { createGame, step, act, drainEvents, startStage, serializeRun, cardCount, reofferPick, refreshFusion, slotsUsed } from '../public/js/sim.js';
+import { createGame, step, act, drainEvents, startStage, serializeRun, cardCount, reofferPick, refreshFusion, slotsUsed, tickPick } from '../public/js/sim.js';
 import { spellCooldown } from '../public/js/spells.js';
 import { newHero } from '../public/js/hero.js';
 import { newRun, restoreRun, endRun } from '../public/js/run.js';
 import { defaults, normalize } from '../public/js/save.js';
 import {
   RELICS, RELIC_KEYS, RELIC_BY_KEY, START_RELICS, FORGET_PER_RUN, RELIC_AUTO_T, relicFx, relicPool, lockedRelics, relicUnlockCost, unlockRelic,
-  relicHitMul, slotCap, offerRelics, tickRelic, onRelicKill, pickRelic, forgetChoice,
+  relicHitMul, slotCap, offerRelics, tickRelic, onRelicKill, pickRelic, forgetChoice, forgetHint, forgetRefund, FORGET_REFUND_MAX,
 } from '../public/js/relics.js';
 
 let n = 0;
@@ -133,7 +133,7 @@ ok('건너뛰기(index −1) · 자동 선택(카드 자동 선택 ON) · 끄면
   assert.ok(drainEvents(g).some(e => e.type === 'relicPick' && e.key === null));
   const a = game({ stage: 10, p0: { autoPick: true } }); clearNow(a);
   assert.equal(a.relicPick.autoLeft, RELIC_AUTO_T);
-  tickRelic(a, RELIC_AUTO_T - 0.5); assert.ok(a.relicPick);
+  tickRelic(a, RELIC_AUTO_T * 0.5); assert.ok(a.relicPick);
   tickRelic(a, 1); assert.equal(a.relics.length, 1, '자동 선택');
   const h = game({ stage: 10 }); clearNow(h);
   tickRelic(h, 60); assert.ok(h.relicPick && h.relicPick.autoLeft == null, 'OFF면 무한 대기');
@@ -308,25 +308,37 @@ ok('20종 모두 위 훅 테스트가 있다', () => {
 });
 
 console.log('망각');
-ok('카드 선택 중에만 · 도전당 2회 · 저장 · 카드를 새로 뽑음', () => {
+ok('카드 화면 · 전투 중 어디서든 · 도전당 2회 · 환급 +레벨(다음 스킬 카드 한 장) · 저장', () => {
   const g = game({ spells: { fireball: 4, tornado: 2, gale: 1 } });
   assert.equal(g.forgetLeft, FORGET_PER_RUN);
-  assert.ok(!act(g, 0, { type: 'forget', spell: 'fireball' }), '카드가 없으면 불가');
   reofferPick(g, { starter: false });
   const p0 = g.pick;
   assert.ok(!act(g, 0, { type: 'forget', spell: 'iceLance' }), '없는 스킬');
   assert.ok(act(g, 0, { type: 'forget', spell: 'fireball' }));
   assert.ok(!g.spells.fireball && g.forgetLeft === 1 && g.run.forgets === 1);
   assert.notEqual(g.pick, p0, '카드 새로 뽑음');
-  assert.ok(drainEvents(g).some(e => e.type === 'forget' && e.spell === 'fireball' && e.level === 4 && !e.fusion));
-  for (let i = 0; i < 40; i++) { reofferPick(g, g.pick); const fb = g.pick.cards.find(c => c.spell === 'fireball'); if (fb) assert.equal(fb.level, 1, '버린 스킬은 Lv1부터'); }
+  assert.equal(g.forgetBonus, forgetRefund('fireball', 4)); assert.equal(g.forgetBonus, 2);
+  assert.ok(drainEvents(g).some(e => e.type === 'forget' && e.spell === 'fireball' && e.level === 4 && !e.fusion && e.refund === 2));
+  for (const c of g.pick.cards) if (c.spell) assert.equal(c.level, Math.min(SPELL_MAX_LV, (g.spells[c.spell] || 0) + 1 + 2), '환급 +2레벨');
+  for (let i = 0; i < 40; i++) { reofferPick(g, g.pick); const fb = g.pick.cards.find(c => c.spell === 'fireball'); if (fb) assert.equal(fb.level, 3, '버린 스킬은 Lv1 + 환급'); }
+  assert.equal(serializeRun(g).forgetBonus, 2, '환급 저장');
+  const si = g.pick.cards.findIndex(c => c.spell);
+  assert.ok(act(g, 0, { type: 'pick', index: si }));
+  assert.equal(g.forgetBonus, 0, '스킬 카드 한 장에만');
+  // 전투 중(카드 없음): 스킬 칸에서 비우면 환급만 쌓인다(카드는 다음 마나 때)
+  g.pick = null; g.pickQ = 0; g.phase = 'play';
+  if (Object.keys(g.spells).length < 3) g.spells.iceLance = 1; // 전투 중 망각은 스킬 3개 이상일 때만
   assert.ok(act(g, 0, { type: 'forget', spell: 'gale' }));
+  assert.ok(!g.pick && !g.spells.gale, '카드 없음 · 칸 비움');
+  assert.equal(g.forgetBonus, 1);
   assert.ok(!act(g, 0, { type: 'forget', spell: 'tornado' }), '2회 한도');
   const s = serializeRun(g);
   assert.equal(s.forgetLeft, 0); assert.equal(s.forgets, 2);
   assert.equal(createGame({ stage: 5, seed: 1, players: [me(), {}], run: s }).forgetLeft, 0, '이어하기도 0');
+  const c = game({ spells: { fireball: 4 }, bonusForgets: 1 }); c.phase = 'clear';
+  assert.ok(!act(c, 0, { type: 'forget', spell: 'fireball' }), '클리어 화면(카드 없음)에선 불가');
 });
-ok('융합을 비우면 칸이 열리고 두 재료가 다시 카드로(Lv1) · 변이 기록 삭제', () => {
+ok('융합을 비우면 칸이 열리고 두 재료가 다시 카드로(Lv1 + 환급 3) · 변이 기록 삭제', () => {
   const g = game({ spells: { blazeTornado: 3, gale: 2 }, run: { fusionParts: { blazeTornado: ['fireball', 'tornado'] } } });
   g.mutations = { blazeTornado: 'x', gale: 'y' };
   assert.ok(g.book.fireball === SPELL_MAX_LV);
@@ -335,9 +347,9 @@ ok('융합을 비우면 칸이 열리고 두 재료가 다시 카드로(Lv1) · 
   assert.equal(slotsUsed(g), 1);
   assert.deepEqual(g.fusionParts, {}); assert.ok(!g.book.fireball && !g.book.tornado && !g.fusions.length);
   assert.ok(!('blazeTornado' in (g.mutations || {})), '버린 스킬의 변이 기록 삭제');
-  assert.ok(drainEvents(g).some(e => e.type === 'forget' && e.fusion));
+  assert.ok(drainEvents(g).some(e => e.type === 'forget' && e.fusion && e.refund === FORGET_REFUND_MAX));
   let seen = false;
-  for (let i = 0; i < 60; i++) { reofferPick(g, g.pick); for (const c of g.pick.cards) if (c.spell === 'fireball' || c.spell === 'tornado') { seen = true; assert.equal(c.level, 1); } }
+  for (let i = 0; i < 60; i++) { reofferPick(g, g.pick); for (const c of g.pick.cards) if (c.spell === 'fireball' || c.spell === 'tornado') { seen = true; assert.equal(c.level, 1 + FORGET_REFUND_MAX); } }
   assert.ok(seen, '재료가 다시 카드로');
 });
 ok('횟수: 보석 강화(fx.forgets) · 출정 준비(bonusForgets)', () => {
@@ -357,16 +369,35 @@ ok('pickRelic: 문맥 점수(공명 · 융합 지팡이) · 범위 안 인덱스
   assert.equal(pickRelic(g, ['miser', 'resonance', 'sage']), 1);
   const i = pickRelic(g, ['crown', 'grail']); assert.ok(i === 0 || i === 1);
 });
-ok('forgetChoice: 칸이 다 차고 8층 이상 · 짝·협공이 아닌 낮은 레벨만', () => {
+ok('forgetChoice: 칸이 다 차고 6층 이상 · 짝·협공이 아닌 낮은 레벨만 · forgetHint(카드 없이 UI 추천)', () => {
   const sp = { fireball: 5, gale: 1, judgment: 3, curseMark: 2, iceLance: 4, stoneGolem: 1 };
   const g = game({ stage: 12, spells: sp });
   reofferPick(g, { starter: false });
   g.pick.cards.forEach(c => { c.fusionHint = false; });
   const k = forgetChoice(g);
-  assert.ok(k && sp[k] <= 3, k);
+  assert.ok(k && sp[k] <= 4, k);
+  assert.equal(forgetHint(game({ stage: 12, spells: sp })), 'gale', 'UI 추천: 카드 없이도 가장 낮은 레벨');
   assert.equal(forgetChoice(game({ stage: 5, spells: sp })), null, '카드 없음');
   const low = game({ stage: 4, spells: sp }); reofferPick(low, { starter: false }); assert.equal(forgetChoice(low), null, '초반');
   const open = game({ stage: 12, spells: { fireball: 1 } }); reofferPick(open, { starter: false }); assert.equal(forgetChoice(open), null, '빈 칸');
+});
+
+ok('전투 중 망각(카드 없음)은 스킬 3개 이상이거나 칸이 찼을 때만 — 책을 비우지 않는다', () => {
+  const g = game({ spells: { fireball: 1 } });
+  assert.equal(act(g, 0, { type: 'forget', spell: 'fireball' }), false);
+  assert.equal(g.spells.fireball, 1);
+});
+
+ok('카드 자동 선택 ON: 고르기 직전 forgetChoice를 먼저(비우고 다시 뽑힌 카드를 다음 틱에 고름)', () => {
+  const sp = { fireball: 5, gale: 1, judgment: 3, curseMark: 2, iceLance: 4, stoneGolem: 1 };
+  const g = game({ stage: 12, spells: sp, p0: { autoPick: true } });
+  reofferPick(g, { starter: false });
+  g.pick.cards.forEach(c => { c.fusionHint = false; });
+  const k = forgetChoice(g);
+  tickPick(g, 999);
+  assert.ok(k && !g.spells[k] && g.run.forgets === 1 && g.pick, '비움 · 카드는 새로');
+  tickPick(g, 999);
+  assert.equal(g.pick, null, '다음 틱에 고름');
 });
 
 console.log(`유물·망각 테스트 ${n}개 통과`);

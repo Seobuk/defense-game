@@ -24,9 +24,10 @@ import { elemMul, applyReach, undying, regionKill } from './dungeons.js'; // 4�
 // 유물·망각(4차): 표·효과·흐름은 relics.js, 여기엔 훅 한 줄씩(// 유물 표시)
 import {
   relicFx, applyRelicFx, relicHitMul, slotCap, cardStep, relicSealed, relicRevive, onRelicKill, onRelicClear, onRelicUlt,
-  relicAct, normalizeRelicRun, relicRunSave, initRelics, relicManaCard, START_RELICS as START_POOL,
+  relicAct, normalizeRelicRun, relicRunSave, initRelics, relicManaCard, START_RELICS as START_POOL, forgetChoice, forgetSkill,
 } from './relics.js';
 import { normRunPrep, applyShopBonus, prepWardReady, PREP_RARE_MUL } from './shop.js'; // 4차 경제: 출정 준비 · 돌파 보너스
+import { normPath, pathSave, initPath, pathStageStart, onPathClear, choosePath, pathHpMul } from './paths.js'; // v0.1.6 갈림길 — 훅 한 줄씩(// 갈림길 표시)
 
 const KINDS = ['human', 'bot', 'remote'];
 const BOT_INTERVAL = 0.25;
@@ -137,6 +138,7 @@ export function normalizeRun(raw) {
     time: posNum(r.time),
     startBest: toInt(r.startBest, 0, MAX_STAGE),
     ...normalizeRelicRun(r), // 유물: relics · relicPick · forgetLeft · forgets · relicRevives
+    path: normPath(r.path), // 갈림길: 떠 있는 갈래 · 대기 카드 · 저주 · 정예
     prep: normRunPrep(r.prep), // 출정 준비(shop.js) {card, rare, ward, forget, wardUsed}
     log: normRunLog(r.log), // 도전 기록 누적값(옛 저장엔 없음 → 새 id, 시작 시각 모름)
     loadout: {
@@ -158,6 +160,7 @@ export function serializeRun(g) {
     reviveUsed: r.reviveUsed, heroRevive: r.heroRevive, arcane: r.arcane, floors: r.floors, bosses: r.bosses, firstClears: r.firstClears, flawless: r.flawless,
     time: r.time, startBest: r.startBest,
     ...relicRunSave(g), // 유물
+    path: pathSave(g), // 갈림길
     prep: { ...r.prep }, // 출정 준비
     log: { ...r.log, cb: Math.max(r.log.cb, g.combo.best) }, // 도전 기록 누적값
     loadout: { cls: r.loadout.cls, startSpells: [...r.loadout.startSpells] },
@@ -241,6 +244,8 @@ export function createGame(opts = {}) {
     },
     // 유물(보스 보상): 고른 유물 · 효과 합산 · 떠 있는 후보 · 후보 풀(run.js가 meta로) · 남은 망각
     relics: run.relics, rfx: relicFx(run.relics), relicPick: null, forgetLeft: 0,
+    path: initPath(run.path), // 갈림길(paths.js): { fork:{opts, autoLeft}|null, cards, curse, elite, taken }
+    pathRng: mulberry32(((opts.seed ?? Math.random() * 2 ** 32) >>> 0) + 0x2545f491), // 갈림길 후보 전용 rng(스폰·카드 스트림과 분리 — heroRng와 같은 이유)
     relicPool: Array.isArray(opts.relicPool) ? opts.relicPool : null,
     bonus: opts.bonus && typeof opts.bonus === 'object' ? opts.bonus : null, // 수련·보석 돌파(shop.js runBonus — run.js가 넘김)
     rerollLeft: 0,
@@ -326,6 +331,7 @@ export function startStage(g, stage) {
   g.heroBuff = null;
   refreshCollab(g); // 클래스·특성이 바뀌었을 수 있다
   g.run.checkpoint = serializeRun(g); // 이어하기: 이 스테이지 시작부터
+  pathStageStart(g); // 갈림길: 대기 보상 카드(체크포인트 뒤 — 층 도중에 꺼도 다시 받는다)
 }
 
 export function setPlayer(g, i, init) { // 협동 입장/퇴장 자리 교체(솔로에선 players[1]이 잠든 자리)
@@ -369,7 +375,7 @@ export function drainEvents(g) {
 // 카드 한 장이 올리는 레벨: 1(유물 쌍둥이 달 2) + 따라잡기(4차 FIX — CATCHUP_FROM층 뒤 Lv3 미만 기본 스킬은 +1: 후반 남은 Lv1 스킬·새 스킬도 변이·합체까지 닿게)
 export const CATCHUP_FROM = 30;
 export const catchUp = (g, key) => g.stage > CATCHUP_FROM && !FUSION_BY_KEY[key] && (g.spells[key] || 0) < 3;
-const cardGain = (g, key) => cardStep(g) + (catchUp(g, key) ? 1 : 0);
+const cardGain = (g, key) => cardStep(g) + (catchUp(g, key) ? 1 : 0) + (g.forgetBonus | 0); // + 망각 환급(relics.js forgetSkill)
 function wouldFuse(g, key) {
   if (FUSION_BY_KEY[key] || (g.spells[key] || 0) + cardGain(g, key) < SPELL_MAX_LV) return false; // 유물 쌍둥이 달: 한 장에 2레벨
   const hyp = { ...g.spells, [key]: SPELL_MAX_LV };
@@ -416,7 +422,7 @@ function genCards(g, starter = false) {
     const k = weightedKey(g, pool);
     pool = pool.filter(x => x !== k);
     const from = g.spells[k] || 0; // from = 지금 레벨(0 = 새 스킬) — UI '전 → 후'
-    cards.push({ spell: k, from, level: Math.min(SPELL_MAX_LV, from + cardGain(g, k)), rarity: SKILL_BY_KEY[k].rarity, fusionHint: wouldFuse(g, k), fusion: !!FUSION_BY_KEY[k], catchUp: catchUp(g, k) });
+    cards.push({ spell: k, from, level: Math.min(SPELL_MAX_LV, from + cardGain(g, k)), rarity: SKILL_BY_KEY[k].rarity, fusionHint: wouldFuse(g, k), fusion: !!FUSION_BY_KEY[k], catchUp: catchUp(g, k), refund: g.forgetBonus | 0 }); // refund = 망각 환급 +레벨(UI 표시)
   }
   while (cards.length < n && muts.length) cards.push(mutationCard(g, muts.splice(Math.floor(g.rng() * muts.length), 1)[0])); // 변이
   const aw = cards.length ? [] : AWAKEN_KEYS.slice(); // 각성 카드는 더 강화할 것도 · 변이도 · 새로 넣을 것도 없을 때만
@@ -435,7 +441,7 @@ const autoPicks = g => !!(g.players[0].autoPick || g.players[0].kind === 'bot');
 const pickT = g => (autoPicks(g) ? PICK_AUTO_T : null);
 
 // 카드 선택을 띄운다. 이미 떠 있으면 대기열(pickQ)에 쌓았다가 고르는 즉시 다음 카드를 띄운다
-function triggerPick(g, starter = false) {
+export function triggerPick(g, starter = false) { // export: paths.js(갈림길 보상 카드)
   if (g.pick) { g.pickQ++; return; }
   const cards = genCards(g, starter);
   if (!cards.length) return; // 모든 스킬 만렙인 극단적 상황
@@ -560,6 +566,7 @@ function applyPick(g, i, index, choice) { // choice = 변이 카드의 갈래 0|
       emit(g, { type: 'heroProc', kind: 'cardBless', spell: card.spell, level });
     }
     g.spells[card.spell] = level;
+    g.forgetBonus = 0; // 망각 환급은 스킬 카드 한 장에만
     if (!FUSION_BY_KEY[card.spell]) g.seenSpells.add(card.spell);
     emit(g, { type: 'spellPick', spell: card.spell, level, rarity: card.rarity });
     refreshFusion(g);
@@ -570,7 +577,7 @@ function applyPick(g, i, index, choice) { // choice = 변이 카드의 갈래 0|
 
 // 카드 새로고침(런 전체 rerollLeft회: 영웅 Lv5 + 영구 강화). 자동 선택 카운트다운도 처음부터(자동 선택 ON일 때만)
 function rerollPick(g, i) {
-  if (i !== 0 || !g.pick || !(g.rerollLeft > 0) || g.pick.cards.fixed) return false;
+  if (i !== 0 || !g.pick || !(g.rerollLeft > 0) || g.pick.cards.fixed || g.rfx?.noReroll) return false; // 모래시계 봉인
   const cards = genCards(g, g.pick.starter);
   if (!cards.length) return false;
   g.rerollLeft--;
@@ -584,7 +591,11 @@ function rerollPick(g, i) {
 export function tickPick(g, dtReal) {
   if (!g.pick || g.pick.autoLeft == null || !autoPicks(g) || !(dtReal > 0)) return;
   g.pick.autoLeft -= dtReal;
-  if (g.pick.autoLeft <= 0) applyPick(g, 0, pickCard(g, g.pick.cards));
+  if (g.pick.autoLeft <= 0) {
+    const fk = forgetChoice(g); // 망각도 봇처럼(harness resolvePick): 칸이 꽉 찼고 짝 없는 낮은 스킬 → 비우고(카드 다시 뽑힘 · 카운트다운 처음부터) 다음 틱에 고름
+    if (fk && forgetSkill(g, fk)) return;
+    applyPick(g, 0, pickCard(g, g.pick.cards));
+  }
 }
 
 // 플레이어 행동 (게스트 입력이 그대로 들어오므로 전부 검증)
@@ -603,7 +614,9 @@ export function act(g, i, action) {
     return true;
   }
   if (action.type === 'relic' || action.type === 'forget') return relicAct(g, i, action); // 유물 고르기 · 망각(비우기)
+  if (action.type === 'path') return i === 0 && choosePath(g, action.index); // 갈림길
   if (g.pick || g.relicPick) return false; // 카드·유물 선택 중엔 다른 조작 불가(전투 정지)
+  if (g.path?.fork && (action.type === 'skill' || action.type === 'heroUlt' || action.type === 'heroMove')) return false; // 갈림길(이어하기로 층 시작에 뜬 것 포함) 중엔 전투 조작 불가 — 빈 전장에 쿨타임 낭비 방지
   // 도전 중 골드 강화('upgrade')는 없다 — 마법사 수련은 정비 화면(run.js buyTraining)
   if (action.type === 'skill') {
     const sk = action.skill;
@@ -805,6 +818,7 @@ export function step(g, dt) {
       lootDrop(g, 'chest', WORLD_W / 2, WALL_Y - 120, HERO_API); // 클리어 보물상자
     }
     onRelicClear(g); // 유물: 혼돈의 구슬 · 네임드 보스 층이면 유물 후보(g.relicPick — 아래 체크포인트에 함께 저장)
+    onPathClear(g); // 갈림길: 정예 보상 · 저주 층 수 · 끝자리 3·7층이면 갈래 후보(체크포인트에 함께)
     if (g.stage >= MAX_STAGE) endOfRun(g, true); // 100층 돌파 = 도전 완료
     // 이어하기는 다음 층부터(클리어 화면에서 앱이 꺼져도 첫 돌파 보석·경험치를 다시 잃지 않게). startStage가 같은 모양으로 덮어쓴다
     else g.run.checkpoint = { ...serializeRun(g), stage: g.stage + 1 };
@@ -819,7 +833,7 @@ function spawnEnemy(g, type, x, y, elite, boss) {
   const st = g.stage;
   const em = elite ? ELITE : null;
   const r = elite ? T.r * em.r : T.r;
-  const hp = enemyHp(st) * T.hp * (em ? em.hp : 1) * (elite || boss ? bossHpMul(st, !!boss) : 1);
+  const hp = enemyHp(st) * T.hp * (em ? em.hp : 1) * (elite || boss ? bossHpMul(st, !!boss) : 1) * pathHpMul(g, boss); // 갈림길: 저주·정예(보스 제외)
   const e = {
     id: g.nextId++, type, name: elite ? '거대 ' + T.name : T.name,
     x: clamp(x, r, WORLD_W - r), y: y ?? -r, r,

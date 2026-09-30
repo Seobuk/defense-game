@@ -25,7 +25,7 @@ assert.deepEqual(upgradeLines('fireball', 2, 0), []);
 {
   const g = game({ stage: 12, spells: { fireball: 3, tornado: 2, gale: 1 }, p0: { autoPick: true } });
   reofferPick(g, { starter: false });
-  tickPick(g, 1.7);
+  tickPick(g, PICK_AUTO_T * 0.6); // 카운트다운 도중(PICK_AUTO_T가 0.3초로 짧아져도)
   assert.ok(act(g, 0, { type: 'forget', spell: 'gale' }));
   assert.equal(g.pick.autoLeft, PICK_AUTO_T);
 }
