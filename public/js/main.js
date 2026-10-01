@@ -1,16 +1,18 @@
 // 부팅 · 게임 루프 · 저장/업데이트 배선 — 로그라이트: 타이틀 → (이어하기 | 정비) → 도전 → 결과 → 정비 (docs/DESIGN.md '로그라이트 구현 계약')
 // 솔로: 성벽 위 마법사는 나 한 명(players[1]은 협동 모드 자리 — 잠들어 있다)
-import { startStage, step, act, drainEvents, tickPick, refreshFusion, reofferPick } from './sim.js';
+import { startStage, step, act, drainEvents, tickPick, refreshFusion, reofferPick, syncCheckpoint } from './sim.js';
 import { tickRelic } from './relics.js'; // 4차 유물: 카드 '자동 선택' ON이면 유물도 자동
 import { tickPath } from './paths.js'; // v0.1.6 갈림길(층 사이 세 갈래)
 import { createPathUI } from './pathui.js';
 import { DT, speedCap, nextSpeed, SPEED_UNLOCK, SPELL_KEYS, SPELL_MAX_LV, SYNERGIES, WALL_Y, WORLD_W, MAX_STAGE } from './config.js';
-import { MAX_HERO_LV, RARITY_KEYS, rollItem, addToBag } from './hero.js';
+import { MAX_HERO_LV, RARITY_KEYS, rollItem } from './hero.js';
+import { gainItem } from './loot.js'; // v0.1.7 디버그 ?loot 드롭도 실제 획득 길로
 import { newRun, restoreRun, endRun, applyOffline, campAct, buyMeta } from './run.js';
 import { createRenderer, fontsReady } from './render.js';
 import { simSlow } from './art/hud.js';
 import { createUI } from './ui.js';
 import { createHeroUI } from './heroui.js';
+import { createLootUI } from './lootui.js'; // v0.1.7 전리품: 좋은 드롭 획득 카드 · 자동 판매 묶음 알림 · 결과 '최고 획득' · 설정 줄
 import { createAudio } from './audio.js';
 import * as store from './save.js';
 import * as updater from './updater.js';
@@ -148,7 +150,18 @@ const heroUI = createHeroUI(document.getElementById('app'), {
   onToggleAutoTalent: on => persistOk(campAct(data, { type: 'autoTalent', on })),
   onOpenWardrobe: cls => openWardrobe({ cls }), // v0.1.2 옷장(영웅 화면 '영웅' 탭)
   onClose: () => {},
+  // v0.1.7 가방: 잠금 · NEW 확인 · 자동 판매 설정은 hero를 제자리에서 바꾸고 저장만. 일괄 정리 = 한 개씩 'sell'(잠금은 hero.js가 거절) → 받은 골드
+  onChange: () => persist(),
+  onClean: ids => {
+    const gold = () => (inRun() ? game.players[0].gold : data.gold);
+    const g0 = gold();
+    for (const itemId of ids) heroDo({ type: 'sell', itemId });
+    const got = gold() - g0;
+    if (got > 0) audio.play('coin');
+    return got;
+  },
 });
+const lootUI = createLootUI(document.getElementById('app'), { getHero: () => data.hero, persist: () => persist() });
 // v0.1.2 외형 소환: 바꾸는 건 전부 campAct(summon.js) + 저장, 화면을 닫으면 정비 화면(보석·소환권 점) 다시 그림
 initSummonUI(document.getElementById('app'), {
   getMeta: () => data,
@@ -212,7 +225,7 @@ function startRun(g) {
 function onAbandonRun() {
   const g = inRun() ? game : restoreRun(data);
   const sum = g && finishRun(g);
-  if (sum) ui.showResult(sum, g);
+  if (sum) { lootUI.renderResult(g); ui.showResult(sum, g); } // v0.1.7 결과 '이번 도전 최고 획득'
   else { data.run = null; persist(true); showCamp(); }
 }
 
@@ -259,8 +272,9 @@ function dropLoot(r) {
     let item = null;
     for (let n = 0; n < 500 && item?.rarity !== rarity; n++) item = rollItem(game.stage, rarity === 'common' ? 'normal' : 'chest', Math.random, game.hero.cls);
     if (item.rarity !== rarity) return;
-    addToBag(game.hero, item);
-    game.events.push({ type: 'loot', item, x: 120 + i * 120, y: 640 });
+    const r = gainItem(game.hero, item, game.run?.log?.id); // v0.1.7: 실제 드롭과 같은 길(자동 장착 · 자동 판매 · NEW) — hero.js lootDrop과 같은 이벤트
+    if (r.gold) game.players[0].gold += r.gold;
+    game.events.push(r.sold && !r.lost ? { type: 'lootSold', item, x: 120 + i * 120, y: 640, gold: r.gold, n: r.n } : { type: 'loot', item, x: 120 + i * 120, y: 640, equipped: r.equipped, gain: r.gain, up: r.up, soldGold: r.gold, soldN: r.n, lost: r.lost }); // lost = 가방이 가득 차 팔린 특별한 장비(loot.js)
   });
   return list.length > 0;
 }
@@ -337,6 +351,7 @@ function onRestoreSave(code, preview) {
 // ── 저장 ──
 function syncData() {
   if (!game || game.run.ended || game.run.over) return; // 끝난 도전은 이어하기로 되살리지 않는다
+  syncCheckpoint(game); // 층 도중에 쓴 쿨타임·새로고침·망각·부활 결계는 체크포인트에도(껐다 켜기 리필 방지)
   data.run = game.run.checkpoint;
   if (data.run?.log) { const l = game.run.log; Object.assign(data.run.log, { ps: l.ps, sp: l.sp, ap: l.ap }); } // 플레이 시간은 층 도중까지(처치 수는 체크포인트 기준 — 다시 하는 층을 두 번 세지 않게)
   data.discovered = [...new Set([...data.discovered, ...game.discovered])];
@@ -439,7 +454,7 @@ function handleEvents(events, now) {
         break;
       case 'loot':
         heroUI.notifyLoot(ev.item);
-        audio.play(ev.item?.rarity === 'legend' || ev.item?.rarity === 'epic' ? 'synergy' : 'coin');
+        audio.play(ev.item?.rarity === 'legend' ? 'legendDrop' : ev.item?.rarity === 'epic' ? 'synergy' : 'coin'); // v0.1.7 전설 전용 효과음 훅(audio.js legendDrop)
         persist();
         break;
       case 'clear': {
@@ -731,10 +746,12 @@ function frame(now) {
   sampling = !paused && g.phase === 'play';
   if (out.coins > 0) audio.play('coin');
   ui.onEvents(events, g);
+  if (mode === 'run') lootUI.onEvents(events, g); // v0.1.7 획득 카드 · 자동 장착/판매 알림
   ui.update(g, meta);
   pathUI.update(g, now); // v0.1.6 갈림길
   heroUI.update(g.hero, mode === 'run' ? runCtx() : campCtx());
   if (pendingResult) { // 패배 도장(ui.onEvents)이 뜬 다음에: 결과 화면은 도장을 보여 준 뒤 스스로 이어서 뜬다
+    lootUI.renderResult(pendingResult.g); // v0.1.7
     ui.showResult(pendingResult.sum, pendingResult.g);
     pendingResult = null;
   }

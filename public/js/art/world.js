@@ -10,7 +10,7 @@ import {
   shake, flash, rnd, easeBack, pool, take,
   wt, place, spr, txt, rr, additive, groundRune,
 } from './core.js';
-import { gl, part, burst, ring, sprPop, K_STAR, K_SPARK, K_SMOKE, K_DEBRIS, soft, shadow, runeCircle, runeBand, starFlash, beamSpr, rays } from './fx.js';
+import { gl, part, burst, ring, sprPop, K_STAR, K_SPARK, K_SMOKE, K_DEBRIS, soft, shadow, runeCircle, runeBand, starFlash, beamSpr, rays, sparkle } from './fx.js';
 import { itemIcon, MAGE_FEET, mageOn, mageX } from './units.js';
 
 // 테마별 주변 입자: 색, 개수, 상승 속도
@@ -696,6 +696,14 @@ function lootFx(view, ev) {
   }
 }
 
+// v0.1.7 자동 판매된 하위 장비: 빛기둥·카드 없이 작은 반짝임만(좋은 것만 눈에 띄게 — loot.js)
+function lootSoldFx(ev) {
+  const x = clamp(+ev.x || 360, 30, WORLD_W - 30), y = clamp(+ev.y || 700, 120, WALL_Y - 10);
+  const col = (RARITY_COL[ev.item?.rarity] || RARITY_COL.common)[1];
+  sprPop(sparkle(col), x, y - 12, 0.3, 1.1, 0.32);
+  burst(K_STAR, x, y - 12, 3, 30, 80, 0.4, 7, [col, '#ffe07a'], -40, 1.5, 30);
+}
+
 export function drawAmbient(theme, da) {
   const A = AMB[theme];
   const aw = WORLD_W + sideX * 2;
@@ -1082,6 +1090,7 @@ export function events(view, evs, opts) {
   for (const ev of evs) {
     switch (ev.type) {
       case 'loot': lootFx(view, ev); break;
+      case 'lootSold': lootSoldFx(ev); break; // v0.1.7
       case 'wall': {
         const mx = view.wall && view.wall.max > 0 ? view.wall.max : 1;
         shake(0.07 + Math.min(0.35, ev.dmg / mx * 2.5));

@@ -433,6 +433,10 @@ run: { awaken:{power,haste,ward,fortune}, gems:{floor,first,boss,flawless}, revi
        checkpoint }          // checkpoint = startStage마다 자동 갱신되는 serializeRun() → 저장은 data.run = game.run.checkpoint
                              // 층 클리어 즉시 '다음 층 시작' 체크포인트로 바뀐다(클리어 화면에서 앱이 꺼져도 첫 돌파 보석·영웅 경험치를 잃지 않게).
                              // 도전 중 판매 골드(act sell/sellRarity · 가방 넘침 자동 판매)는 체크포인트 골드에도 더한다(아이템은 영웅에서 바로 빠지므로)
+                             // 껐다 켜기 리필 방지: 저장 직전 main.js syncData → sim syncCheckpoint(g)가 층 도중에 '쓴' 소모 자원을 체크포인트에 덮는다 —
+                             // players[i].cd{meteor,freeze} · ultCd(영웅 궁극기, 다음 층 체크포인트면 0) · rerollLeft · forgetLeft/forgets · reviveUsed · heroRevive · relicRevives · prep.wardUsed.
+                             // 망각은 relics.js forgetSkill이 뺀 스킬·환급(forgetBonus)도 체크포인트에서 바로 뺀다. 층을 다시 하며 다시 얻는 것(처치 골드·카드·비전 충전·
+                             // 갈림길 대기 카드)은 층 시작 값 그대로. 옛 체크포인트(필드 없음) = 0. 테스트 test/resume.test.js
 spells: { [key]: 1..5 }      // 런 전체 누적(최대 6개). startStage에 리셋되지 않는다
 fusions: string[]            // 런 동안 유지
 rerollLeft                   // 런 전체 남은 새로고침(영웅 Lv5 1회 + 영구 강화 reroll, 도전 도중 Lv5 달성 시 +1)
@@ -829,7 +833,7 @@ sim/메타 쪽만 바꿨다(DOM 없음): `config.js · sim.js · spells.js · ru
 **망각(비우기)** — 카드 선택 화면 아래 줄 '비우기 N'(남은 횟수가 있고 보유 스킬이 있을 때). 누르면 보유 스킬 시트 → 고른 스킬의 확인 단계('칸이 하나 비고 카드가 새로 나와요' · 융합이면 '품던 두 재료도 함께' · '다시 배우면 Lv1부터' · '남은 망각 N → N−1') → `act(g, 0, {type:'forget', spell})`: 카드가 떠 있을 때만 · `g.forgetLeft > 0` · 보유 스킬이면 슬롯에서 빼고(`refreshFusion` → book·진행도·협공 재계산, `g.mutations[spell]` 삭제 — MUTATIONS의 `pruneMutations`도 정리) 떠 있는 카드를 지금 빌드로 다시 뽑는다(`reofferPick`). 시트가 열린 동안 카드 자동 선택 카운트다운은 멈춘다(`isPickShown`). 이벤트 `forget{spell, level, fusion}`.
 - **v0.1.6 망각 개선**(거의 안 쓰이던 문제): ① **환급** — 비운 스킬 Lv의 절반(올림, 융합 3, 상한 `FORGET_REFUND_MAX` 3)이 `g.forgetBonus`에 쌓여 다음 **스킬 카드 한 장**에 +레벨(sim `cardGain`, 카드 `refund` → 등급 줄 '· 망각 +N', 스킬 카드를 고르면 0 · 변이/각성 카드는 안 씀). 런 저장 `forgetBonus`(0~9). ② **어디서든** — `canForget(g)`: 카드 화면 또는 전투 중(`phase 'play'`, 유물 화면 아님). 전투 중 스킬 칸 탭 → 말풍선 '비우기 · 다음 카드 +N레벨'(`rel.tipHTML`, 스킬 3개 이상이거나 칸이 찼을 때) → 바로 확인 단계, 시트가 열린 동안 전투 정지(`isBusy`). 카드가 없으면 새 카드는 안 뜬다(환급만 쌓임). ③ **추천** — `forgetHint(g, minStage=3)`: 칸이 다 찼고 짝(융합 재료)·협공에 안 드는 Lv≤4 기본 스킬(가장 낮은 것). 카드 화면 '비우기' 버튼이 금빛 '추천' 배지로 반짝(합체 카드·시작 카드일 땐 안 함), 시트의 그 스킬에 '추천', 말풍선에 '비우기 추천'. 봇 `forgetChoice(g, minStage=6)` = 카드가 떠 있고 합체 카드가 없을 때 `forgetHint`. 이벤트 `forget{…, refund}`. (fix) 전투 중(카드 없음) 망각은 sim에서도 스킬 3개 이상이거나 칸이 찼을 때만(`forgetSkill` — UI 규칙과 같게). 카드 '자동 선택' ON이면 `tickPick`이 고르기 직전 `forgetChoice`를 먼저 본다(봇과 같게). 시트의 스킬마다 '카드 +N'. 말풍선에 '비우기' 버튼이 있으면 9초 유지. 유물 화면: 자동 선택이면 보스 클리어 0.6초 뒤 · 닫힘 0.25초.
   - 측정(봇 A/B, 같은 코드에서 망각 변경만 끄고 켬, 캠페인 상점 봇 시드 1~3/4~6, 최고 100층까지): 망각/도전 1.63/1.98 → 1.58/1.70(봇은 이미 한도 가까이 씀 — 개선은 사람용 발견성·보상), 100층까지 도전 수 43/42 → 환급만 39(시드 4~6, −7%) · 환급 + '카드 한 장 더' 38/33(−12~21%) → 카드 한 장 더는 빼고 환급만 남김.
-- 횟수 `g.forgetLeft` = `FORGET_PER_RUN`(2) + `g.fx.forgets`(보석 강화 `metaLv.forget` — ECONOMY) + `createGame({ bonusForgets })`(출정 준비 '망각의 물약' — ECONOMY `newRun`) + 망각의 모래시계 +2. 런 저장 `forgetLeft` · `forgets`(쓴 횟수, 이어하기는 층 시작 값).
+- 횟수 `g.forgetLeft` = `FORGET_PER_RUN`(2) + `g.fx.forgets`(보석 강화 `metaLv.forget` — ECONOMY) + `createGame({ bonusForgets })`(출정 준비 '망각의 물약' — ECONOMY `newRun`) + 망각의 모래시계 +2. 런 저장 `forgetLeft` · `forgets`(쓴 횟수, 이어하기는 층 시작 값 — 단 층 도중에 배운 스킬을 비운 횟수 `checkpoint.forgetFree`는 이어하면 돌려준다: 그 스킬도 환급도 없으므로).
 - 결과(`endRun` Summary): `relics: string[]` · `forgets: number`.
 
 **봇 · 하네스 · 지표**: `pickRelic(g, cards)`(유물별 가치 + 문맥: 공명이 켜질 빌드 +6 · 지팡이는 융합 수 × 3 · 꽉 찬 칸의 왕관 −2) · `forgetChoice(g)`(8층부터 · 칸이 다 찼고 이번 카드로 합체가 안 되면 짝·협공에 안 드는 Lv≤3 기본 스킬을 비움). harness `playStage`가 유물을 고르고 `resolvePick`이 망각을 먼저 본다. `playRun`·`campaign` 행에 `relics`(고른 유물) · `forgets`.
@@ -957,7 +961,7 @@ botShop(meta, rng, spent?, phase 'pre'|'post'|'all')                       // �
 - 노드 필드 추가: `tag`(분류 `TALENT_TAGS` = 표적 · 위치 · 발동 · 자원 · 협동) · `brief`(트리에 보이는 한 줄 요약, 10자 이하). 택1은 모두 2랭크, 효과 키 하나, 문구에 숫자.
 - 새 효과 키 27개(`TALENT_FX_KEYS` — 전부 hero.js/sim.js 훅, 숫자는 클래스마다 표 데이터):
   - 표적(`pickTarget` 점수 + 피해 `mul`): `hunt`(정예·보스 +3점, 피해 +) · `guardWall`(성벽 가까울수록, 성벽 200 안 피해 +) · `cull`(체력 비율 낮을수록, 50% 이하 피해 +) · `focus`(현재 표적 +2점, 같은 표적 타마다 +, 5중첩).
-  - 위치: `hold`(성벽 앞 `HOLD_Y` = WALL_Y−240 선 위로 안 나감 · 선 밖 적 무시 · 피해 감소 + 도발 반경 ×200) · `charge`(5초마다 150↑ 먼 적에 4배속 돌진 → 반경 80 피해 + 0.6초 기절) · `pointBlank`(원거리가 물러나지 않고 190까지 붙음, 200 안 피해 +) · `chillAura`(값 = 반경, 주변 적 계속 둔화 + 값+30까지 다가감) · `killBlink`(처치 시 확률로 순간이동 대기 0 + `hop` = 거리 무관 도약) · `longshot`(혼합: 사거리 +값/2, 거리 비례 피해 +).
+  - 위치: `hold`(성벽 앞 `HOLD_Y` = WALL_Y−240 선 위로 안 나감 · 선 밖 적 무시 · 피해 감소 + 도발 반경 ×200) · `charge`(5초마다 150↑ 먼 적에 4배속 돌진 → 반경 80 피해 + 0.6초 기절) · `pointBlank`(원거리가 물러나지 않고 190까지 붙음, 200 안 피해 +) · `chillAura`(값 = 반경, 주변 적 계속 둔화 + 값+30까지 다가감 — 특성·고유·세트끼리 **합하지 않고 가장 큰 것**, items.js `TB_MAX`) · `killBlink`(처치 시 확률로 순간이동 대기 0 + `hop` = 거리 무관 도약) · `longshot`(혼합: 사거리 +값/2, 거리 비례 피해 +).
   - 발동: `heavy`(3타마다 피해 + · 0.5초 기절) · `cleave`(주 표적 주변 60 aoe) · `bounce`(값 = 튕김 수, 30%) · `split`(값 = 갈래 수, `SPLIT_K` 0.3 + 광역) · `corpse`(영웅 처치 → 반경 80 폭발, 폭발로 죽은 적도 터짐) · `evade`(맞을 때 확률로 무효 + 반격 100%) · `wolfStun`.
   - 자원: `ultCharge`(공격마다 궁극기 대기 −값초 — 클래스 공속에 맞춰 기사 0.12 · 궁수 0.07 · 마법사 0.14 · 성직자 0.12 · 암살자 0.08) · `soulFeed`(영웅 처치 → `g.spellT` −값초, 영혼 사냥과 같은 방식) · `lifesteal`(공격마다 체력 %) · `berserk`(50% 아래 피해 +) — 둘 다 후퇴 기준 30% → 15% · `wolfUlt`(궁극기 뒤 8초 `h.packT` 동안 늑대 +값).
   - 협동: `mark`(영웅의 **주 표적**·늑대가 문 적 `e.markAt = phaseT + 3` → sim.js `spellHit`가 마법사 주문 ×(1+값)) · `pull`(6초마다 영웅 표적 주변 200 안 비보스 적을 표적 쪽으로 값만큼) · `ultBless`(궁극기 → `g.heroBuff` 5초, 전군 강화 함성과 같은 통로).
@@ -1167,3 +1171,65 @@ botShop(meta, rng, spent?, phase 'pre'|'post'|'all')                       // �
 - **봇 · 하네스**: `harness.playStage`가 층 시작에 `g.path.fork`를 `pickPath`로 고른다(→ 효과는 그 층, 대기 카드는 바로). `playRun`·`campaign` 행에 `paths`(고른 갈래 키). `earlyPacing` 등 직접 도는 러너는 갈림길을 무시해도 막히지 않는다(sim `step`은 멈추지 않음).
 - **밸런스(A/B, 스크래치 러너 — 같은 작업 트리에서 `PATH_TEST.off` 켬/끔, 캠페인 시드 1~3)**: 매 끝자리 3·7 · 보상 2장 · 농사 층 포함이면 도전 **12.7회**(끔 23.7)로 너무 쉬웠다 → 정복한 층 제외(`FARM_FRAC`)로 **24.7회**(끔 23.7 · 한 번에 10층마다 1장 20.7 · 전부 1장 26.3). 같은 메타 스냅샷에서 갈림길 켬/끔 클래스 평균 36.5/36.6층(최고 52~59층 메타) · 60.7/55.4층(최고 56~67층 메타 — 최전선 상인 카드 몫). 봇은 최전선에서 상인(골드 있으면) · 없으면 샘, 정복 선(60%)~75% 구간에서 정예·제단.
 - **궁수 재조정**: 갈림길로 캠페인이 최고 50층을 조금 이른(영웅 레벨이 낮은) 메타에서 넘겨 동등성 스냅샷이 바뀌면 궁수가 −15~−22%(HEAD v0.1.5도 −13% — 원래 경계). `HERO_CLASSES.ranger.dps` 0.95 → 1.0. `npm test`: 캠페인 22.0회 · +4.26층/회 · 18.5h · 첫 도전 12.0층 · 동등성 기사 +4 · 궁수 −7 · 마법사 +7 · 성직자 −6 · 암살자 +2% · 협공 +11% (다른 v0.1.6 트랙이 같은 트리에서 작업 중인 값 — 통합 패스가 다시 잰다).
+
+### v0.1.7 장비 계약 (ITEMS 트랙 — `public/js/items.js` · `test/items.test.js` · hero.js/sim.js/spells.js/relics.js/save.js 작은 훅)
+> 사용자: "아이템도 너무 단순함. 얻어도 기쁘지 않아". **강화 없음**(사용자 규칙 유지). 기쁨 = "뭐가 나왔을까"(굴림·등급·고유·세트) + "이걸로 빌드가 바뀐다"(고유 옵션이 싸우는 방식을 바꿈).
+
+**데이터 · 로직 한 곳** `items.js`(DOM 없음, hero.js를 import하지 않는다 — hero.js가 `RARITIES`·`SLOTS`·`rollItem` 등을 그대로 재수출하므로 기존 import는 안 바뀐다).
+- **아이템 모양(v2)** `{ id, slot, rarity, ilvl, name, v:2, main:{ key, value, q }, subs:[{ key, value, q }], unique: 키|null, set: 키|null, cls: 굴린 클래스|null, lock?: 1, n?: 1 }`
+  - `q` = 굴림 품질 0~1(범위 안 위치). **`q ≥ TOP_Q`(0.9)면 최고 굴림 → UI 금색**(`isTop(stat)`).
+  - `ilvl` = 드롭 층(상자는 최고 층). 수치 = 기본 범위 × 등급 배율 × `ilvlScale(ilvl)` = 1 + (ilvl−1) × 0.008(기존과 같음). 드롭(문자열 source)의 전설 가중치 × `legendGate(ilvl)` = clamp((ilvl−4)/16, 0.1, 1) — 4층 이하 10% → 20층부터 그대로(전설 고유가 첫 도전 초반을 한 번에 뒤집지 않게, 상자는 그대로).
+  - `unique` = 고유 옵션 키(`UNIQUES`) — 전설은 늘 1개, 영웅은 `epicUniqChance(ilvl)`(25% → 100층 50%)로 약한 고유 1개.
+  - `set` = 세트 키(`SETS`) — 희귀·영웅이 ilvl ≥ `SET_MIN_ILVL`(8)이면 `SET_CHANCE`(22%). 전설은 세트가 아니다(고유 쪽).
+  - `cls` = 굴릴 때 클래스(이름·클래스 전용 고유 판정용). `lock`(잠금) · `n`(NEW 표시)은 **LOOT/UI 트랙 소유**(loot.js) — `migrateItem`이 참일 때만 `1`로 보존한다.
+- **부옵션 풀 `AFFIXES`**(22종, `{ key, name, base:[lo,hi], pw, neg?, el?, sk?, tb? }` — `neg` = 표시 부호 −(쿨타임)): 처치 골드 `gold` · 보스 피해 `boss` · 마나 충전 `mana` · 스킬 피해 `spell` · 치명타 확률 `crit` · 체력 `heroHp`(기존 6종 그대로) + 원소 스킬 피해 `fire`·`lightning`·`frost`·`wind`·`holy`·`dark` + 특정 스킬 쿨타임 `cdFireball`·`cdLightning`·`cdIce`·`cdTornado`·`cdJudgment` + 협공 효과 `collab` · 궁극기 쿨타임 `ultCd` · 궁극기 효과 `ultPow` · 영웅 공격력 `heroAtk` · 영웅 경험치 `xp`. `hero.js SUBSTATS`는 이 표에서 만든다(`{ key, name, scope }` 모양 유지 — heroui/shopui의 이름 표가 그대로 동작).
+- **고유 옵션 `UNIQUES`** `[{ key, rarity:'legend'|'epic', cls:클래스|null, title, name, desc, fx }]` — 전설 31종(공용 11 + 클래스별 4), 영웅 12종(공용). 클래스 전용은 **그 클래스일 때만** 켜진다(`uniqueOn(item, cls)`), 굴릴 때도 그 클래스 풀에서만 나온다. `fx`는 아래 효과 통로만 쓴다.
+- **세트 `SETS`**(6종) `[{ key, name, title, el, color, b2:{desc, fx}, b4:{desc, fx} }]` — 5부위 어디든 같은 세트 N개. 2세트 = 원소 스킬 피해·협공 같은 숫자, **4세트 = 싸우는 방식이 바뀌는 효과**.
+- **효과 통로(fx)**: `tb:{ 특성 효과 키: 값 }`(hero.js 특성 합산 `heroTb`에 더해짐 — talents.js TALENT_FX_KEYS의 훅을 그대로 탄다) · `cap:'궁극 특성 키'`(다른 클래스의 궁극 특성도 — 플레이 방식 변화) · `el:{ 원소: 비율 }`(sim spellHit 스킬 피해) · `tauntEl:{ 원소: 비율 }`(기사가 도발한 적이 받는 그 원소 스킬 피해) · `cd:{ 스킬: 비율 }`(쿨타임 회복 속도) · `ultBoost:{ el|null, t, rate }`(궁극기 뒤 t초 그 원소 스킬 쿨타임 rate배 빨리) · `ghost: 확률`(처치 시 망령) · `relic: n`(보스 유물 후보 +n장) · `ultZap: 확률`(번개 스킬 명중 시 영웅 궁극기 쿨 −0.5초, 0.5초에 최대 한 번).
+
+**API (`items.js`)**
+```
+ITEM_VER(2) · TOP_Q(0.9) · SLOTS · SLOT_NAMES · ITEM_NOUN(slot, cls) · RARITIES · RARITY_KEYS · AFFIXES · AFFIX_BY_KEY · UNIQUES · UNIQUE_BY_KEY · SETS · SET_BY_KEY
+rollItem(stage, source|가중치[5], rng, cls) → 아이템(v2)                // hero.js가 재수출 — drop · 상자 · 디버그 전부 이 한 곳
+isTop(stat) · statText(stat) → '+5.2%'|'−3.1%' · statName(key) · uniqueOn(item, cls)   // 자동 판매 예외(전설·세트·고유)는 loot.js isSpecial
+itemPower(item, cls?) → 전투력(기존 식 + 부옵션 pw + 고유 · 세트 몫. cls를 주면 다른 클래스 전용 고유는 0) — hero.js 재수출
+itemLines(item, cls?) → [{ kind:'main'|'sub'|'uniq'|'set', text, name, value?, top, off }]  // UI가 그대로 줄로 그린다(off = 이 클래스에선 꺼짐)
+compareItems(a, b) → [{ key, name, a, b, diff, neg }]   // a = 새 것, b = 장착 중(null 가능). ▲▼는 diff 부호(neg면 반대)
+setProgress(hero) → [{ key, name, color, n, b2:{desc,on}, b4:{desc,on} }]  // 장착 중 세트만(n ≥ 1)
+setCounts(hero) → { 세트 키: 장착 수 }
+gearFx(hero, cls) → { tb, cap:{}, el, tauntEl, cd, ultBoost:[], ghost, relic, ultZap, uniques:Set }  // 장착 변경 시만 다시 계산(캐시)
+migrateItem(raw) → 아이템(v2) | null      // save.js normalize가 쓴다(멱등). 옛 아이템: q는 값에서 역산, 옛 전설은 id로 정해지는 공용 고유 1개(한 번 정해지면 그대로)
+```
+**궁극 특성 중복**: 고유 옵션의 `cap`을 특성으로 이미 가졌으면 대신 영웅 피해 +12%(`hero.js CAP_DUP_ATK` — 예: 운석을 찍은 마법사의 '낙성', 버리는 전설이 없게. `itemLines`가 문구에 붙인다).
+**전투 훅(한 줄씩, `// 장비 v0.1.7` 표시)**: hero.js `heroTb`(talentBonus + gearFx.tb/cap — spawnHeroUnit · updateHeroUnit · heroCombatStats) · castHeroUlt 끝 `gearOnUlt`(ultBoost 창) · heroOnKill `gearOnKill`(망령) · sim.js spellHit `gearSpellMul`(원소 · 도발 원소 · ultZap) · spells.js tick `gearCdRate`(쿨타임 속도) · relics.js offerRelics 후보 수 `+ gearRelicPlus(g)`. autoEquipAll은 `itemPower(it, hero.cls)`로 비교한다.
+**이벤트**: `gearProc{ key, x, y }`(고유·세트 효과가 터질 때 — 망령 소환 `ghost` · 궁극기 창 `ultBoost` · 번개 궁극 충전 `ultZap`). 렌더러가 몰라도 무시된다.
+**저장**: `SAVE_VERSION` 그대로. save.js `item()` → `migrateItem`. 모르는 부옵션 키·고유·세트 키는 버린다(옛 앱으로 돌아가도 기존 6종 부옵션 아이템은 그대로 읽힌다).
+**이름**: 전설 = `고유 title의 명사`(예: '뇌신의 지팡이') · 세트 조각 = `세트 title의 명사`('잿불 군주의 투구' — 영웅 고유보다 먼저) · 영웅 고유 = `title의 명사` · 그 밖 = 기존 무작위 이름. 명사: 무기 = 클래스 무기, 투구 · 갑옷 · 부적 · 망토.
+**A/B 스위치** `ITEM_TEST = { off, noUniq, noAffix }`(PATH_TEST와 같은 방식 — 테스트·밸런스 러너 전용): `off` = v0.1.6 장비(부옵션 6종 · 고유·세트 없음 · 효과 없음), `noUniq` = 고유 효과만 끔, `noAffix` = 새 부옵션 효과만 끔.
+**밸런스(A/B — 같은 작업 트리, 스크래치 러너 `campaign({ shop:true })` 시드 1~9, `ITEM_TEST.off` 켬/끔)**: 첫 설계(전설 가중치 v0.1.6 그대로 · 전군 강화 함성 · 카드 축복 · 쿨 가속 2배 · 원소 부옵션 [1.5,4])는 도전 **18.0회**(끔 24.7) — 전설이 흔해 고유 5개가 금방 모이고, 카드 경제형(카드 축복 +65%/층 · 비전 충전) · 생존형(은총의 종 +33%)이 튀었다(한 개씩 끼운 최고 57층 메타 A/B, 클래스당 6회). 고친 것: 전설 드롭 가중치 ×0.55(`DROP_WEIGHTS` — 상자는 그대로) · `legendGate` · 전쟁 군주 = 축복의 함성 5초 +20% · 쿨 가속 1.6/1.3배 · 망령 6%·마력 50% · 비전 충전 +10% · 영혼 공급 −0.2초 · 은총의 종 8%/15% · 축복 = 신성 파쇄(카드 축복 대신) · 도탄 1번 · 원소 [1,3] · 쿨타임 [1,2.5] · 협공 [1,2.5] · 영웅 피해 [0.6,1.5] · 궁극 특성 중복 → 영웅 피해 +12%. 결과 도전 **24.6회 · 19.0h**(끔 24.7회 · 18.1h), 영웅 기여도 31% — 장비가 캠페인 속도를 바꾸지 않고 빌드만 바꾼다. 궁수 영웅 기여도가 44%(클래스 상한 45%)라 도탄 2번 → 1번. `npm test`(최종): 캠페인 26.0회 · +3.57층/회 · 22.1h · 첫 도전 11.7층 · 기여도 33.2% · 동등성 기사 −2 · 궁수 −5(영웅 43%) · 마법사 +5 · 성직자 +4 · 암살자 −2% · 협공 +16%(통합 패스에서 세 트랙 합친 트리로 다시 재도 같은 값 — 영웅 기여도 25~40% · 클래스 격차 ±15% 안. 여유가 적은 곳: 궁수 영웅 43%(상한 45%) · 마법사 22%(하한 20%)).
+
+### v0.1.7 전리품 · 하위 장비 자동 처리 계약 (LOOT 트랙 — `public/js/loot.js` · `lootui.js` · `css/loot.css` · `test/loot.test.js` · heroui.js 가방 · hero.js/shop.js/main.js/world.js/hud.js/ui.js/audio.js 작은 훅)
+> 사용자: "아래 단위 장비 얻는 거 처리가 필요해. 쌓이게 하기 싫어" + "얻어도 기쁘지 않아". 좋은 것만 눈에 띄게, 나머지는 조용히 골드로. **강화 없음**.
+
+**정책(`loot.js`, DOM 없음 — hero.js와 순환 import라 최상위에서 hero.js 값을 쓰지 않는다)**
+- 설정 `hero.autoSell = { upto:'off'|'common'|'rare'|'epic', weaker, keep, asked }` — 기본 **희귀 이하 자동 판매**(`upto:'rare'`) · `weaker` '장착 중인 것보다 약하면'(등급 무관, 기본 끔) · `keep` 전설 · 세트 조각 · 고유 옵션 보호(기본 켬) · `asked` 기존 가방 정리를 물어봤나. `newHero()`가 기본값, 옛 저장은 `normAutoSell` = 기본값 + `asked:false`.
+- `autoSells(hero, it)`: **절대 아님** = 잠금(`it.lock`) · 장착 중 · **지금 그 칸보다 좋은 장비(빈 칸 포함, `itemPower(it, hero.cls)`) — 단 그 부위 가방 후보 중 최고 하나만(통합: 자동 장착을 끈 빈 칸에 하위 장비가 쌓이지 않게)** · `keep`이면 `isSpecial`(전설·세트·고유). 그 밖에 `rank ≤ upto`이거나 `weaker && 더 약함`이면 판다.
+- `gainItem(hero, item, runId)`(hero.js `lootDrop`이 부른다): `item.n = 1`(NEW — 바로 낀 장비는 지운다) → 가방 → 자동 장착(**밀려난 장비도 `autoSells`면 바로 판매**) → 자동 판매 → 넘치면 `trimBag` → 도전 집계. → `{ sold, lost, gold, n, equipped, gain, up }`(`lost` = 가방이 가득 차 팔린 특별한 드롭 — 그래도 'loot' 획득 카드에 '가방이 가득 차 바로 팔았어요'). 자동 판매 골드는 이번 도전 골드에만 — **체크포인트엔 넣지 않는다**(처치 골드처럼: 층 도중 껐다 켜면 같은 층이 다시 드롭하니 넣으면 무한 파밍).
+- `autoEquipAll`: **잠근 장착 장비는 고정** · **켜진 세트(2개 이상) 조각은 같은 세트 조각이나 전투력 `SET_BREAK`(2)배 넘는 것만** 밀어낸다(전투력엔 세트 보너스 값이 없어 다음 드롭마다 세트가 깨지던 것).
+- 가방이 차면 `trimBag` → `trashIdx`: 잠금 제외 → 기준에 걸리는 것 → **장착 중보다 약한 중복 고유(더 센 같은 고유가 장착·가방에)** → 특별하지 않은 것 → **장착 중보다 약한 것(세트 조각 제외)** → 낮은 등급 → 낮은 전투력 순으로 한 칸. 전부 잠겼으면 새 드롭을 판다(가방은 30칸을 넘지 않는다). 상점 상자는 가방이 잠금으로만 꽉 차면 값을 받기 전에 막는다(`bagJammed` · 토스트).
+- 보호 문구: '잠근 장비와 **부위마다** 지금보다 좋은 장비 **1개**'(autoSells가 실제로 지키는 것).
+- 잠금: `sellItem`·`sellItemsByRarity`(hero.js)도 잠근 장비는 건너뛴다. `it.lock`·`it.n`은 참일 때만 `1`로 저장(items.js `migrateItem`).
+- 이번 도전 집계 `hero.runLoot = { id: run.log.id, n: 자동 판매 수, gold, best: 남긴 드롭 중 최고(등급 → 전투력) 사본 }` — 영구 hero에 둔다(판매는 되돌릴 수 없어 체크포인트와 무관, 도전 id가 바뀌면 새로). 결과 화면이 읽는다.
+- 상자(shop.js `openBox`)는 산 것이라 자동 판매하지 않는다(NEW만).
+- `cleanPreview(hero)` → `{ items, gold }`(일괄 정리 미리 보기) · `goodDrop(item, r)` = 영웅 이상 · 특별한 장비 · 희귀 이상인데 장착했거나 더 좋음.
+
+**이벤트**: 남는 드롭 = `loot{ item, x, y, equipped, gain, up, soldGold, soldN }`(빛기둥 · NEW · 획득 카드 — soldN은 가방이 차서 대신 판 몫) · 자동 판매된 드롭 = **`lootSold{ item, x, y, gold, n }`**(빛기둥·카드 없음 — world.js 작은 반짝임 + 묶음 알림).
+
+**연출(`lootui.js`, main.js가 `lootUI.onEvents(events, g)` · `lootUI.renderResult(g)`)**
+- 드롭 빛기둥은 기존 world.js(등급 색 · 전설 = 하늘 끝까지 금빛 + 섬광). 전설은 전용 효과음 `audio.play('legendDrop')`.
+- **획득 카드**(좋은 드롭만, `#col` 위 비차단): 뒤집히며 등장 0.17초 → 0.56초 → 영웅 버튼으로 날아감 0.23초(합 0.96초), **탭하면 바로 넘김**, 몰려 오면 최대 2장 줄. 등급 리본 · 아이콘 · 이름 · 등급/부위/Lv · 고유 옵션 · 세트(장착 수) · '자동 장착! 전투력 ▲N' 또는 '지금 장비보다 좋아요 ▲N'. hud.js 전설 캔버스 배너(2.1초)와 ui.js 영웅 획득 토스트는 이 카드로 바뀌었다.
+- 카드 없는 드롭이 자동 장착되면 영웅 버튼 옆 '자동 장착 ▲N' 말풍선(1.4초). 자동 판매는 층 진행 막대 밑 '+골드 · 자동 판매 N개' 알약 — 1.8초 안에 또 팔리면 숫자만 늘린다.
+- 결과 화면(획득 골드 카드 다음) '이번 도전 최고 획득' 카드 + '자동 판매 N개 · +골드' 한 줄.
+
+**가방(heroui.js)**: 도구줄 '자동 판매 [기준] ⚙'(설정 창: 등급 기준 4칸 · 약하면 · 특별한 장비 보호) + '일괄 정리 N'(미리 보기 창: 팔릴 장비 아이콘 · 합계 골드 · 남는 것 안내 → 한 개씩 `sell` 액션, 도전 중 = 이번 도전 골드 · 정비 = 보유 골드). 가방 탭을 처음 열 때 `asked`가 거짓이고 기준에 걸리는 장비가 있으면 **'가방 정리' 한 번 묻기**(자동으로 버리지 않는다 — 어느 답이든 asked = true, 기준을 직접 바꿔도 true). 타일: NEW(저장됨, 누르면 확인) · 자물쇠 · 고유 보석(금 = 전설, 보라 = 영웅) · 세트 색 띠 + 'n/4'. 상세: 옵션 줄(`itemLines` — 최고 굴림 금색 '최고') · 고유 상자 · 세트 상자(2/4 켜짐) · 전투력 차이 + **옵션별 ▲▼**(`compareItems`, 두 줄 격자) · 고유 옵션을 잃으면 한 줄 · 잠금 버튼(잠기면 판매 버튼 '잠김'). 세트 진행도(`setProgress`)는 가방 · 영웅 탭 위에. 설정 화면에도 '장비 자동 판매' 등급 줄(lootui.js가 붙인다).
+**테스트** `test/loot.test.js`: 기준 · 보호(잠금 · 장착 · 더 좋은 것 · 전설 · 세트 · 고유) · 약하면 · 즉시 판매 골드 · NEW · 최고 획득 · 도전 바뀌면 새 집계 · 자동 장착 값 · 넘침 정리 순서 · 전부 잠기면 새 드롭 판매 · 잠금 판매 거절 · 미리 보기 · 저장 라운드트립.

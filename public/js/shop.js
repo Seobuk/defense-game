@@ -3,6 +3,7 @@
 import { TRAIN_KEYS, trainMax, trainCost, metaMax, metaCost, MAX_STAGE } from './config.js';
 import { rollItem, trimBag, sellValue, autoEquipAll } from './hero.js';
 import { toInt } from './util.js';
+import { bagJammed } from './loot.js'; // v0.1.7 가방이 잠근 장비로만 가득 차면 상자를 열지 않는다
 import { lockedRelics, relicUnlockCost, unlockRelic } from './relics.js'; // 유물 해금 API(유물 트랙)
 
 const BREAK_CAP = 999; // 돌파 단계 저장 상한(비용이 먼저 천문학적이 된다)
@@ -130,9 +131,10 @@ export function togglePrep(meta, key) {
 // 상자 열기 → { item, sold, equipped } | false. 가방이 넘치면 가장 약한 장비를 자동 판매(골드는 바로 meta.gold)
 export function openBox(meta, key, rng = Math.random) {
   const box = BOXES.find(b => b.key === key);
-  if (!box || !pay(meta, box.cur, boxCost(key, meta.best))) return false;
+  if (!box || bagJammed(meta.hero) || !pay(meta, box.cur, boxCost(key, meta.best))) return false; // 잠금으로 꽉 찬 가방 = 산 장비가 바로 팔린다 → 값을 받기 전에 막는다
   const hero = meta.hero;
   const item = rollItem(boxIlvl(meta), boxOdds(key, meta.best), rng, hero.cls || 'knight');
+  item.n = 1; // v0.1.7 가방 NEW 표시(loot.js) — 산 장비는 자동 판매하지 않는다
   hero.bag.push(item);
   if (hero.autoEquip) autoEquipAll(hero); // 먼저 장착(가방이 가득 차도 산 장비가 더 좋으면 끼운다) → 넘친 만큼 정리
   const over = trimBag(hero);

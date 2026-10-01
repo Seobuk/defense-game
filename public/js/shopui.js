@@ -8,6 +8,7 @@ import { itemIconURL } from './art/units.js';
 import { relicImg } from './art/relicart.js'; // 유물 메달(유물 트랙 그림)
 import { icon } from './icons.js';
 import { fmt } from './util.js';
+import { bagJammed } from './loot.js'; // v0.1.7
 
 const RAR = Object.fromEntries(RARITIES.map(r => [r.key, r]));
 const SUB_NAME = Object.fromEntries(SUBSTATS.map(s => [s.key, s.name]));
@@ -93,6 +94,7 @@ export function createShopUI(el, pane, prepHost, H = {}) {
   function buyBox(k, btn) {
     const box = BOXES.find(x => x.key === k);
     if (!(meta[box.cur] >= boxCost(k, meta.best))) { if (btn) shake(btn); H.toast?.(box.cur === 'gold' ? '골드가 부족해요' : '보석이 부족해요', box.cur === 'gold' ? 'coin' : 'gem'); return; }
+    if (bagJammed(meta.hero)) { if (btn) shake(btn); H.toast?.('가방이 잠근 장비로 가득 찼어요 — 잠금을 풀거나 팔아 주세요', 'bag'); return; } // shop.js openBox도 막는다
     const before = Object.fromEntries(Object.entries(meta.hero.equip).map(([s, it]) => [s, it]));
     const r = H.onCampAct?.({ type: 'box', key: k });
     if (!r || !r.item) return;

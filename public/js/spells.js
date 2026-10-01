@@ -8,6 +8,7 @@ import {
   COLLAB_FX, collabOn, collabPow, FRONT_Y, inReach,
 } from './config.js';
 import { heroBonuses } from './hero.js';
+import { gearCdRate } from './items.js'; // 장비 v0.1.7: 스킬 쿨타임 부옵션 · 궁극기 뒤 가속 창
 import { elemMul, castRateMul } from './dungeons.js'; // 4차 던전 특성: 원소 약점·내성 · 화산 열기
 import { mutCast, mutTick, mutOnHit, mutOnKill, mutSlow, mutCurse, mutCdMul, mutOwns } from './mutations.js'; // 4차 변이(Lv6 스킬 진화 분기) — 훅 한 줄씩(// 변이 표시)
 
@@ -130,7 +131,7 @@ export function updateSpells(g, dt, api) {
 // 쿨타임이 다 되면 시전. 합동 필살: 영웅 궁극기 3초 안의 첫 시전은 2배 위력 + 슬로 모션.
 // 이 시전이 낸 cast/spell 이벤트에 스킬 레벨 lv를 붙인다(렌더러: Lv1 소박 → Lv6 완전체)
 function tick(g, api, o, T, key, lv, p, dt, fn) {
-  if ((T[key] -= dt) > 0) return;
+  if ((T[key] -= dt * gearCdRate(g, key)) > 0) return; // 장비 v0.1.7(items.js — 장비 없으면 1)
   const link = o === 0 && g.linkT > 0;
   if (link) g._emp = COLLAB_FX.linkMul;
   g._rmul = FUSION_BY_KEY[key] ? g.rfx.fusionCastMul : 1; // 4차 유물 대마법사의 지팡이: 융합 전용 시전 배율(pd)

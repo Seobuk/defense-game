@@ -3,6 +3,8 @@
 import { WALL_Y, WORLD_W, SOLO_MAGE, SPELL_BY_KEY, COLLAB_FX, collabOn, collabPow, FRONT_Y } from './config.js';
 import { clamp } from './util.js';
 import { talentBonus, TALENT_VER } from './talents.js';
+import { SLOTS, AFFIXES, rollItem, itemPower, gearFx, gearOnUlt, gearOnKill, setCounts, TB_MAX } from './items.js'; // 장비 v0.1.7(고유 옵션 · 세트 · 부옵션 효과)
+import { trashIdx, gainItem, newAutoSell } from './loot.js'; // v0.1.7 전리품: 자동 판매 · 가방 정리 · 잠금(순환 import — 호출 시점에만 씀)
 
 // ── 클래스 5종 ──
 export const HERO_CLASSES = {
@@ -93,32 +95,10 @@ export const MILESTONES = [
 export const hasMilestone = (level, key) => MILESTONES.some(m => m.key === key && level >= m.lv);
 export const milestoneAt = level => MILESTONES.find(m => m.lv === level) || null;
 
-// ── 장비 ──
-export const SLOTS = ['weapon', 'helm', 'armor', 'trinket', 'cape'];
-const SLOT_NAME = { weapon: '무기', helm: '머리', armor: '갑옷', trinket: '장신구', cape: '망토' };
-const SLOT_MAIN_KEY = { weapon: 'atkPct', helm: 'heroHpPct', armor: 'dmgReducePct', trinket: 'critDmgPct', cape: 'atkSpeedPct' };
-export const SLOT_NAMES = SLOT_NAME;
-
-export const RARITIES = [
-  { key: 'common', name: '일반', color: '#b7bdc6', mainMul: 1, subMul: 1, subN: [0, 1] },
-  { key: 'uncommon', name: '고급', color: '#4ade80', mainMul: 1.15, subMul: 1.2, subN: [0, 2] },
-  { key: 'rare', name: '희귀', color: '#60a5fa', mainMul: 1.35, subMul: 1.5, subN: [1, 2] },
-  { key: 'epic', name: '영웅', color: '#c084fc', mainMul: 1.6, subMul: 2, subN: [2, 3] },
-  { key: 'legend', name: '전설', color: '#fbbf24', mainMul: 1.9, subMul: 2.8, subN: [3, 3] },
-];
-export const RARITY_KEYS = RARITIES.map(r => r.key);
-const RARITY_BY_KEY = Object.fromEntries(RARITIES.map(r => [r.key, r]));
-const rarityRank = r => RARITY_KEYS.indexOf(r);
-
-export const SUBSTATS = [
-  { key: 'gold', name: '골드 획득', scope: 'global' },
-  { key: 'boss', name: '보스 피해', scope: 'hero' },
-  { key: 'mana', name: '마나 충전', scope: 'global' },
-  { key: 'spell', name: '스킬 피해', scope: 'global' },
-  { key: 'crit', name: '치명타 확률', scope: 'hero' },
-  { key: 'heroHp', name: '체력', scope: 'hero' },
-];
-const SUB_KEYS = SUBSTATS.map(s => s.key);
+// ── 장비 — 데이터·굴림·전투력은 items.js(v0.1.7 장비 계약). 여기서 그대로 재수출(기존 import 호환) ──
+export { SLOTS, SLOT_NAMES, RARITIES, RARITY_KEYS, rollItem, itemPower } from './items.js';
+// SUBSTATS = 부옵션 풀 전체({ key, name, scope } — heroui/shopui 이름 표 · save.js 호환)
+export const SUBSTATS = AFFIXES.map(a => ({ key: a.key, name: a.name, scope: a.scope }));
 
 export const BAG_SIZE = 30;
 
@@ -130,85 +110,14 @@ export function newHero() {
     talentVer: TALENT_VER, talentNotice: false, // 특성 구조 버전 · 개편 환불 안내(정비 화면 1회, campAct 'talentNoticeSeen')
     equip: { weapon: null, helm: null, armor: null, trinket: null, cape: null },
     bag: [],
+    autoSell: newAutoSell(), runLoot: { id: null, n: 0, gold: 0, best: null }, // v0.1.7 loot.js: 하위 장비 자동 판매 설정 · 이번 도전 전리품 집계
   };
-}
-
-// 등급별 드롭 가중치. boss = 확정 희귀 이상(일반/고급 가중치 0)
-const DROP_WEIGHTS = {
-  normal: [70, 22, 6, 1.8, 0.2],
-  elite: [28, 30, 26, 13, 3],
-  boss: [0, 0, 45, 40, 15],
-  chest: [15, 26, 32, 20, 7],
-};
-function pickRarity(source, rng) {
-  const w = Array.isArray(source) ? source : DROP_WEIGHTS[source] || DROP_WEIGHTS.normal; // 배열 = 직접 가중치(shop.js 장비 상자)
-  let sum = 0;
-  for (const x of w) sum += x;
-  let x = rng() * sum;
-  for (let i = 0; i < w.length; i++) { x -= w[i]; if (x < 0) return RARITY_KEYS[i]; }
-  return RARITY_KEYS[RARITY_KEYS.length - 1];
-}
-
-const MAIN_RANGE = { atkPct: [8, 16], heroHpPct: [10, 18], dmgReducePct: [4, 9], critDmgPct: [12, 22], atkSpeedPct: [6, 13] };
-// gold/mana/spell은 전역 경제에 누적 복리로 영향을 주므로 낮게(hero/boss/crit/heroHp는 영웅 자신에게만 영향)
-const SUB_RANGE = { gold: [1, 2.5], boss: [5, 10], mana: [1, 2.5], spell: [1, 2.5], crit: [2, 5], heroHp: [5, 10] };
-const randIn = ([lo, hi], rng) => lo + rng() * (hi - lo);
-const round1 = v => Math.round(v * 10) / 10;
-
-function shuffled(arr, rng) {
-  const a = arr.slice();
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
-
-const ELEMENT_PREFIX = ['용암', '서리', '천둥', '심연', '황금', '유령', '태양', '월광', '폭풍', '철혈'];
-const CLASS_FLAVOR = {
-  knight: ['수호자', '성기사', '철벽', '기사단장'],
-  ranger: ['사냥꾼', '저격수', '추적자', '궁성'],
-  sorcerer: ['현자', '비전학자', '원소술사', '마도사'],
-  cleric: ['성자', '사제', '치유사', '대주교'],
-  assassin: ['그림자', '밤의 칼날', '살수', '암살자'],
-};
-function itemName(cls, slot, rng) {
-  const flavor = CLASS_FLAVOR[cls] || CLASS_FLAVOR.knight;
-  const pre = ELEMENT_PREFIX[Math.floor(rng() * ELEMENT_PREFIX.length)];
-  const who = flavor[Math.floor(rng() * flavor.length)];
-  const noun = slot === 'weapon' ? (HERO_CLASSES[cls] || HERO_CLASSES.knight).weapon : SLOT_NAME[slot];
-  return `${pre} ${who}의 ${noun}`;
-}
-
-// stage(=ilvl), source: 'normal'|'elite'|'boss'|'chest' | 등급 가중치 배열(장비 상자)
-export function rollItem(stage, source, rng, cls) {
-  const ilvl = clamp(Math.floor(stage) || 1, 1, 100);
-  const rarity = pickRarity(source, rng);
-  const R = RARITY_BY_KEY[rarity];
-  const slot = SLOTS[Math.floor(rng() * SLOTS.length)];
-  const scale = 1 + (ilvl - 1) * 0.008; // ponytail: 완만하게 — 아이템 운이 밸런스를 크게 흔들지 않게
-
-  const mainKey = SLOT_MAIN_KEY[slot];
-  const main = { key: mainKey, value: round1(randIn(MAIN_RANGE[mainKey], rng) * R.mainMul * scale) };
-  const [subLo, subHi] = R.subN;
-  const subCount = subLo + Math.floor(rng() * (subHi - subLo + 1));
-  const subs = shuffled(SUB_KEYS, rng).slice(0, subCount)
-    .map(k => ({ key: k, value: round1(randIn(SUB_RANGE[k], rng) * R.subMul * scale) }));
-  return { id: rng().toString(36).slice(2, 10) + rng().toString(36).slice(2, 6), slot, rarity, ilvl, name: itemName(cls, slot, rng), main, subs };
-}
-
-const MAIN_POWER_W = { atkPct: 3.5, heroHpPct: 2.5, dmgReducePct: 5, critDmgPct: 3, atkSpeedPct: 3.5 };
-export function itemPower(item) {
-  if (!item) return 0;
-  let p = item.main.value * (MAIN_POWER_W[item.main.key] || 3);
-  for (const s of item.subs) p += s.value * 2;
-  return Math.round(p * (1 + item.ilvl * 0.01));
 }
 
 export function heroPower(hero) {
   if (!hero || !hero.cls) return 0;
   let p = hero.level * 12;
-  for (const slot of SLOTS) p += itemPower(hero.equip[slot]);
+  for (const slot of SLOTS) p += itemPower(hero.equip[slot], hero.cls); // 다른 클래스 전용 고유 옵션은 빼고(v0.1.7)
   return Math.round(p);
 }
 
@@ -227,12 +136,8 @@ export function addToBag(hero, item) {
 // 가방이 넘치면 가장 약한 장비(낮은 등급 → 낮은 전투력) 하나를 빼서 돌려준다(팔 것). export: shop.js 상자 = 자동 장착 뒤에 정리
 export function trimBag(hero) {
   if (hero.bag.length <= BAG_SIZE) return null;
-  let worst = 0;
-  for (let i = 1; i < hero.bag.length; i++) {
-    const a = hero.bag[i], b = hero.bag[worst];
-    if (rarityRank(a.rarity) < rarityRank(b.rarity) || (rarityRank(a.rarity) === rarityRank(b.rarity) && itemPower(a) < itemPower(b))) worst = i;
-  }
-  return hero.bag.splice(worst, 1)[0];
+  const worst = trashIdx(hero); // v0.1.7 loot.js: 잠금 제외 · 자동 판매 기준에 걸리는 것 먼저 · 특별한 장비(전설·세트·고유) 나중
+  return worst < 0 ? null : hero.bag.splice(worst, 1)[0];
 }
 
 export function equipItem(hero, itemId) {
@@ -247,14 +152,14 @@ export function equipItem(hero, itemId) {
 
 export function sellItem(hero, itemId) {
   const idx = hero.bag.findIndex(it => it.id === itemId);
-  if (idx < 0) return null;
+  if (idx < 0 || hero.bag[idx].lock) return null; // v0.1.7 잠근 장비는 팔지 않는다
   return sellValue(hero.bag.splice(idx, 1)[0]);
 }
 
 export function sellItemsByRarity(hero, rarity) {
   let total = 0;
   hero.bag = hero.bag.filter(it => {
-    if (it.rarity !== rarity) return true;
+    if (it.rarity !== rarity || it.lock) return true; // v0.1.7 잠금 제외
     total += sellValue(it);
     return false;
   });
@@ -262,11 +167,17 @@ export function sellItemsByRarity(hero, rarity) {
 }
 
 // 전투력이 더 높은 가방 아이템으로 자동 교체(부위별). 밀려난 장비는 가방으로
+// 세트 보호(v0.1.7 플레이 테스트): 잠근 장착 장비는 고정 · 켜진 세트(2개 이상) 조각은 같은 세트 조각이나 전투력 SET_BREAK배 넘는 것만 밀어낸다
+// (전투력엔 세트 보너스 값이 없어 다음 드롭마다 손으로 맞춘 세트가 깨지던 것). ponytail: 배율 한 개 — 세트 보너스 값을 매기면 그걸로
+export const SET_BREAK = 2;
 export function autoEquipAll(hero) {
   let changed = false;
   for (const slot of SLOTS) {
-    let bestIdx = -1, bestP = itemPower(hero.equip[slot]);
-    hero.bag.forEach((it, i) => { if (it.slot === slot && itemPower(it) > bestP) { bestP = itemPower(it); bestIdx = i; } });
+    const cur = hero.equip[slot];
+    if (cur && cur.lock) continue;
+    const keepSet = cur && cur.set && setCounts(hero)[cur.set] >= 2 ? cur.set : null, curP = itemPower(cur, hero.cls);
+    let bestIdx = -1, bestP = curP; // v0.1.7: 지금 클래스 기준(다른 클래스 전용 고유는 0)
+    hero.bag.forEach((it, i) => { const p = it.slot === slot ? itemPower(it, hero.cls) : -1; if (p > bestP && (!keepSet || it.set === keepSet || p > curP * SET_BREAK)) { bestP = p; bestIdx = i; } });
     if (bestIdx < 0) continue;
     const item = hero.bag.splice(bestIdx, 1)[0];
     const old = hero.equip[slot];
@@ -281,7 +192,8 @@ export function autoEquipAll(hero) {
 // 장착 장비가 그대로면 캐시(스킬 틱·처치마다 불려서) — 반환값은 읽기 전용
 const GEAR_CACHE = new WeakMap();
 export function gearBonuses(hero) {
-  const b = { atkPct: 0, heroHpPct: 0, dmgReducePct: 0, critDmgPct: 0, atkSpeedPct: 0, gold: 0, boss: 0, mana: 0, spell: 0, crit: 0, heroHp: 0 };
+  const b = { atkPct: 0, heroHpPct: 0, dmgReducePct: 0, critDmgPct: 0, atkSpeedPct: 0 };
+  for (const a of AFFIXES) b[a.key] = 0; // v0.1.7 부옵션 22종 합계(표시용 — 새 부옵션 효과는 items.js gearFx가 적용)
   if (!hero) return b;
   const e = hero.equip, sig = [e.weapon, e.helm, e.armor, e.trinket, e.cape];
   const c = GEAR_CACHE.get(hero);
@@ -302,6 +214,15 @@ export function heroBonuses(hero) {
   return { goldMul: 1 + g.gold / 100, manaMul: 1 + g.mana / 100, spellMul: 1 + g.spell / 100 };
 }
 
+export const CAP_DUP_ATK = 0.12; // 고유 옵션의 궁극 특성을 특성으로 이미 가졌을 때 대신 영웅 피해 +12%(items.js 문구와 같게)
+// 장비 v0.1.7: 특성 합산 + 장비 효과(고유 옵션 · 세트 · 부옵션 — items.js gearFx). 특성 효과 키·궁극 특성 훅을 그대로 탄다
+export function heroTb(hero, cls) {
+  const tb = talentBonus(hero, cls), f = gearFx(hero, cls);
+  for (const k in f.tb) tb[k] = TB_MAX[k] ? Math.max(tb[k] || 0, f.tb[k]) : (tb[k] || 0) + f.tb[k]; // 반경 키(냉기 오라)는 합하지 않고 큰 것
+  for (const k in f.cap) { if (tb.cap[k]) tb.atk += CAP_DUP_ATK; else tb.cap[k] = true; } // 이미 특성으로 가진 궁극 특성이면 영웅 피해로(버리는 전설이 없게)
+  return tb;
+}
+
 // ── 영웅 전투 스탯 ──
 // 피해 기준 = P1 성벽 마법사의 마력(층 공명 × 수련 × 각성) × 치명타 기대값 × (기본 + 스킬 레벨 합). 마법사가 스킬로 강해지는 만큼
 // 영웅도 같은 비중을 유지한다. 영웅 DPS = 기준 × HERO_K × 클래스 배율(dps) × 레벨 배율 × (장비·특성). 특성을 다 찍으면 전체 화력의 25~40%(test/sim.test.js)
@@ -317,7 +238,7 @@ export function mageRef(g) {
 }
 const buffMul = g => (g.heroBuff ? g.heroBuff.mul : 1);
 
-export function heroCombatStats(g, hero, tb = talentBonus(hero, hero.cls)) {
+export function heroCombatStats(g, hero, tb = heroTb(hero, hero.cls)) {
   const cls = HERO_CLASSES[hero.cls] || HERO_CLASSES.knight;
   const gear = gearBonuses(hero);
   const lvl = hero.level;
@@ -368,7 +289,7 @@ export function spawnHeroUnit(hero) {
     ultCd: 0, ultT: 0, invulnT: 0, blinkT: 0, ambushT: 0,
     moveTo: null, respawnT: 0,
     level: hero.level, tier: heroTier(hero.level),
-    engageR: 0, tb: talentBonus(hero, hero.cls), tbT: 0.5, st: null, stT: 0,
+    engageR: 0, tb: heroTb(hero, hero.cls), tbT: 0.5, st: null, stT: 0,
     procT: { shieldToss: 2, pillar: 2.5, pull: 3 }, lookT: 0, wander: null, retargetT: 0, tgtE: null,
   };
 }
@@ -785,7 +706,7 @@ export function updateHeroUnit(g, dt, api) {
   const cls = HERO_CLASSES[hero.cls];
   // 특성 합산은 0.5초마다(도전 중 특성을 찍으면 act가 tbT = 0으로 즉시 갱신)
   // 전투 스탯은 0.2초마다(장비·마법사 강화·버프 반영 지연 ≤ 0.2초)
-  if ((h.tbT -= dt) <= 0) { h.tb = talentBonus(hero, hero.cls); h.tbT = 0.5; h.stT = 0; }
+  if ((h.tbT -= dt) <= 0) { h.tb = heroTb(hero, hero.cls); h.tbT = 0.5; h.stT = 0; }
   const fresh = (h.stT -= dt) <= 0 || !h.st;
   if (fresh) { h.st = heroCombatStats(g, hero, h.tb); h.stT = 0.2; }
   const tb = h.tb, st = h.st;
@@ -1058,6 +979,7 @@ export function castHeroUlt(g, api) {
     api.emit(g, { type: 'heroProc', kind: 'nova', sub: 'ultBless', col: '#ffe07a', x: h.x, y: h.y, r: 180 });
   }
   if (tb.ultRefresh || tb.grace || tb.surge) api.emit(g, { type: 'heroProc', kind: 'nova', sub: tb.grace ? 'grace' : tb.surge ? 'surge' : 'ultRefresh', x: h.x, y: h.y, r: 140 });
+  gearOnUlt(g); // 장비 v0.1.7: 궁극기 뒤 쿨타임 가속 창(뇌신 · 폭풍 부름 · 세트)
   return true;
 }
 
@@ -1129,6 +1051,7 @@ export function heroOnKill(g, e, api, o) {
       }
     }
   }
+  gearOnKill(g, e); // 장비 v0.1.7: 망령 소환(망자의 등불 · 망자의 서약 세트)
   const chance = e.named ? DROP_CHANCE.named : e.isBoss ? DROP_CHANCE.elite : DROP_CHANCE.normal;
   if (g.heroRng() < chance) {
     const source = e.named ? 'boss' : e.isBoss ? 'elite' : 'normal';
@@ -1139,13 +1062,11 @@ export function heroOnKill(g, e, api, o) {
 export function lootDrop(g, source, x, y, api) {
   const hero = g.hero;
   const item = rollItem(g.stage, source, g.heroRng, hero.cls);
-  hero.bag.push(item);
-  if (hero.autoEquip) autoEquipAll(hero); // 장착 먼저 — 가방이 가득 차도 더 좋은 드롭이 팔려 나가지 않게(상자와 같은 순서)
-  const overflow = trimBag(hero);
-  if (overflow) { // 가방이 넘치면 판매 — 판매 골드는 이어하기 체크포인트에도(sim.js saleGold와 같은 이유)
-    const v = sellValue(overflow);
-    g.players[0].gold += v;
-    if (g.run?.checkpoint) g.run.checkpoint.players[0].gold += v;
-  }
-  api.emit(g, { type: 'loot', item, x, y });
+  // v0.1.7 loot.js gainItem: NEW → 자동 장착(먼저 — 더 좋은 드롭이 팔려 나가지 않게) → 하위 장비 자동 판매 → 넘치면 정리 → 도전 집계
+  const r = gainItem(hero, item, g.run?.log?.id);
+  // 자동 판매 골드는 처치 골드처럼 체크포인트에 넣지 않는다 — 층 도중 껐다 켜면 같은 층이 다시 드롭하니 다시 번다(넣으면 그만두기·이어하기로 무한 파밍)
+  // ponytail: 가방이 넘쳐 판 옛 장비 몫도 같이 빠진다(작은 골드) — 문제가 되면 gainItem이 그 몫을 따로 돌려주게
+  g.players[0].gold += r.gold;
+  // 자동 판매된 드롭은 lootSold(작은 반짝임 + 묶음 알림) — 'loot'(빛기둥·획득 카드)는 남는 장비와 가방이 가득 차 팔린 특별한 장비(lost)
+  api.emit(g, r.sold && !r.lost ? { type: 'lootSold', item, x, y, gold: r.gold, n: r.n } : { type: 'loot', item, x, y, equipped: r.equipped, gain: r.gain, up: r.up, soldGold: r.gold, soldN: r.n, lost: r.lost });
 }

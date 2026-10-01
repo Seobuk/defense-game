@@ -4,6 +4,7 @@
 import { SPELL_SLOTS, SPELL_MAX_LV, MAX_STAGE, SKILL_BY_KEY, FUSION_BY_KEY, FUSIONS, COLLABS, PICK_AUTO_T } from './config.js';
 import { bossOf } from './stages.js';
 import { refreshFx, refreshFusion, reofferPick, serializeRun, slotsUsed } from './sim.js';
+import { gearRelicPlus } from './items.js'; // 장비 v0.1.7
 import { toInt } from './util.js';
 
 export const RELIC_PICK_N = 3;   // 보스 보상 후보 수
@@ -125,7 +126,8 @@ export function offerRelics(g) {
   const own = g.relics, bad = new Set(own.flatMap(k => RELIC_BY_KEY[k].excl || []));
   let pool = g.relicPool.filter(k => !own.includes(k) && !bad.has(k) && !(RELIC_BY_KEY[k].excl || []).some(x => own.includes(x)));
   const cards = [];
-  while (cards.length < RELIC_PICK_N && pool.length) {
+  const want = RELIC_PICK_N + gearRelicPlus(g); // 장비 v0.1.7: 탐구자 나침반(유물 후보 +1)
+  while (cards.length < want && pool.length) {
     const k = pool[Math.floor(g.rng() * pool.length)];
     pool = pool.filter(x => x !== k);
     cards.push(k);
@@ -203,6 +205,14 @@ export function forgetSkill(g, key) {
   g.forgetLeft--;
   g.run.forgets++;
   g.forgetBonus = (g.forgetBonus | 0) + refund;
+  // 이어하기: 층 시작 체크포인트에도 같은 망각을(껐다 켜면 스킬이 되살아나 망각만 공짜로 되돌던 것 방지). 층 도중에 배운 스킬이면 체크포인트엔 없다 → 횟수만 되돌림
+  const c = g.run.checkpoint; // 남은 횟수는 저장 때 sim syncCheckpoint가 맞춘다
+  if (c?.spells?.[key] > 0) {
+    c.forgetBonus = (c.forgetBonus | 0) + forgetRefund(key, c.spells[key]);
+    delete c.spells[key];
+    if (c.mutations) delete c.mutations[key];
+    if (c.fusionParts) delete c.fusionParts[key];
+  } else if (c) c.forgetFree = (c.forgetFree | 0) + 1; // 층 도중에 배운 스킬: 이어하면 스킬도 환급도 없으니 망각 횟수도 돌려준다(sim syncCheckpoint)
   refreshFusion(g);
   emit(g, { type: 'forget', spell: key, level, fusion: !!FUSION_BY_KEY[key], refund });
   if (pick) {
@@ -247,7 +257,7 @@ export function relicRunSave(g) {
 // 신뢰할 수 없는 런 저장값 → 모양 검증(throw 없음). forgetLeft null = 새 도전(createGame이 채움)
 export function normalizeRelicRun(r) {
   const relics = [...new Set(Array.isArray(r.relics) ? r.relics : [])].filter(k => RELIC_KEYS.includes(k)).slice(0, 12);
-  const rp = Array.isArray(r.relicPick) ? [...new Set(r.relicPick)].filter(k => RELIC_KEYS.includes(k) && !relics.includes(k)).slice(0, RELIC_PICK_N) : [];
+  const rp = Array.isArray(r.relicPick) ? [...new Set(r.relicPick)].filter(k => RELIC_KEYS.includes(k) && !relics.includes(k)).slice(0, RELIC_PICK_N + 1) : []; // +1 = 장비 탐구자 나침반(gearRelicPlus 최대 1 — 같은 고유는 한 번만)
   return {
     relics, relicPick: rp.length ? rp : null,
     forgetLeft: r.forgetLeft == null ? null : toInt(r.forgetLeft, 0, 99),

@@ -6,8 +6,10 @@ import {
 } from './config.js';
 import { toInt, newId, UUID_RE } from './util.js';
 export { newId }; // 프로필 id · 도전 기록 id(util.js)
-import { newHero, HERO_CLASS_KEYS, MAX_HERO_LV, SLOTS, RARITY_KEYS, SUBSTATS, BAG_SIZE } from './hero.js';
+import { newHero, HERO_CLASS_KEYS, MAX_HERO_LV, SLOTS, BAG_SIZE } from './hero.js';
+import { migrateItem } from './items.js'; // 장비 v0.1.7
 import { normalizeRun } from './sim.js';
+import { normAutoSell } from './loot.js';
 import { migrateTalents, TALENT_VER, recommendNext, allocateTalent } from './talents.js';
 import { normShop, offlineGoldPerHour, offlineMul } from './shop.js'; // 4차 경제: 돌파·출정 준비 저장 · 방치 골드
 import { lockedRelics } from './relics.js'; // 4차 유물: 보석으로 해금한 유물(meta.relicUnlocked)
@@ -143,20 +145,8 @@ export function randomName(rand = Math.random) {
 }
 
 // 영웅(클래스·레벨·장비·가방). 없거나 깨졌으면 새 영웅(이전 버전 저장 마이그레이션 포함)
-const MAIN_KEYS = ['atkPct', 'heroHpPct', 'dmgReducePct', 'critDmgPct', 'atkSpeedPct'];
-const SUB_KEYS = SUBSTATS.map(x => x.key);
-function item(it) {
-  it = obj(it);
-  const main = obj(it.main);
-  if (typeof it.id !== 'string' || !it.id || !SLOTS.includes(it.slot) || !RARITY_KEYS.includes(it.rarity) || !MAIN_KEYS.includes(main.key)) return null;
-  return {
-    id: it.id.slice(0, 32), slot: it.slot, rarity: it.rarity, ilvl: toInt(it.ilvl, 1, MAX_STAGE),
-    name: typeof it.name === 'string' ? it.name.slice(0, 40) : '장비',
-    main: { key: main.key, value: num(main.value) },
-    subs: (Array.isArray(it.subs) ? it.subs : []).map(obj).filter(x => SUB_KEYS.includes(x.key)).slice(0, 3)
-      .map(x => ({ key: x.key, value: num(x.value) })),
-  };
-}
+// 장비 v0.1.7: 검증 · 옛 아이템 이전(품질 q 역산 · 옛 전설에 공용 고유 옵션) · 잠금/NEW 보존은 items.js migrateItem(멱등)
+const item = it => migrateItem(it);
 function hero(h) {
   const n = newHero();
   h = obj(h);
@@ -175,6 +165,9 @@ function hero(h) {
   n.bag = (Array.isArray(h.bag) ? h.bag : []).map(item).filter(Boolean).slice(0, BAG_SIZE);
   // v0.0.7까지는 기본이 꺼짐이라 토글을 몰라 알몸으로 싸우던 영웅이 많다: 아무것도 안 낀 영웅은 자동 장착을 켠다
   if (!SLOTS.some(slot => n.equip[slot])) n.autoEquip = true;
+  n.autoSell = normAutoSell(h.autoSell); // v0.1.7 하위 장비 자동 판매(옛 저장 = 기본값 + 기존 가방 정리 1회 묻기)
+  const rl = obj(h.runLoot); // 이번 도전 전리품 집계(결과 화면)
+  n.runLoot = { id: typeof rl.id === 'string' ? rl.id.slice(0, 64) : null, n: toInt(rl.n, 0, 1e6), gold: num(rl.gold), best: rl.best ? item(rl.best) : null };
   return n;
 }
 

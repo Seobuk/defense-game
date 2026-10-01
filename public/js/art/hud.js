@@ -715,7 +715,8 @@ export function events(view, evs, opts) {
         break;
       }
       case 'loot':
-        if (ev.item && ev.item.rarity === 'legend') MQ.push({ kind: 'loot', name: String(ev.item.name || ''), item: ev.item, cls: (view.hero && view.hero.cls) || 'knight', t: 0, life: MOMENT_LIFE.loot });
+        // v0.1.7: 전설 배너(2.1초)는 lootui.js DOM 획득 카드(1초 이내, 탭하면 넘김)로 바뀌었다 — 섬광·흔들림은 world.js lootFx가 그대로
+        // if (ev.item && ev.item.rarity === 'legend') MQ.push({ kind: 'loot', ... });
         break;
       case 'heroLevelUp': {
         const h = view.heroUnit, x = h ? h.x : 360, y = h ? h.y + 14 : WALL_Y - 20;

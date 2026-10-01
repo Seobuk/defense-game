@@ -97,12 +97,13 @@ assert.equal(d.runs, 0);
 assert.deepEqual(d.lastLoadout, { cls: null, startSpells: ['tornado', 'gale'] });
 
 // 영웅: 이전 저장(필드 없음) → 새 영웅, 깨진 장비는 버림
-assert.deepEqual(defaults().hero, { cls: null, level: 1, xp: 0, autoEquip: true, talents: {}, autoTalent: false, talentVer: 3, talentNotice: false, equip: { weapon: null, helm: null, armor: null, trinket: null, cape: null }, bag: [] });
+assert.deepEqual(defaults().hero, { cls: null, level: 1, xp: 0, autoEquip: true, talents: {}, autoTalent: false, talentVer: 3, talentNotice: false, equip: { weapon: null, helm: null, armor: null, trinket: null, cape: null }, bag: [],
+  autoSell: { upto: 'rare', weaker: false, keep: true, asked: false }, runLoot: { id: null, n: 0, gold: 0, best: null } }); // v0.1.7 loot.js
 const sword = { id: 'x1', slot: 'weapon', rarity: 'epic', ilvl: 12, name: '검', main: { key: 'atkPct', value: 12.5 }, subs: [{ key: 'gold', value: 2 }, { key: 'bad', value: 1 }] };
 const h = normalize({ hero: { cls: 'ranger', level: 500, xp: 7, autoEquip: true, equip: { weapon: sword, helm: sword, cape: 'x' }, bag: [sword, null, { id: 3 }] } }).hero;
 assert.equal(h.cls, 'ranger');
 assert.equal(h.level, 99);
-assert.deepEqual(h.equip.weapon.subs, [{ key: 'gold', value: 2 }]);
+assert.deepEqual(h.equip.weapon.subs, [{ key: 'gold', value: 2, q: 0 }]); // v0.1.7 items.js migrateItem: 옛 아이템 품질 q는 값에서 역산
 assert.equal(h.equip.helm, null, '다른 부위 장비는 거부');
 assert.equal(h.bag.length, 1);
 assert.deepEqual(h.talents, {}, '특성 필드가 없던 영웅 → 빈 배분');

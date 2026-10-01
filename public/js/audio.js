@@ -209,6 +209,14 @@ export function createAudio() {
         tone(760, 0.12, { type: 'triangle', v: 0.07, at: 0.05 });
       }
     },
+    // v0.1.7 전설 장비 드롭(하늘까지 닿는 금빛 기둥): 낮은 울림 → 솟구치는 금빛 아르페지오 → 반짝임(lootui 획득 카드와 같은 1초)
+    legendDrop() {
+      tone(82, 0.9, { v: 0.35, f2: 55 });
+      noise(0.5, { v: 0.12, type: 'highpass', f: 1200, f2: 5200, a: 0.25 });
+      [523.25, 783.99, 1046.5, 1567.98].forEach((f, i) => tone(f, 0.34, { type: 'triangle', v: 0.13, at: 0.12 + i * 0.07, dest: echo }));
+      for (const f of [1046.5, 1318.5, 1568]) tone(f, 1, { type: 'triangle', v: 0.07, at: 0.42, a: 0.02, dest: echo });
+      for (let i = 0; i < 8; i++) tone(rnd(2800, 5600), 0.12, { v: 0.03, at: 0.45 + i * 0.06, dest: echo });
+    },
     // 원소 융합 발견: 히든 조합 징글(synergy)을 재사용해 한층 더 웅장하게
     fusion() {
       SFX.synergy();

@@ -1718,7 +1718,7 @@ export function createUI(root, handlers = {}) {
           E['hb-new'].hidden = false;
           const hold = { common: 0.7, uncommon: 1, rare: 1.2, epic: 1.35, legend: 1.6 }[ev.item?.rarity] ?? 1; // 빛기둥 → 가방 비행
           setTimeout(() => bump(E['btn-hero']), (hold + 0.55) * 1000);
-          if (ev.item && ev.item.rarity === 'epic') toast(`${RARITY_BY_KEY.epic?.name ?? ''} 획득 · ${ev.item.name}`, 'chest'); // 전설은 캔버스 배너
+          // v0.1.7: 영웅·전설 획득 알림은 lootui.js 획득 카드가 한다(토스트 중복 없음)
           break;
         }
         case 'synergy':

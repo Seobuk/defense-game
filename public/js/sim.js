@@ -27,6 +27,7 @@ import {
   relicAct, normalizeRelicRun, relicRunSave, initRelics, relicManaCard, START_RELICS as START_POOL, forgetChoice, forgetSkill,
 } from './relics.js';
 import { normRunPrep, applyShopBonus, prepWardReady, PREP_RARE_MUL } from './shop.js'; // 4차 경제: 출정 준비 · 돌파 보너스
+import { gearSpellMul } from './items.js'; // 장비 v0.1.7 — spellHit 한 줄
 import { normPath, pathSave, initPath, pathStageStart, onPathClear, choosePath, pathHpMul } from './paths.js'; // v0.1.6 갈림길 — 훅 한 줄씩(// 갈림길 표시)
 
 const KINDS = ['human', 'bot', 'remote'];
@@ -61,6 +62,8 @@ const lvOf = src => {
   return lv;
 };
 const posNum = v => { v = Number(v); return Number.isFinite(v) && v > 0 ? v : 0; };
+// 비상 스킬 남은 쿨타임(초) — 이어하기 체크포인트에도 저장(껐다 켜면 운석·빙결이 다시 차던 버그). 옛 저장엔 없음 → 0
+const normCd = c => ({ meteor: Math.min(999, posNum(c?.meteor)), freeze: Math.min(999, posNum(c?.freeze)) });
 
 function makePlayer(init, i, fx, stage = 1) {
   init = init && typeof init === 'object' ? init : {};
@@ -73,7 +76,7 @@ function makePlayer(init, i, fx, stage = 1) {
     auto: !!init.auto,         // 자동 진행: 영웅 궁극기·운석·빙결 자동(다음 층 자동은 main.js) — 카드와는 무관
     autoPick: !!init.autoPick, // 카드 화면의 '자동 선택'(기본 OFF) — 켠 사람만 PICK_AUTO_T초 뒤 추천 카드
     lv,
-    cd: { meteor: 0, freeze: 0 },
+    cd: normCd(init.cd), // 이어하기면 체크포인트 값
     angle: -Math.PI / 2,
     stats: cannonStats(lv, fx, stage),
     syn: [],       // 활성 마법사 조합 키 (refreshSyn 이 채움)
@@ -123,7 +126,8 @@ export function normalizeRun(raw) {
   return {
     v: 3, legacy,
     stage: toInt(r.stage, 1, MAX_STAGE),
-    players: [0, 1].map(i => ({ gold: posNum(o(pl[i]).gold) })), // 이번 도전에서 번 골드(도전 종료 때 meta.gold로). [1]은 잠든 협동 자리
+    players: [0, 1].map(i => ({ gold: posNum(o(pl[i]).gold), cd: normCd(o(pl[i]).cd) })), // 이번 도전에서 번 골드(도전 종료 때 meta.gold로) · 비상 스킬 쿨타임. [1]은 잠든 협동 자리
+    ultCd: Math.min(999, posNum(r.ultCd)), // 영웅 궁극기 남은 쿨타임(이 층 도중에 쓴 것 — 층 시작 체크포인트면 0)
     spells, fusionParts, // 옛 저장의 allySpells(AI 동료 주문)·auto(→ settings.autoNext)는 버린다
     mutations: normalizeMutations(r.mutations, spells), // 변이: { [Lv6 스킬]: 변이 키 } (옛 저장엔 없음 → {})
     rerollLeft: r.rerollLeft == null ? null : toInt(r.rerollLeft, 0, 99),
@@ -153,7 +157,8 @@ export function serializeRun(g) {
   const r = g.run;
   return {
     v: 3, stage: g.stage, legacy: g.fusions.filter(k => g.run.legacy.includes(k)),
-    players: g.players.map(p => ({ gold: p.gold })),
+    players: g.players.map(p => ({ gold: p.gold, cd: { ...p.cd } })),
+    ultCd: g.phase === 'play' && g.heroUnit ? g.heroUnit.ultCd : 0, // 클리어 뒤 체크포인트(다음 층)면 영웅이 새로 걸어 나온다 → 0
     spells: { ...g.spells }, fusionParts: JSON.parse(JSON.stringify(g.fusionParts)), rerollLeft: g.rerollLeft,
     mutations: { ...g.mutations }, // 변이
     awaken: { ...r.awaken }, gems: { ...r.gems },
@@ -165,6 +170,20 @@ export function serializeRun(g) {
     log: { ...r.log, cb: Math.max(r.log.cb, g.combo.best) }, // 도전 기록 누적값
     loadout: { cls: r.loadout.cls, startSpells: [...r.loadout.startSpells] },
   };
+}
+
+// 저장 직전(main.js syncData): 체크포인트는 층 시작 모습이지만, 그 뒤에 '쓴' 소모 자원은 되살리지 않는다(껐다 켜기 = 공짜 리필 방지).
+// 층을 다시 하면 다시 얻는 것(처치 골드·카드·비전 충전·갈림길 대기 카드)은 그대로 두고, 쓰고 나면 끝인 것만 지금 값으로 덮는다.
+// 망각으로 뺀 스킬·환급은 relics.js forgetSkill이 그 자리에서 체크포인트에 옮긴다
+export function syncCheckpoint(g) {
+  const c = g.run.checkpoint;
+  if (!c) return;
+  c.players.forEach((p, i) => { p.cd = { ...g.players[i].cd }; }); // 운석·빙결 남은 쿨타임
+  c.ultCd = c.stage === g.stage && g.phase === 'play' && g.heroUnit ? g.heroUnit.ultCd : 0; // 영웅 궁극기(다음 층 체크포인트면 새로 걸어 나오니 0)
+  c.rerollLeft = g.rerollLeft; // 새로고침(도중 Lv5 달성 +1도 — 영웅 레벨은 되돌아가지 않는다)
+  c.forgetLeft = g.forgetLeft + (c.forgetFree | 0); c.forgets = g.run.forgets - (c.forgetFree | 0); // 망각(forgetFree = 층 도중에 배운 스킬을 비운 횟수 — relics.js forgetSkill)
+  c.reviveUsed = g.run.reviveUsed; c.heroRevive = g.run.heroRevive; c.relicRevives = g.run.relicRevives; // 부활 결계 · 성직자 결계 · 불사조 깃털
+  c.prep = { ...c.prep, wardUsed: g.run.prep.wardUsed }; // 출정 준비 '보스 결계석'
 }
 
 // 영구 강화 × 각성 → 런 배율(각성 효과는 보석 강화 '각성 숙련'만큼 커진다)
@@ -271,6 +290,7 @@ export function createGame(opts = {}) {
   initSpells(g);
   refreshFusion(g); // 시작 스킬끼리 융합 조건이면 바로 합체
   startStage(g, st0);
+  if (g.heroUnit && run.ultCd) g.heroUnit.ultCd = g.run.checkpoint.ultCd = run.ultCd; // 이어하기: 층 도중에 쓴 궁극기 쿨타임
   refreshSyn(g);
   // 도전 시작 무료 카드(첫 층부터 스킬 맛 — 눈에 띄는 쿨타임 공격 스킬만) + 영웅 Lv30 카드 1장
   for (let k = toInt(opts.startCards, 0, 3); k > 0; k--) triggerPick(g, true);
@@ -1024,7 +1044,9 @@ function spellHit(g, e, raw, o, kind, card = false, dot = false, crit = !dot && 
   if (crit && e.isBoss && p.syn.includes('giant')) raw *= FX.giant;
   const h = g.heroUnit;
   if (h && h.tb && h.tb.mark && e.markAt > g.phaseT) raw *= 1 + h.tb.mark; // [특성] 표식: 영웅이 3초 안에 때린 적(hero.js heroHit)
-  if (h && h.state !== 'down' && h.engageR > 0 && (e.x - h.x) ** 2 + (e.y - h.y) ** 2 <= (h.engageR + e.r) ** 2) {
+  const engaged = !!h && h.state !== 'down' && h.engageR > 0 && (e.x - h.x) ** 2 + (e.y - h.y) ** 2 <= (h.engageR + e.r) ** 2;
+  if (card) raw *= gearSpellMul(g, e, kind, engaged); // 장비 v0.1.7: 원소 스킬 피해 · 도발 원소(잿불 성채 등) · 번개 궁극 충전(items.js)
+  if (engaged) {
     const anvil = collabOn(g, 'anvil');
     const amp = (anvil ? COLLAB_FX.anvil * collabPow(g) : 0) + (h.tb ? h.tb.tauntAmp : 0);
     if (amp > 0) raw *= 1 + amp;
