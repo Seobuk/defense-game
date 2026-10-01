@@ -516,18 +516,23 @@ let SKM = null; // v0.1.2 외형 스킨: events 가 내 스킬 이벤트를 처�
 // 넘친 입자는 풀 밖 빈 객체에 쓰고 버린다(호출부는 그대로)
 const PART_FRAME = 90, P_SPARE = { life: 0, max: 1, x: 0, y: 0, vx: 0, vy: 0, g: 0, drag: 0, size: 1, col: '#fff', k: 0, rot: 0, vr: 0 };
 let partLeft = PART_FRAME;
+// 그래픽 보통·절전: 낱개 잔입자(크기 ≤ 20 — 꼬리·불씨·먼지; 묶음 burst 는 수를 이미 줄였다)도 fxQ 비율만 남긴다 — 그리기·갱신 호출을 같이 던다(발열 2차).
+// 큰 낱개 빛(착탄 섬광 등)은 그대로
+let bursting = false;
 export function part(k, x, y, vx, vy, life, size, col, g = 0, drag = 0) {
-  const p = --partLeft < 0 ? P_SPARE : take(P);
+  const p = --partLeft < 0 || (fxQ < 1 && size <= 20 && !bursting && rnd() > fxQ) ? P_SPARE : take(P);
   p.k = k; p.x = x; p.y = y; p.vx = vx; p.vy = vy; p.life = p.max = life; p.size = size; p.col = SKM ? SKM(col) : col; p.g = g; p.drag = drag;
   p.rot = rnd() * TAU; p.vr = (rnd() - 0.5) * 14;
   return p;
 }
 export function burst(k, x, y, n, sp0, sp1, life, size, cols, g = 0, drag = 0, up = 0) {
   if (fxQ < 1 && n > 1) n = Math.max(1, Math.round(n * fxQ)); // 그래픽 보통·절전: 묶음 입자 수를 줄인다(모양은 그대로)
+  bursting = true;
   for (let i = 0; i < n; i++) {
     const a = rnd() * TAU, sp = sp0 + rnd() * (sp1 - sp0);
     part(k, x, y, Math.cos(a) * sp, Math.sin(a) * sp - up, life * (0.7 + rnd() * 0.6), size * (0.6 + rnd() * 0.8), typeof cols === 'string' ? cols : cols[(rnd() * cols.length) | 0], g, drag);
   }
+  bursting = false;
 }
 export function ring(x, y, r0, r1, life, col, w) {
   const r = take(RINGS);
@@ -2419,6 +2424,7 @@ export function drawHeroShots() {
 }
 
 // ── 스킬: 회오리 · 망령 · 얼음 창 · 드래곤 · 파이어볼 · 영혼 ──
+const TN_GRAD = new Map();
 export function drawTornadoes(view) {
   drawStorms(view);
   const fx = view.spellFx;
@@ -2438,18 +2444,26 @@ export function drawTornadoes(view) {
     const sw = Math.sin(T * 3) * r * 0.18;
     if (t.max) { ctx.globalAlpha = 0.6 * a; spr(soft(hot ? 'rgba(110,40,20,0.75)' : 'rgba(60,90,100,0.7)'), tn.x + sw, top + 20, r * 4, r * 1.2); }
     ctx.globalAlpha = 0.42 * a;
+    ctx.translate(tn.x, 0); // 회오리 x 기준으로 그려 그라데이션을 (색·반경)마다 한 번만 만든다(발열 2차)
     ctx.beginPath();
-    ctx.moveTo(tn.x - r * 0.22, base);
-    ctx.bezierCurveTo(tn.x - r * 0.4 + sw * 0.3, base - hgt * 0.45, tn.x - r * 1.05 + sw, top + hgt * 0.2, tn.x - r * 1.2 + sw, top);
-    ctx.lineTo(tn.x + r * 1.2 + sw, top);
-    ctx.bezierCurveTo(tn.x + r * 1.05 + sw, top + hgt * 0.2, tn.x + r * 0.4 + sw * 0.3, base - hgt * 0.45, tn.x + r * 0.22, base);
+    ctx.moveTo(-r * 0.22, base);
+    ctx.bezierCurveTo(-r * 0.4 + sw * 0.3, base - hgt * 0.45, -r * 1.05 + sw, top + hgt * 0.2, -r * 1.2 + sw, top);
+    ctx.lineTo(r * 1.2 + sw, top);
+    ctx.bezierCurveTo(r * 1.05 + sw, top + hgt * 0.2, r * 0.4 + sw * 0.3, base - hgt * 0.45, r * 0.22, base);
     ctx.closePath();
-    const fg = ctx.createLinearGradient(tn.x - r, 0, tn.x + r, 0);
-    fg.addColorStop(0, hot ? 'rgba(255,90,30,0.15)' : 'rgba(120,220,190,0.12)'); // 몸통은 채도 있는 반투명(흰 기둥 금지)
-    fg.addColorStop(0.35, hot ? 'rgba(255,150,60,0.6)' : 'rgba(170,245,215,0.5)');
-    fg.addColorStop(1, hot ? 'rgba(200,50,20,0.25)' : 'rgba(60,170,140,0.2)');
+    const gk = (hot ? 'h' : 'c') + Math.round(r);
+    let fg = TN_GRAD.get(gk);
+    if (!fg) {
+      fg = ctx.createLinearGradient(-r, 0, r, 0);
+      fg.addColorStop(0, hot ? 'rgba(255,90,30,0.15)' : 'rgba(120,220,190,0.12)'); // 몸통은 채도 있는 반투명(흰 기둥 금지)
+      fg.addColorStop(0.35, hot ? 'rgba(255,150,60,0.6)' : 'rgba(170,245,215,0.5)');
+      fg.addColorStop(1, hot ? 'rgba(200,50,20,0.25)' : 'rgba(60,170,140,0.2)');
+      if (TN_GRAD.size > 32) TN_GRAD.clear();
+      TN_GRAD.set(gk, fg);
+    }
     ctx.fillStyle = fg;
     ctx.fill();
+    wt();
     additive(true);
     ctx.globalAlpha = 0.3 * a;
     spr(hu(storm ? '#7b5cff' : C[2]), tn.x, (top + base) / 2, r * 1.9, hgt * 1.1);
@@ -2677,8 +2691,9 @@ export function drawParticles() {
     if (p.life <= 0 || p.k >= K_CONF) continue;
     const u = p.life / p.max;
     if (p.k === K_GLOW) { // 큰 빛일수록 옅게(화면이 우윳빛으로 덮이지 않게 — 반경 220 넘으면 비례 감쇠) · 붐비면 glowK
-      ctx.globalAlpha = Math.min(1, u * 1.6) * (p.size > 220 ? Math.max(0.3, 220 / p.size) : 1) * glowK;
-      const s = p.size * (0.4 + 0.6 * u);
+      const ga = Math.min(1, u * 1.6) * (p.size > 220 ? Math.max(0.3, 220 / p.size) : 1) * glowK, s = p.size * (0.4 + 0.6 * u);
+      if (ga < 0.04 || s * K < 2) continue; // 안 보이는 빛(거의 투명 · 2 화면 px 미만)은 그리기 호출을 아낀다(발열 2차)
+      ctx.globalAlpha = ga;
       if (s > 80) { if (p.col === '#ffffff') ctx.globalAlpha *= Math.min(1, 120 / s); spr(p.col === '#ffffff' ? gl(p.col) : hu(p.col), p.x, p.y, s, s); } // 큰 빛은 흰 심 없이 색으로만(흰 섬광은 클수록 옅게)
       else spr(gl(p.col), p.x, p.y, s, s);
     } else if (p.k === K_SPARK) {
@@ -2690,8 +2705,9 @@ export function drawParticles() {
       ctx.lineTo(p.x - p.vx * 0.035, p.y - p.vy * 0.035);
       ctx.stroke();
     } else {
-      ctx.globalAlpha = Math.min(1, u * 2);
       const s = p.size * (0.3 + 0.9 * Math.sin(u * Math.PI));
+      if (s * K < 2) continue;
+      ctx.globalAlpha = Math.min(1, u * 2);
       spr(sparkle(p.col), p.x, p.y, s, s);
     }
   }

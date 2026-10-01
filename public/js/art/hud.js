@@ -8,7 +8,7 @@ import { MILESTONES } from '../hero.js';
 const MS_DESC = Object.fromEntries(MILESTONES.map(m => [m.key, m.desc]));
 import {
   ctx, scale, ox, oy, RT, frameDt, topExtra, sideX, fillView, TAU, tint, BAG_POS,
-  shake, flash, FONT, NUM_FONT, BODY_FONT, easeBack, easeOut, lerp, pool, take,
+  shake, flash, FONT, NUM_FONT, BODY_FONT, fontsLoaded, easeBack, easeOut, lerp, pool, take,
   wt, ht, place, placeH, spr, txt, rr, additive,
 } from './core.js';
 import { burst, ring, sprPop, lightBeam, numText, numZone, K_STAR, sparkle, rays, runeCircle, runeBand } from './fx.js';
@@ -178,10 +178,7 @@ export function drawHud(view) {
     if (p.life <= 0) continue;
     const t = p.max - p.life, k = t < 0.2 ? easeBack(t / 0.2) : 1, a = Math.min(1, p.life / 0.3) * (1 - quietA);
     if (a <= 0) continue;
-    ctx.font = `20px ${FONT}`;
-    const w1 = ctx.measureText(p.txt).width;
-    ctx.font = `15px ${FONT}`;
-    const w = Math.max(w1, ctx.measureText(p.sub).width) + 40, y = p.y - t * 18;
+    const w = Math.max(textW(p.txt, 20), textW(p.sub, 15)) + 40, y = p.y - t * 18;
     ctx.globalAlpha = a;
     placeH(p.x, y, k);
     rr(-w / 2, -26, w, p.sub ? 52 : 36, 18);
@@ -255,8 +252,7 @@ function drawChips(view, vis) {
     const hot = c && c.label > 0 ? Math.min(1, c.label / 0.3) : 0;
     ctx.globalAlpha = vis * (0.8 + 0.2 * hot);
     placeH(x0 + 22, y, 1);
-    ctx.font = `15px ${FONT}`;
-    const tw = ctx.measureText(s.name).width + 18;
+    const tw = textW(s.name, 15) + 18;
     rr(0, -12, tw, 24, 12);
     ctx.fillStyle = 'rgba(20,8,34,0.78)'; ctx.fill();
     ctx.lineWidth = 2; ctx.strokeStyle = hot > 0 ? col[2] : 'rgba(255,255,255,0.18)'; ctx.stroke();
@@ -320,18 +316,8 @@ function drawBossBar(view) {
   const lf = clamp(lag * N - (lay - 1), f, 1);
   // 이름 · 겹수 · %
   txt(bossName, x + 2, 104, 17, named ? '#ffe0ea' : '#ffe8c0', '#10040e', 5, 'left');
-  ctx.font = `17px ${NUM_FONT}`; ctx.textAlign = 'right';
-  const pct = Math.ceil(ratio * 100) + '%';
-  ctx.lineWidth = 5; ctx.strokeStyle = '#10040e'; ctx.strokeText(pct, x + w, 104);
-  ctx.fillStyle = '#ffffff'; ctx.fillText(pct, x + w, 104);
-  if (ratio > 0) {
-    const pw = ctx.measureText(pct).width;
-    ctx.font = `20px ${NUM_FONT}`;
-    const ls = 'x' + lay, lw = ctx.measureText(ls).width;
-    ctx.lineWidth = 5; ctx.strokeStyle = '#10040e'; ctx.strokeText(ls, x + w - pw - 10, 103);
-    ctx.fillStyle = LAYER_COL[(lay - 1) % LAYER_COL.length][0]; ctx.fillText(ls, x + w - pw - 10, 103);
-    void lw;
-  }
+  const pw = txt(Math.ceil(ratio * 100) + '%', x + w, 104, 17, '#ffffff', '#10040e', 5, 'right', NUM_FONT); // 구운 글자(화면 ctx.font 강제 스타일 계산 없음)
+  if (ratio > 0) txt('x' + lay, x + w - pw - 10, 103, 20, LAYER_COL[(lay - 1) % LAYER_COL.length][0], '#10040e', 5, 'right', NUM_FONT);
   // 바: 아래 겹 색(바탕) → 흰 최근 피해 조각 → 현재 겹 색
   rr(x, y, w, h, 8); ctx.fillStyle = '#2a0814'; ctx.fill();
   ctx.save(); rr(x, y, w, h, 8); ctx.clip();
@@ -487,15 +473,37 @@ function drawBanner(m) {
   ctx.globalAlpha = 1;
 }
 
+// 줄바꿈: 문서 밖 캔버스에서 재고 결과를 기억한다(컷인 동안 매 프레임 글자마다 measureText 하던 것 — 발열 2차)
+const WRAPS = new Map();
+let wctx = null;
 function wrap(str, maxW, size, font = FONT) {
-  ctx.font = `${size}px ${font}`;
-  const out = [];
+  const key = str + '|' + maxW + '|' + size + '|' + font + '|' + fontsLoaded;
+  let out = WRAPS.get(key);
+  if (out) return out;
+  if (WRAPS.size > 64) WRAPS.clear();
+  if (!wctx) wctx = document.createElement('canvas').getContext('2d');
+  wctx.font = `${size}px ${font}`;
+  out = [];
   let line = '';
   for (const ch of str) {
-    if (ctx.measureText(line + ch).width > maxW && line) { out.push(line); line = ch.trim(); } else line += ch;
+    if (wctx.measureText(line + ch).width > maxW && line) { out.push(line); line = ch.trim(); } else line += ch;
   }
   if (line) out.push(line);
+  WRAPS.set(key, out);
   return out;
+}
+
+// 글자 폭: 문서 밖 캔버스에서 재고 기억한다(이름 칩·알림 알약이 매 프레임 화면 ctx.font + measureText 하던 것 — ART §12)
+const TW = new Map();
+function textW(str, size, font = FONT) {
+  const key = str + '|' + size + '|' + font + '|' + fontsLoaded;
+  let w = TW.get(key);
+  if (w !== undefined) return w;
+  if (TW.size > 200) TW.clear();
+  if (!wctx) wctx = document.createElement('canvas').getContext('2d');
+  wctx.font = `${size}px ${font}`;
+  TW.set(key, w = wctx.measureText(String(str ?? '')).width);
+  return w;
 }
 
 const FUSE_PRE = 0.5;
@@ -578,11 +586,7 @@ function drawCut(m) {
     const desc = String(s.desc || ''), ci = desc.indexOf(':');
     const effect = ci >= 0 ? desc.slice(ci + 1).trim() : desc, cond = ci >= 0 ? desc.slice(0, ci).trim() : '';
     const lines = wrap(effect, 600, 21, BODY_FONT).slice(0, 2);
-    ctx.font = `21px ${BODY_FONT}`;
-    lines.forEach((ln, i) => {
-      ctx.lineWidth = 6; ctx.strokeStyle = '#140a24'; ctx.strokeText(ln, 360, cy + 140 + i * 28);
-      ctx.fillStyle = '#ffffff'; ctx.fillText(ln, 360, cy + 140 + i * 28);
-    });
+    lines.forEach((ln, i) => txt(ln, 360, cy + 140 + i * 28, 21, '#ffffff', '#140a24', 6, 'center', BODY_FONT));
     if (s.kind === 'fusion') { // 두 스킬이 하나로 → 슬롯 1칸이 열린다(꽉 찬 슬롯에서 합체했을 때만 '슬롯 해제!')
       const sy = cy + 150 + lines.length * 28, sk = 1 + 0.08 * Math.sin(RT * 8), freed = mergeFull[s.key] !== false;
       placeH(360, sy, sk);
@@ -747,7 +751,7 @@ export function update(view, da, dt) {
   for (const c of CHIPS.values()) { c.punch = Math.max(0, c.punch - dt * 3.2); c.label = Math.max(0, c.label - dt); }
   if (view.phase !== 'play' && CHIPS.size) CHIPS.clear();
   for (const m of MQ) if (m.hold > 0) m.hold -= dt;
-  if (++domChk % 6 === 0 || quiet) quiet = view.phase !== 'play' || !!view.pick || domBusy();
+  if (++domChk % (quiet ? 4 : 15) === 0) quiet = view.phase !== 'play' || !!view.pick || domBusy(); // 문서 전체 querySelector — 0.3초마다(조용한 동안은 4프레임마다 — 창이 닫히면 0.1초 안에 다시 보인다)
   quietA = quiet ? Math.min(1, quietA + dt * 8) : Math.max(0, quietA - dt * 4);
   if (moment && (moment.t += dt * (moment.kind === 'cut' && MQ.some(m => m.kind === 'cut') ? 1.4 : 1)) >= moment.life) { if (moment.kind === 'boss') bossEndRT = RT; moment = null; }
   if (moment && moment.kind !== 'boss' && quiet && moment.t < 0.2) { MQ.unshift(moment); moment = null; } // 막 시작한 컷인은 보류

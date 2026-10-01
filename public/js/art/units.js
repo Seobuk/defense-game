@@ -8,7 +8,7 @@ import {
   TAU, INK, bake, tint, circ, ell, rrect, fs, rad, lin, poly, shine, mulberry, INK2, SKIN, RARITY_COL, TIER_RARITY, EL,
   mix, lite, dim, cel, bakeO, tintOf, cache, S,
   ctx, T, RT, frameNo, frameDt, topExtra, hudY, lightK,
-  shake, flash, FONT, OWN, rnd, easeOut, easeBack, lerp, pool, take,
+  shake, flash, FONT, fontsLoaded, OWN, rnd, easeOut, easeBack, lerp, pool, take,
   wt, place, spr, put, txt, rr, additive, groundRune, setLightPrio, LIGHT_EXEMPT,
 } from './core.js';
 import {
@@ -2652,15 +2652,18 @@ export function drawMages(view, opts) {
     // 이름표
     // 이름표: 내 마법사 = 닉네임(4차 — 솔로에도 표시, 없으면 협동 때만 '나')
     const tag = i === (opts.myIndex | 0) ? String(p.name || '').slice(0, 10) || (duoOn ? '나' : '') : !duoOn ? '' : p.kind === 'bot' ? 'AI' : p.kind === 'remote' ? String(p.name || '').slice(0, 8) : '';
-    if (tag) {
-      ctx.font = `900 16px ${FONT}`; // 폰 360폭에서도 읽히게(월드 1px ≈ 0.5 CSS px)
-      const tw = Math.max(30, ctx.measureText(tag).width + 18);
-      ctx.fillStyle = 'rgba(15,8,20,0.82)';
-      rr(c.x - tw / 2, MAGE_FEET + 6, tw, 22, 11); ctx.fill();
-      ctx.lineWidth = 2; ctx.strokeStyle = OWN[i].c; ctx.stroke();
-      ctx.textAlign = 'center';
-      ctx.fillStyle = OWN[i].c;
-      ctx.fillText(tag, c.x, MAGE_FEET + 17.5);
+    if (tag) { // 이름표는 한 번 굽는다(발열 2차 — 매 프레임 화면 ctx.font·measureText 없음)
+      const nt = bake('nameTag|' + i + '|' + tag + '|' + fontsLoaded, 90, 13, x => {
+        x.font = `900 16px ${FONT}`; // 폰 360폭에서도 읽히게(월드 1px ≈ 0.5 CSS px)
+        const tw = Math.min(176, Math.max(30, x.measureText(tag).width + 18));
+        x.fillStyle = 'rgba(15,8,20,0.82)';
+        x.beginPath(); x.roundRect(-tw / 2, -11, tw, 22, 11); x.fill();
+        x.lineWidth = 2; x.strokeStyle = OWN[i].c; x.stroke();
+        x.textAlign = 'center'; x.textBaseline = 'middle';
+        x.fillStyle = OWN[i].c;
+        x.fillText(tag, 0, 0.5);
+      });
+      ctx.drawImage(nt, c.x - nt.hw, MAGE_FEET + 17 - nt.hh, nt.hw * 2, nt.hh * 2);
     }
   }
 }

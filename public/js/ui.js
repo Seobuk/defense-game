@@ -54,6 +54,10 @@ const txt = (el, s) => { if (el._t !== s) { el._t = s; el.textContent = s; } };
 const html = (el, s) => { if (el._h !== s) { el._h = s; el.innerHTML = s; } };
 const prop = (el, name, v) => { if (el['_' + name] !== v) { el['_' + name] = v; el.style.setProperty(name, v); } };
 const attr = (el, name, v) => { if (el.getAttribute(name) !== v) el.setAttribute(name, v); };
+const hid = (el, h) => { if (el.hidden !== h) el.hidden = h; };
+// 발열 2차: 그래픽 '높음'이 아니면 전투 HUD DOM 을 덜 자주·합성만으로(쿨타임 고리 10Hz · 시전 톡은 transform 만 · 협공 빛줄기는 켜질 때만)
+const ROOT = document.documentElement;
+const hudLite = () => ROOT.dataset.gfx !== 'high'; // 같은 값 다시 쓰기도 속성 변경 = 스타일 무효화(매 프레임 HUD — 발열 2차)
 const frac = x => (x > 0 ? (x < 1 ? x : 1) : 0).toFixed(3);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const BUMP = [{ transform: 'scale(1)' }, { transform: 'scale(1.2)', offset: 0.35 }, { transform: 'scale(1)' }];
@@ -581,6 +585,7 @@ export function createUI(root, handlers = {}) {
       E.flinks.append(g);
     });
   }
+  let ringAt = 0;
   function updateStack(v) {
     const sp = v.spells || {}, keys = Object.keys(sp);
     const cap = slotCap(v); // 유물 광기의 왕관: 5칸
@@ -594,15 +599,17 @@ export function createUI(root, handlers = {}) {
       E['stack-count'].parentElement.classList.toggle('full', n >= cap);
     }
     // 쿨타임 고리(지속형 = 도는 빛) · 합동 필살 창(다음 쿨타임 스킬 2배)
-    const link = (v.linkT || 0) > 0;
+    // 고리 하나가 바뀔 때마다 칸 스타일 계산 + 고리 다시 칠하기 → 높음이 아니면 24단계 · 0.1초마다(다 찬 순간은 바로)
+    const link = (v.linkT || 0) > 0, lite = hudLite(), t = performance.now(), ringNow = !lite || t >= ringAt, steps = lite ? 24 : 48;
+    if (ringNow) ringAt = t + 100;
     for (const s of slots) {
       if (!s.key) continue;
       const cd = spellCooldown(v, s.key);
       const passive = !cd;
       if (passive !== s.passive) { s.passive = passive; s.b.classList.toggle('passive', passive); }
       if (cd) {
-        const p = Math.round((cd.total > 0 ? 1 - cd.left / cd.total : 1) * 48) / 48;
-        if (p !== s.p) { s.p = p; s.b.style.setProperty('--p', p.toFixed(3)); }
+        const p = Math.round((cd.total > 0 ? 1 - cd.left / cd.total : 1) * steps) / steps;
+        if (p !== s.p && (ringNow || p >= 1 || p < s.p)) { s.p = p; s.b.style.setProperty('--p', p.toFixed(3)); }
       }
       s.b.classList.toggle('hl', link && !passive);
     }
@@ -614,10 +621,12 @@ export function createUI(root, handlers = {}) {
     if (!s && v?.fusionParts) s = slots.find(x => x.key && (v.fusionParts[x.key] || []).includes(spell));
     return s || null;
   }
+  const FLASH_LITE = [{ transform: 'scale(1.16)' }, { transform: 'scale(1)' }], FLASH_LITE_S = [{ transform: 'scale(1.5)' }, { transform: 'scale(1)' }];
   function flashSlot(s, strong = false) {
     const t = performance.now();
     if (!s || (!strong && t - s.flashT < 140)) return;
     s.flashT = t;
+    if (hudLite()) { s.orb.animate(strong ? FLASH_LITE_S : FLASH_LITE, { duration: strong ? 520 : 240, easing: 'cubic-bezier(.22,1,.36,1)' }); return; } // filter 애니메이션은 매 프레임 스타일·칠하기(합성 불가) — transform 만
     s.orb.animate(strong
       ? [{ transform: 'scale(1.5)', filter: 'brightness(2.2)' }, { transform: 'scale(1)', filter: 'none' }]
       : [{ transform: 'scale(1.16)', filter: 'brightness(1.7)' }, { transform: 'scale(1)', filter: 'none' }], { duration: strong ? 520 : 240, easing: 'cubic-bezier(.22,1,.36,1)' });
@@ -704,11 +713,13 @@ export function createUI(root, handlers = {}) {
     const li = e.target.closest('.cb'), c = li && COLLAB_BY_KEY[li.dataset.key];
     if (c) showTip(li, '', `<b>협공 · ${esc(c.name)}</b><br>${esc(c.desc)}`, 4200);
   });
-  function procCollab(key) {
-    const li = E['collab-list'].querySelector(`.cb[data-key="${key}"]`);
-    if (li) { li.classList.remove('proc'); void li.offsetWidth; li.classList.add('proc'); }
-    const g = E.beams.querySelector(`g[data-key="${key}"]`);
-    if (g) { g.classList.remove('proc'); void g.getBoundingClientRect(); g.classList.add('proc'); }
+  // 협공 발동 깜빡임: 클래스를 빼고 다음 화면 프레임에 다시 끼운다(애니메이션 재시작) — 읽기로 레이아웃을 강제하던 것(발동마다 리플로) 대신
+  function procCollab(key, first = false) { // 높음이 아니면 화면 전체 SVG 빛줄기는 협공이 켜질 때(first)만 — 발동마다 0.9초씩 전체 층을 다시 칠한다
+    for (const el of [E['collab-list'].querySelector(`.cb[data-key="${key}"]`), first || !hudLite() ? E.beams.querySelector(`g[data-key="${key}"]`) : null]) {
+      if (!el) continue;
+      el.classList.remove('proc');
+      requestAnimationFrame(() => el.classList.add('proc'));
+    }
   }
   // 합동 필살 창(영웅 궁극기 뒤 3초): 왼쪽 금빛 칩 + 스택 강조
   function updateLink(v) {
@@ -758,7 +769,7 @@ export function createUI(root, handlers = {}) {
       }
       if (g.childElementCount) E.beams.append(g);
     }
-    for (const k of newCollabs.splice(0)) procCollab(k); // 방금 켜진 협공: 빛이 한 번 흐른다
+    for (const k of newCollabs.splice(0)) procCollab(k, true); // 방금 켜진 협공: 빛이 한 번 흐른다
   }
 
   // ── 상태 칩: 부활 결계 · 각성 · 광폭화 경고 ──
@@ -828,9 +839,9 @@ export function createUI(root, handlers = {}) {
       }
     }
     if (n) gauge(E['combo-g'], c.timer / COMBO_WINDOW);
-    E['st-frenzy'].hidden = !(v.frenzyT > 0);
+    hid(E['st-frenzy'], !(v.frenzyT > 0));
     if (v.frenzyT > 0) gauge(E['frenzy-g'], v.frenzyT / (frMax = Math.max(frMax, v.frenzyT))); else frMax = FRENZY.dur;
-    E['st-legend'].hidden = !(v.legendT > 0);
+    hid(E['st-legend'], !(v.legendT > 0));
     if (v.legendT > 0) gauge(E['legend-g'], v.legendT / (lgMax = Math.max(lgMax, v.legendT))); else lgMax = LEGEND_T;
   }
 
@@ -1426,7 +1437,9 @@ export function createUI(root, handlers = {}) {
     for (const b of segBtns) attr(b, 'aria-checked', String(b.dataset.dmg === (s.dmgNumbers || 'full')));
     const gs = s.gfx || 'auto', lv = meta.gfxLevel || 'high';
     for (const b of gfxBtns) attr(b, 'aria-checked', String(b.dataset.gfx === gs));
-    txt(gfxHelp, gs === 'auto' ? `지금 ${GFX_NAME[lv]}(${GFX_HELP[lv]}) · 폰이 뜨거워지면 스스로 낮춰요` : GFX_HELP[lv]);
+    // 발열 2차: 절전이 아니면 '뜨거우면 절전' 안내를 늘 붙인다
+    const why = meta.gfxWhy === 'battery' ? ' · 충전 중이거나 배터리가 적어 절전으로 돌아요' : ' · 무거우면 스스로 낮춰요';
+    txt(gfxHelp, (gs === 'auto' ? `지금 ${GFX_NAME[lv]}(${GFX_HELP[lv]})${why}` : GFX_HELP[lv]) + (lv === 'low' ? '' : ' · 발열이 느껴지면 절전을 켜 보세요'));
     for (const b of switches) attr(b, 'aria-checked', String(!!s[b.dataset.set]));
     for (const b of awakeBtns) attr(b, 'aria-checked', String(b.dataset.awake === (s.screenOn || 'battle')));
     root.querySelector('#set-awake-help').hidden = meta.awakeOk !== false;

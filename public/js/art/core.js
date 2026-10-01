@@ -215,6 +215,7 @@ export function take(a) { const o = a[a.i]; a.i = (a.i + 1) % a.length; return o
 // 글자를 구워 캐시하는 모듈은 onFontsReady(캐시 비우기)를 등록한다. 늦게 로드돼도 다시 굽는다.
 const fontHooks = [];
 export function onFontsReady(fn) { fontHooks.push(fn); }
+onFontsReady(() => TXT.clear()); // 글꼴이 늦게 오면 구운 글자를 다시
 export let fontsLoaded = false;
 export function waitFonts(ms = 1500) {
   const fonts = typeof document !== 'undefined' && document.fonts;
@@ -238,12 +239,37 @@ export function place(x, y, rot, sx, sy) {
 }
 export function placeH(x, y, s) { ctx.setTransform(scale * s, 0, 0, scale * s, ox + scale * x, oy + scale * y); }
 export function spr(c, x, y, w, h) { ctx.drawImage(c, x - w / 2, y - h / 2, w, h); }
-export function txt(str, x, y, size, fill, ink, lw, align = 'center') {
-  ctx.font = `900 ${size}px ${FONT}`;
-  ctx.textAlign = align;
-  if (ink) { ctx.lineWidth = lw; ctx.strokeStyle = ink; ctx.strokeText(str, x, y); }
-  ctx.fillStyle = fill;
-  ctx.fillText(str, x, y);
+// 테두리 글자(가운데 정렬 기준선 middle). 발열 2차: 화면 캔버스에 ctx.font 를 쓰면 HUD DOM 이 바뀐 프레임마다 문서 스타일 계산을 강제한다(ART §12) —
+// 글자를 문서 밖 캔버스에 한 번 구워(지금 변환 배율 ¼ 단위로 — 선명) drawImage 한다. 같은 글자·크기·색이면 재사용, 300개 넘으면 가장 오래 안 쓴 것부터 버린다
+// ponytail: 자주 바뀌는 글자(성벽 체력)는 부르는 쪽이 갱신을 솎는다(world.js — 0.1초) — 숫자마다 굽는 것보단 싸고 아틀라스보단 단순
+const TXT = new Map();
+let tctx = null;
+// fam: 다른 글꼴(예: NUM_FONT — 굵기 지정 없이). 반환 = 글자 폭(월드 단위)
+export function txt(str, x, y, size, fill, ink, lw, align = 'center', fam = '') {
+  // 지금 변환 배율: render.js 빛 계량기가 화면 ctx 의 변환 호출을 따라가며 ctx.det(행렬식)로 준다 — getTransform 은 부를 때마다 DOMMatrix 할당
+  const d = ctx.det ?? ((m) => Math.abs(m.a * m.d - m.b * m.c))(ctx.getTransform()), k = Math.ceil(Math.sqrt(d) * 4) / 4 || 1;
+  const key = str + '|' + size + fam + '|' + fill + '|' + (ink ? ink + lw : '') + '|' + k;
+  let c = TXT.get(key);
+  if (c) { TXT.delete(key); TXT.set(key, c); } // 쓴 것은 맨 뒤로(Map 순서 = 오래 안 쓴 순)
+  else {
+    if (TXT.size >= 300) TXT.delete(TXT.keys().next().value); // 늘 보이는 글자(보스바·이름표)는 살아남는다
+    const f = fam ? `${size}px ${fam}` : `900 ${size}px ${FONT}`;
+    if (!tctx) tctx = document.createElement('canvas').getContext('2d');
+    tctx.font = f;
+    const tw = tctx.measureText(str).width, pad = (ink ? lw / 2 : 0) + 2, h = size * 1.5 + pad * 2;
+    c = document.createElement('canvas');
+    c.width = Math.max(1, Math.ceil((tw + pad * 2) * k)); c.height = Math.max(1, Math.ceil(h * k));
+    const x2 = c.getContext('2d');
+    x2.scale(c.width / (tw + pad * 2), c.height / h);
+    x2.font = f; x2.textAlign = 'left'; x2.textBaseline = 'middle'; x2.lineJoin = 'round';
+    if (ink) { x2.lineWidth = lw; x2.strokeStyle = ink; x2.strokeText(str, pad, h / 2); }
+    x2.fillStyle = fill;
+    x2.fillText(str, pad, h / 2);
+    c.tw = tw; c.pad = pad; c.w = tw + pad * 2; c.h = h;
+    TXT.set(key, c);
+  }
+  ctx.drawImage(c, (align === 'center' ? x - c.tw / 2 : align === 'right' ? x - c.tw : x) - c.pad, y - c.h / 2, c.w, c.h);
+  return c.tw;
 }
 
 export function rr(l, t, w, h, r) {

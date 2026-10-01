@@ -33,10 +33,12 @@ function lightMeter(ctx) {
   const P = Object.getPrototypeOf(ctx);
   const own = (name, fn) => { ctx[name] = fn; };
   const setT = P.setTransform, scl = P.scale, trf = P.transform, sav = P.save, rst = P.restore, rT = P.resetTransform;
-  own('setTransform', function (a, b, c, d) { det = typeof a === 'number' ? Math.abs(a * d - b * c) : 1; return setT.apply(this, arguments); });
+  // 감싼 함수는 arguments 를 넘기지 않고 인자를 그대로 넘긴다(프레임당 수백 번 — arguments 객체 할당 = GC, 발열 2차)
+  own('setTransform', function (a, b, c, d, e, f) { if (typeof a === 'number') { det = Math.abs(a * d - b * c); return setT.call(this, a, b, c, d, e, f); } det = 1; return setT.apply(this, arguments); });
   own('resetTransform', function () { det = 1; return rT.call(this); });
   own('scale', function (x, y) { det *= Math.abs(x * y); return scl.call(this, x, y); });
-  own('transform', function (a, b, c, d) { det *= Math.abs(a * d - b * c); return trf.apply(this, arguments); });
+  own('transform', function (a, b, c, d, e, f) { det *= Math.abs(a * d - b * c); return trf.call(this, a, b, c, d, e, f); });
+  Object.defineProperty(ctx, 'det', { get: () => det }); // core.txt: 지금 변환 배율(getTransform 의 DOMMatrix 할당 없이)
   own('save', function () { st.push(det, add); return sav.call(this); });
   own('restore', function () { if (st.length) { add = st.pop(); det = st.pop(); } return rst.call(this); });
   // 합성 모드는 JS 쪽에 들고 있는다(네이티브 getter 를 그리기마다 읽지 않게)
@@ -52,18 +54,21 @@ function lightMeter(ctx) {
     return a;
   };
   const dI = P.drawImage, fR = P.fillRect, fl = P.fill, sk = P.stroke;
+  const dIn = (x, n, img, a1, a2, a3, a4, a5, a6, a7, a8) => (n === 5 ? dI.call(x, img, a1, a2, a3, a4) : n === 9 ? dI.call(x, img, a1, a2, a3, a4, a5, a6, a7, a8) : dI.call(x, img, a1, a2));
   own('drawImage', function (img, a1, a2, a3, a4, a5, a6, a7, a8) {
     const n = arguments.length;
-    if (!add) return n === 5 ? dI.call(this, img, a1, a2, a3, a4) : n === 3 ? dI.call(this, img, a1, a2) : dI.apply(this, arguments); // 일반 합성은 곧장(대부분의 그리기)
+    if (!add) return dIn(this, n, img, a1, a2, a3, a4, a5, a6, a7, a8); // 일반 합성은 곧장(대부분의 그리기)
     const a = n === 9 ? lit(this, a7, a8) : n === 5 ? lit(this, a3, a4) : lit(this, img.width || 0, img.height || 0);
-    const r = dI.apply(this, arguments);
+    dIn(this, n, img, a1, a2, a3, a4, a5, a6, a7, a8);
     if (a !== false) this.globalAlpha = a;
-    return r;
   });
   own('fillRect', function (x, y, w, h) { const a = lit(this, w, h); fR.call(this, x, y, w, h); if (a !== false) this.globalAlpha = a; });
-  const dimOnly = f => function () { // 선·경로 채움: 면적은 안 세고 배율만(번개·고리 선은 가늘다)
-    if (add && kk() < 1) { const a = this.globalAlpha; this.globalAlpha = a * kk(); f.apply(this, arguments); this.globalAlpha = a; }
-    else f.apply(this, arguments);
+  const dimOnly = f => function (p, r) { // 선·경로 채움: 면적은 안 세고 배율만(번개·고리 선은 가늘다). 인자 = (Path2D?, fillRule?)
+    const n = arguments.length;
+    let a = -1;
+    if (add && kk() < 1) { a = this.globalAlpha; this.globalAlpha = a * kk(); }
+    if (n === 0) f.call(this); else if (n === 1) f.call(this, p); else f.call(this, p, r);
+    if (a >= 0) this.globalAlpha = a;
   };
   own('fill', dimOnly(fl));
   own('stroke', dimOnly(sk));
@@ -77,6 +82,7 @@ function lightMeter(ctx) {
       peak = d; exPeak = de; demand = exDemand = 0; area = screenArea;
       C.setLightK(k);
     },
+    add(q) { demand += q; }, // 구워 둔 가산 빛(배경 빛 웅덩이)도 예산에 센다 — 굽기 전과 같은 눌림
     get k() { return k; }, get demand() { return peak; }, get ek() { return ek; }, get exDemand() { return exPeak; },
   };
 }
@@ -158,11 +164,9 @@ export function createRenderer(canvas) {
     const K = scale * z;
     C.setWorldTransform(K, ox + scale * sx + (scale - K) * WORLD_W / 2, oy + scale * sy + (scale - K) * WORLD_H / 2);
 
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    // 바탕 칠 없음: 맨 아래 구운 배경(world.drawBackground)이 흔들림·줌까지 화면 전체를 덮는다(불투명 캔버스 — alpha:false)
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
-    ctx.fillStyle = '#07040c';
-    ctx.fillRect(0, 0, W, H);
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
     ctx.textBaseline = 'middle';
@@ -170,7 +174,7 @@ export function createRenderer(canvas) {
     // 그리기 층 (아래 → 위). ART.md §9.1
     const theme = clamp(view.theme | 0, 0, 4);
     C.wt();
-    world.drawBackground(theme);
+    meter.add(world.drawBackground(theme) * C.K * C.K);
     fx.drawDecals();
     fx.drawFrostWard(view);
     mutfx.drawGround(view); // 변이 장판(불바다·영구 동토·소용돌이·지뢰·저주 장막…)

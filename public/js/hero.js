@@ -192,13 +192,12 @@ export function autoEquipAll(hero) {
 // 장착 장비가 그대로면 캐시(스킬 틱·처치마다 불려서) — 반환값은 읽기 전용
 const GEAR_CACHE = new WeakMap();
 export function gearBonuses(hero) {
+  const e = hero && hero.equip, c = hero && GEAR_CACHE.get(hero); // 캐시를 먼저 본다(발열 2차 — 맞으면 아무것도 만들지 않는다)
+  if (c && c.equip === e && c.sig[0] === e.weapon && c.sig[1] === e.helm && c.sig[2] === e.armor && c.sig[3] === e.trinket && c.sig[4] === e.cape) return c.b;
   const b = { atkPct: 0, heroHpPct: 0, dmgReducePct: 0, critDmgPct: 0, atkSpeedPct: 0 };
   for (const a of AFFIXES) b[a.key] = 0; // v0.1.7 부옵션 22종 합계(표시용 — 새 부옵션 효과는 items.js gearFx가 적용)
   if (!hero) return b;
-  const e = hero.equip, sig = [e.weapon, e.helm, e.armor, e.trinket, e.cape];
-  const c = GEAR_CACHE.get(hero);
-  if (c && c.equip === e && c.sig.every((it, i) => it === sig[i])) return c.b;
-  GEAR_CACHE.set(hero, { equip: e, sig, b });
+  GEAR_CACHE.set(hero, { equip: e, sig: [e.weapon, e.helm, e.armor, e.trinket, e.cape], b });
   for (const slot of SLOTS) {
     const it = hero.equip[slot];
     if (!it) continue;

@@ -6,7 +6,7 @@ import { HERO_GATE } from '../hero.js';
 import { fmt, clamp } from '../util.js';
 import {
   TAU, bake, tint, circ, ell, rrect, fs, rad, lin, poly, shine, mulberry, cache, RARITY_COL, TIER_RARITY, BAG_POS, GOLD_POS, OWN,
-  ctx, T, RT, topExtra, sideX, fxQ,
+  ctx, setCanvas, T, RT, topExtra, sideX, fxQ,
   shake, flash, rnd, easeBack, pool, take,
   wt, place, spr, txt, rr, additive, groundRune,
 } from './core.js';
@@ -707,7 +707,7 @@ function lootSoldFx(ev) {
 export function drawAmbient(theme, da) {
   const A = AMB[theme];
   const aw = WORLD_W + sideX * 2;
-  const an = Math.round(A.n * aw / WORLD_W * (fxQ < 0.5 ? 0.5 : 1)); // 넓은 화면이면 폭만큼 더 · 그래픽 절전은 반만
+  const an = Math.round(A.n * aw / WORLD_W * Math.max(0.5, fxQ)); // 넓은 화면이면 폭만큼 더 · 그래픽 보통 0.6 · 절전 0.5
   if (ambTheme !== theme || amb.length !== an) {
     ambTheme = theme;
     amb = [];
@@ -790,14 +790,15 @@ export function drawAmbient(theme, da) {
     }
   }
   function x_cloud(baseY, spd) {
-    ctx.fillStyle = 'rgba(255,255,255,0.8)';
-    for (let k = 0; k < 2; k++) {
-      const cx = ((T * 18 * spd + k * 420) % (WORLD_W + 300)) - 150, cy = -topExtra * 0.6 + baseY;
-      for (const [dx, dy, r] of [[0, 0, 30], [24, 4, 22], [-26, 6, 20], [10, -10, 18]]) { circ(x_ctx(), cx + dx, cy + dy, r); ctx.fill(); }
-    }
+    const c = cloudSpr();
+    for (let k = 0; k < 2; k++) spr(c, ((T * 18 * spd + k * 420) % (WORLD_W + 300)) - 150, -topExtra * 0.6 + baseY, c.hw * 2, c.hh * 2);
   }
-  function x_ctx() { return ctx; }
 }
+// 구름 한 덩이(흰 0.8 원 넷 — 겹친 곳이 더 진한 것까지 같다): 한 번 구워 그린다(매 프레임 원 16개를 채우던 것 — 발열 2차)
+const cloudSpr = () => bake('w:cloud', 47, 31, x => {
+  x.fillStyle = 'rgba(255,255,255,0.8)';
+  for (const [dx, dy, r] of [[0, 0, 30], [24, 4, 22], [-26, 6, 20], [10, -10, 18]]) { circ(x, dx, dy, r); x.fill(); }
+});
 
 export function drawWall(view) {
   const theme = clamp(view.theme | 0, 0, 4);
@@ -866,15 +867,13 @@ export function drawWall(view) {
   // 성벽 체력바 — 석판 명판 + 젤리 바 (§10.18)
   const bx = 60, by = 1058, bw = 600, bh = 22;
   rr(bx - 10, by - 10, bw + 20, bh + 20, 10);
-  fs(ctx, lin(ctx, 0, by - 10, 0, by + bh + 10, [[0, '#5a5248'], [1, '#2c2620']]), 2, '#140e12');
+  fs(ctx, HPG.plate || (HPG.plate = lin(ctx, 0, by - 10, 0, by + bh + 10, [[0, '#5a5248'], [1, '#2c2620']])), 2, '#140e12'); // 그라데이션은 월드 좌표라 한 번 만들어 둔다(발열 2차)
   ctx.fillStyle = 'rgba(15,8,20,0.85)';
   rr(bx - 3, by - 3, bw + 6, bh + 6, 8); ctx.fill();
   ctx.fillStyle = 'rgba(255,255,255,0.7)';
   ctx.fillRect(bx, by, Math.max(0, bw * wallLag), bh);
-  const g = ctx.createLinearGradient(0, by, 0, by + bh);
-  const col = ratio > 0.5 ? ['#9aff7a', '#36b83a'] : ratio > 0.25 ? ['#ffe27a', '#e0a010'] : ['#ff8a7a', '#d0201a'];
-  g.addColorStop(0, col[0]); g.addColorStop(1, col[1]);
-  ctx.fillStyle = g;
+  const col = ratio > 0.5 ? HP_COL[0] : ratio > 0.25 ? HP_COL[1] : HP_COL[2];
+  ctx.fillStyle = HPG[col[0]] || (HPG[col[0]] = lin(ctx, 0, by, 0, by + bh, [[0, col[0]], [1, col[1]]]));
   rr(bx, by, Math.max(6, bw * ratio), bh, 6); ctx.fill();
   ctx.fillStyle = 'rgba(255,255,255,0.4)';
   rr(bx, by, Math.max(6, bw * ratio), bh * 0.45, 5); ctx.fill();
@@ -892,8 +891,13 @@ export function drawWall(view) {
   additive(false);
   ctx.drawImage(wardCap(), bx - 30, by + bh / 2 - 26, 52, 52);
   ctx.textBaseline = 'middle';
-  txt(`성벽 결계  ${fmt(view.wall ? view.wall.hp : 0)} / ${fmt(view.wall ? view.wall.max : 0)}`, 372, by + bh / 2 + 1, 15, '#ffffff', '#1a0a14', 4);
+  const hp = view.wall ? view.wall.hp : 0;
+  if (RT >= wallAt || (hp <= 0) !== wallZero) { wallAt = RT + 0.1; wallZero = hp <= 0; wallTxt = `성벽 결계  ${fmt(hp)} / ${fmt(view.wall ? view.wall.max : 0)}`; }
+  txt(wallTxt, 372, by + bh / 2 + 1, 15, '#ffffff', '#1a0a14', 4);
 }
+// 성벽 체력 글자는 0.1초마다만 바꾼다: 글자가 바뀔 때마다 한 장을 굽는다(core.txt) — 연타 중 매 프레임 굽지 않게(바는 매 프레임 그대로). 0 이 되는 순간은 바로
+let wallTxt = '', wallAt = -9, wallZero = false;
+const HPG = {}, HP_COL = [['#9aff7a', '#36b83a'], ['#ffe27a', '#e0a010'], ['#ff8a7a', '#d0201a']];
 // 도전 종료(성벽 붕괴): 성벽이 8토막으로 갈라져 차례로 주저앉는다 — 금 간 돌 + 기울어짐 + 흙먼지
 const COLLAPSE = { t: -1 };
 function drawCollapse(w, x, y) {
@@ -994,8 +998,26 @@ export function drawCoins() {
   }
 }
 
-// 테마 배경 (맨 아래 층, 월드 변환 wt() 상태에서 호출)
+// 테마 배경 (맨 아래 층, 월드 변환 wt() 상태에서 호출). 반환 = 구워 넣은 빛 웅덩이의 가산 빛 수요(월드 면적 × 알파 — render.js 광량 예산)
+// 발열 2차: 정적인 층(전장 그림 · 위 원경·이음매 · 묘지 달 · 빛 웅덩이 · 가장자리 비네트)을 화면 크기 한 장으로 한 번 굽고
+// 매 프레임 drawImage 1번(전에는 5장 = 화면 2.3~3.2장 분량을 매 프레임 칠했다). 흔들림(≤ 20)은 BLEED 30 여백이 덮어 검은 바탕 칠도 없앤다.
+// 키 = 테마 · 위/옆 여분 → 화면 크기·해상도가 바뀌면 다시(배율이 바뀌면 bake 캐시가 통째로 비워진다)
+let bgKey = '';
 export function drawBackground(theme) {
+  const key = `bgAll|${theme}|${topExtra.toFixed(2)}|${sideX.toFixed(2)}`;
+  if (key !== bgKey) { cache.delete(bgKey); bgKey = key; } // 지난 판 한 장만 버린다(화면 크기 캔버스 — 메모리)
+  const hw = WORLD_W / 2 + sideX + BLEED, hh = (WORLD_H + topExtra) / 2 + BLEED;
+  const c = bake(key, hw, hh, x => {
+    const main = ctx;
+    x.translate(-WORLD_W / 2, -(WORLD_H - topExtra) / 2); // 월드 원점
+    setCanvas(x);
+    try { drawStatic(theme); } finally { setCanvas(main); }
+  });
+  ctx.drawImage(c, WORLD_W / 2 - hw, (WORLD_H - topExtra) / 2 - hh, hw * 2, hh * 2);
+  const LP = LIGHT_POOL[theme];
+  return LP ? 1000 * 1150 * LP[1] : 0;
+}
+function drawStatic(theme) {
   const bg = background(theme);
   const wide = sideX > 0.5;
   if (wide) { sides(bg, -BLEED, -BLEED, WORLD_H + BLEED * 2); mid(bg, -BLEED, -BLEED, WORLD_H + BLEED * 2); }

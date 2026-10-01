@@ -19,7 +19,7 @@ import * as updater from './updater.js';
 import * as pwa from './pwa.js';
 import { gemStoreHandleBack } from './gemstoreui.js'; // v0.1.2 보석 충전(결제 미연결)
 import { initSummonUI, summonHandleBack, openWardrobe, syncLoadout } from './summonui.js'; // v0.1.2 소환의 제단 · 옷장(자기 전체 화면 층)
-import { GFX, autoStart, createGovernor } from './gfx.js'; // 설정 '그래픽'(발열·배터리)
+import { GFX, autoStart, fpsAt, createGovernor } from './gfx.js'; // 설정 '그래픽'(발열·배터리)
 import { createAwake, wantAwake } from './awake.js'; // 설정 '화면 꺼짐 방지'
 
 const HITSTOP_CAP = 500;          // ms
@@ -63,10 +63,19 @@ const renderer = createRenderer(document.getElementById('game'));
 const meta = {};
 // ── 그래픽 단계(gfx.js): 설정값 → fps 상한 · 해상도 · 연출 예산. 자동이면 조절기가 전투 프레임을 재서 내린다 ──
 let gfx = GFX.high, gfxSet = '', gov = null;
+// 폰 = 터치 + 좁은 화면(짧은 변 < 600 CSS px): 자동은 보통에서 시작. 태블릿·데스크톱은 높음부터
+const phone = (navigator.maxTouchPoints > 0 || matchMedia('(pointer: coarse)').matches) && Math.min(screen.width, screen.height) < 600;
+// 충전 중(충전 열 + 게임 열)이거나 배터리 20% 이하인 폰: 자동은 절전(지원하는 곳만 — navigator.getBattery)
+let batLow = false;
+if (phone) navigator.getBattery?.().then(b => {
+  const f = () => { const v = b.charging || b.level <= 0.2; if (v !== batLow) { batLow = v; applyGfx(); } };
+  b.addEventListener('chargingchange', f); b.addEventListener('levelchange', f); f();
+}, () => {});
 function applyGfx() {
   const s = data.settings;
-  if (s.gfx !== gfxSet || !gov) { gfxSet = s.gfx; gov = createGovernor(autoStart(s.gfxAuto)); }
-  const lv = GFX[s.gfx] ? s.gfx : gov.level; // 자동 = 이번 실행에서 조절기가 정한 단계(배운 절전은 보통부터 다시 — gfx.js autoStart)
+  if (s.gfx !== gfxSet || !gov) { gfxSet = s.gfx; gov = createGovernor(autoStart(s.gfxAuto, phone)); }
+  const lv = GFX[s.gfx] ? s.gfx : batLow ? 'low' : gov.level; // 자동 = 이번 실행에서 조절기가 정한 단계(배운 절전은 보통부터 다시 — gfx.js autoStart)
+  meta.gfxWhy = !GFX[s.gfx] && batLow ? 'battery' : ''; // 설정 화면: '충전 중·배터리 부족이라 절전'
   gfx = GFX[lv];
   renderer.setQuality(gfx);
   document.documentElement.dataset.gfx = lv; // CSS: 절전은 꾸밈 반복 애니메이션을 한 번만(css/kit.css)
@@ -123,7 +132,7 @@ const ui = createUI(document.getElementById('app'), {
     data.settings = { ...data.settings, ...s };
     if (pickChanged && inRun()) act(game, 0, { type: 'autoPick', on: !!data.settings.autoPick }); // 설정 화면의 '카드 자동 선택'
     audio.setEnabled(data.settings.sound);
-    if (s.gfx === 'auto' && gfxSet !== 'auto') data.settings.gfxAuto = ''; // '자동'을 다시 고르면 높음부터 다시 잰다
+    if (s.gfx === 'auto' && gfxSet !== 'auto') data.settings.gfxAuto = ''; // '자동'을 다시 고르면 시작 단계(폰 보통·큰 화면 높음)부터 다시 잰다
     applyGfx();
     persist();
   },
@@ -629,12 +638,13 @@ const CALM_MS = 10000, CALM_LOW_MS = 3000; // 절전은 금방(몇 번 돌고 �
 let busyAt = 0;
 const calmed = new Set();
 function calmDown() { // 저속 틱마다: 새로 뜬 화면의 반복도 잡는다
+  if (!rootCl.contains('idle')) rootCl.add('idle'); // 캔버스 미리보기(소환 제단·옷장 — cosmetics.playPreview)도 쉰다
   for (const a of document.getAnimations()) {
     const el = a.effect?.target;
     if (el && a.playState === 'running' && a.effect.getTiming().iterations === Infinity && el.id !== 'upd-progress-fill') { el.setAttribute('data-calm', ''); calmed.add(el); }
   }
 }
-function calmUp() { for (const el of calmed) el.removeAttribute('data-calm'); calmed.clear(); }
+function calmUp() { for (const el of calmed) el.removeAttribute('data-calm'); calmed.clear(); rootCl.remove('idle'); }
 function wake() {
   busyAt = performance.now(); calmUp();
   if (idleTimer) { clearTimeout(idleTimer); idleTimer = 0; }
@@ -645,23 +655,25 @@ for (const t of ['pointerdown', 'pointerup', 'keydown']) addEventListener(t, wak
 function loop(now) {
   rafId = 0;
   if (away) return;
-  const iv = 1000 / gfx.fps;
+  const fps = fpsAt(gfx, game ? game.speed : 1), iv = 1000 / fps; // 3배속은 높음이 아니면 30fps(gfx.js fpsAt)
   if (game && now < due - PACE_TOL) { schedule(0); return; } // fps 상한: 마감 전 화면 프레임은 건너뜀
-  due = Math.max(due + iv, now + iv - PACE_TOL); // 밀렸으면(느린 프레임·쉬다 옴) 지금부터 다시
+  due += iv; // 마감은 상한 간격씩 쌓는다 — 60Hz 의 45fps = 4칸 중 3칸(한 칸 늦게 그렸다고 다시 맞추면 2칸 중 1칸·40fps 로 떨어진다)
+  if (due < now - iv) due = now + iv - PACE_TOL; // 한 간격보다 더 밀렸으면(느린 프레임·쉬다 옴) 지금부터 다시
   const gap = now - drawnAt;
   drawnAt = now;
   const t0 = performance.now();
   const wait = frame(now);
   if (sampling && data.settings.gfx === 'auto') { // 자동 그래픽: 실제 전투 프레임의 작업 시간·간격
-    const lv = gov.sample(performance.now() - t0, gap);
+    const lv = gov.sample(performance.now() - t0, gap, fps);
     if (lv) { data.settings.gfxAuto = lv; applyGfx(); persist(); }
   } else gov.reset();
-  if (!wait) { busyAt = now; if (calmed.size) calmUp(); } else if (now - busyAt > (gfx === GFX.low ? CALM_LOW_MS : CALM_MS)) calmDown();
+  if (!wait) { busyAt = now; if (calmed.size || rootCl.contains('idle')) calmUp(); } else if (now - busyAt > (gfx === GFX.low ? CALM_LOW_MS : CALM_MS)) calmDown();
   schedule(wait || (game ? due - 12 - performance.now() : 0)); // 다음 그림 직전(12ms 앞)까지는 rAF 도 걸지 않는다 — 절전 30fps 에서 쉬는 화면 프레임에 페이지가 깨지 않게
 }
 
 // 전체 화면 층에 가려 안 보이는 화면: 반복 CSS 애니메이션 멈춤(css/kit.css html.cv-*)
 const titleEl = document.getElementById('title'), rootCl = document.documentElement.classList;
+let coverAt = 0, hudAt = 0, modalNow = false; // modalNow = anyModal() 을 4Hz 로 잰 값(플레이 시간 집계용)
 function syncCover() {
   const hero = heroUI.isOpen(), camp = ui.isCampOpen(), full = !!document.querySelector('.sm-scr:not([hidden]), .gs-scr:not([hidden])');
   rootCl.toggle('cv-camp', camp && (hero || full));
@@ -674,7 +686,7 @@ function frame(now) {
   const dt = Math.min(0.1, wallDt);
   lastT = now;
   sampling = false;
-  syncCover();
+  if (now >= coverAt) { coverAt = now + 250; syncCover(); modalNow = !!anyModal(); } // 문서 전체 querySelector — 4Hz 면 충분(가린 화면 CSS 멈춤이 0.25초 늦을 뿐)
   meta.gems = data.gems;
   meta.gold = data.gold;
   meta.best = data.best;
@@ -708,7 +720,7 @@ function frame(now) {
   const holding = now < stopUntil;
   if (mode === 'run' && !game.run.over) { // 도전 기록: 실제 플레이 초(배속 전) — 메뉴·영웅 화면·백그라운드(rAF 멈춤)는 빼고, 카드 고르는 시간은 넣는다
     const lg = game.run.log;
-    if (!heroUI.isOpen() && !anyModal()) lg.ps += wallDt;
+    if (!heroUI.isOpen() && !modalNow) lg.ps += wallDt;
     if (!paused) lg.sp = Math.max(lg.sp, game.speed);
     if (game.players[0].autoPick) lg.ap = true;
   }
@@ -747,7 +759,8 @@ function frame(now) {
   if (out.coins > 0) audio.play('coin');
   ui.onEvents(events, g);
   if (mode === 'run') lootUI.onEvents(events, g); // v0.1.7 획득 카드 · 자동 장착/판매 알림
-  ui.update(g, meta);
+  // 전투 DOM HUD: 높음이 아니면 싸우는 동안 15Hz(숫자·게이지 — 매 프레임 스타일 계산·다시 칠하기를 던다). 멈추면(카드·메뉴) 매번
+  if (gfx === GFX.high || paused || now >= hudAt) { hudAt = now + 66; ui.update(g, meta); }
   pathUI.update(g, now); // v0.1.6 갈림길
   heroUI.update(g.hero, mode === 'run' ? runCtx() : campCtx());
   if (pendingResult) { // 패배 도장(ui.onEvents)이 뜬 다음에: 결과 화면은 도장을 보여 준 뒤 스스로 이어서 뜬다

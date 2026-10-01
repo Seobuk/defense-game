@@ -7,12 +7,12 @@
   content: ""; position: absolute; inset: 0; z-index: 4; border-radius: inherit; padding: 2.5px; pointer-events: none;
   background: conic-gradient(from 30deg, #ff7ad9, #9a7bff, #7fe3ff, #9dff9a, #ffe45a, #ff7ad9);
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); mask-composite: exclude;
-  animation: mutHue 3.2s linear infinite;
+  animation: mutGlow 3.2s ease-in-out infinite; /* 발열 2차: hue-rotate(filter) 반복 = 매 프레임 다시 칠함 → opacity 맥박(합성만) */
 }
 .pick-card.mutate .pc-icowrap { height: 24%; background: radial-gradient(circle at 50% 58%, #fff4ff 0, var(--el, #c86bff) 30%, #2a0f55 82%); box-shadow: inset 0 -3px 0 rgba(0, 0, 0, .35), inset 0 0 0 2px #c86bff; }
-.pick-card.mutate.in .pc-icowrap::after { content: ""; position: absolute; inset: 0; mix-blend-mode: screen; opacity: .55; transform: none;
+.pick-card.mutate.in .pc-icowrap::after { content: ""; position: absolute; inset: 0 auto 0 0; width: 250%; mix-blend-mode: screen; opacity: .55;
   background: linear-gradient(115deg, transparent 20%, rgba(255, 120, 220, .6) 38%, rgba(120, 225, 255, .6) 50%, rgba(255, 236, 140, .55) 62%, transparent 80%);
-  background-size: 250% 100%; animation: mutFilm 2.6s ease-in-out infinite; }
+  animation: mutFilm 2.6s ease-in-out infinite; } /* 250% 폭 가상 요소를 translateX(ART §12 — background-position 반복 금지) */
 .pc-tag.mut { z-index: 5; background: linear-gradient(100deg, #ff9ae6, #b8a0ff 45%, #8ff0ff); color: #2a0b4a; font-weight: 400; }
 .pick-card.mutate .pc-rar { background: linear-gradient(100deg, #ff7ad9, #9a7bff 50%, #5fc8ff); }
 .pick-card.mutate .pc-body { gap: calc(var(--u) * 4); padding-bottom: calc(var(--u) * 6); }
@@ -67,8 +67,8 @@
 #spell-tip .tip-mut { display: block; margin-top: 4px; padding: 3px 6px; border-left: 3px solid var(--mc, #c86bff); border-radius: 4px; background: rgba(255, 255, 255, .06); font-size: 12px; color: #efe6ff; }
 #spell-tip .tip-mut b { color: var(--mc, #e0a0ff); font-family: var(--font-display); font-weight: 400; }
 
-@keyframes mutHue { to { filter: hue-rotate(360deg); } }
-@keyframes mutFilm { 0% { background-position: 120% 0; } 100% { background-position: -20% 0; } }
+@keyframes mutGlow { 50% { opacity: .55; } }
+@keyframes mutFilm { 0% { transform: translateX(-72%); } 100% { transform: translateX(12%); } }
 @keyframes mutBurst { 0% { transform: scale(1); filter: none; } 30% { transform: scale(1.45); filter: brightness(1.8) hue-rotate(90deg); } 60% { filter: brightness(1.3) hue-rotate(220deg); } 100% { transform: scale(1); filter: none; } }
 @keyframes mutPop { 0% { inset: -20px; opacity: 0; } 30% { opacity: 1; } 100% { inset: -4px; opacity: .95; } }
 @media (prefers-reduced-motion: reduce) { .pick-card.mutate.in::after, .pick-card.mutate.in .pc-icowrap::after, .ss-mut::before { animation: none; } }

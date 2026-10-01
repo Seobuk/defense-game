@@ -1076,17 +1076,21 @@ export function renderPreview(cv, id, t = 0, o = {}) {
   return true;
 }
 // 움직이는 미리보기: 캔버스가 문서에서 빠지면 스스로 멈춤. 반환 = stop()
-// 발열: 30fps 로만 그리고, 화면 밖(옆으로 넘긴 배너)·다른 층에 가린 동안은 안 그린다(0.5초마다 가운데 점을 누가 덮는지 확인)
+// 발열: 그래픽 단계만큼만 그리고(높음 ≈ 30fps · 보통 ≈ 20 · 절전 ≈ 12), 화면 밖(옆으로 넘긴 배너)·다른 층에 가린 동안은 안 그린다(0.5초마다 가운데 점을 누가 덮는지 확인).
+// 손대지 않은 화면(main.js 가 html.idle — 10초, 절전 3초)이면 그 자리에 멈춘다(입력하면 다시)
 // 다음 프레임은 타이머로 띄워 잡는다(rAF 를 매 화면 프레임 걸어 두면 그리지 않는 프레임에도 페이지 전체가 60Hz 로 깨어 있다)
+const PREVIEW_MS = { high: 24, mid: 42, low: 75 };
 export function playPreview(cv, id, o = {}) {
   let on = true, t0 = 0, raf = 0, tm = 0, seenAt = -1e9, shown = true;
+  const root = document.documentElement;
   const step = ts => {
     raf = 0;
     if (!on || !cv.isConnected) { on = false; return; }
     if (!t0) t0 = ts;
     if (ts - seenAt > 500) { seenAt = ts; shown = onTop(cv); }
-    if (shown) renderPreview(cv, id, (ts - t0) / 1000, o);
-    tm = setTimeout(() => { tm = 0; if (on) raf = requestAnimationFrame(step); }, shown ? 24 : 500); // ≈ 30fps · 안 보이면 0.5초마다 확인만
+    const go = shown && !root.classList.contains('idle');
+    if (go) renderPreview(cv, id, (ts - t0) / 1000, o);
+    tm = setTimeout(() => { tm = 0; if (on) raf = requestAnimationFrame(step); }, go ? PREVIEW_MS[root.dataset.gfx] || 24 : 500); // 안 보이거나 쉬면 0.5초마다 확인만
   };
   raf = requestAnimationFrame(step);
   renderPreview(cv, id, 0, o);
